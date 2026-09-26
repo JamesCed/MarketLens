@@ -107,8 +107,53 @@
       </div>
       <div class="small text-center mt-2" id="coordStatus"></div>
       <p class="text-muted small text-center mt-2 mb-1">Click a barangay to isolate it (map, search, or the list on the right); double-click it again -- or click "Show All" -- to bring back every barangay.</p>
-      <p class="text-muted small text-center mt-0 mb-0">The bold blue outline is Tarlac City's REAL administrative border. Each shaded zone inside it is the area closer to that barangay's own real, surveyed coordinate than to any other barangay's -- there's no publicly available per-barangay BOUNDARY dataset for Tarlac City (only point coordinates -- see <code>app/services/choropleth_service.py</code>), so a cell's exact INTERNAL edge (between two barangays) is a computed approximation rather than a traced administrative line, while its OUTER edge always stops exactly at the real city border. Precise per-barangay figures are always shown in the detail panel and location list. Household income has no publicly available per-barangay figure in the Philippines (see <code>Reference/DATASETS.md</code>), so it isn't shown as an overlay here -- population density is the real sociodemographic figure this map can back with sourced data.</p>
-      <p class="text-muted small text-center mt-1 mb-0">City border data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, ODbL.</p>
+      {#
+        DATA PROVENANCE AND LIMITATIONS, stated on the page rather than
+        buried in a document nobody opens. Written to be accurate in
+        both directions: it does not claim the figures are more solid
+        than they are, and it does not dismiss the parts that are
+        genuinely measured.
+      #}
+      <p class="text-muted small mt-0 mb-2">
+        <strong>How accurate is this?</strong> Partly measured, partly modelled &mdash; and the map
+        labels which is which. Competitor counts for a barangay this system has actually queried
+        are real businesses returned by the Google Places API. Population and population density
+        are the real 2024 PSA census figures. Everything else is an <em>estimate</em>: where no
+        live lookup has been made for an (industry &times; barangay) pair, the count is generated
+        from the surrounding data so the model still has something to score, and it is flagged as
+        estimated wherever it appears.
+      </p>
+      <p class="text-muted small mt-0 mb-2">
+        <strong>Why synthetic data is used at all.</strong> There is no real-time feed of business
+        registrations for Tarlac City, and a complete sweep of all 20 industries across all 76
+        barangays is thousands of billable API calls &mdash; beyond the scope of a student project.
+        So the gaps are filled with generated figures. That is a deliberate trade: it makes the
+        system complete enough to demonstrate and evaluate end to end, while every generated value
+        is replaced by a real one the moment that combination is actually fetched. The design
+        improves as real data accumulates rather than needing to be rebuilt.
+        <strong>Treat the shaded map as an indication of where to look, not as a survey.</strong>
+      </p>
+      <p class="text-muted small mt-0 mb-2">
+        <strong>About the boundaries.</strong> The bold blue outline is Tarlac City's real
+        administrative border. The lines <em>inside</em> it are not: no per-barangay boundary
+        dataset is published for Tarlac City, only point coordinates, so each shaded cell is the
+        area closer to that barangay's own surveyed coordinate than to any other's
+        (see <code>app/services/choropleth_service.py</code>). A cell's internal edge is therefore
+        a computed approximation; its outer edge stops exactly at the real city border. Per-barangay
+        figures in the detail panel and location list are exact regardless. Household income is not
+        published per barangay in the Philippines (see <code>Reference/DATASETS.md</code>), which is
+        why population density is the sociodemographic overlay offered here.
+      </p>
+      <p class="text-muted text-center mt-2 mb-0" style="font-size:.75rem;">
+        Base map &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+        contributors, licensed under the
+        <a href="https://opendatacommons.org/licenses/odbl/" target="_blank" rel="noopener">Open Database License (ODbL)</a>
+        &mdash; city border data from the same source.
+        Map rendering by <a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a> (BSD-2-Clause).
+        Business listing data from the Google Places API, &copy; Google &mdash; shown with the
+        &ldquo;powered by Google&rdquo; attribution required when Places data is displayed outside a
+        Google map. Only aggregate counts are retained; no Google place records are stored.
+      </p>
     </div>
   </div>
 
