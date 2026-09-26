@@ -1,10 +1,54 @@
+{#
+  shared/_flash.html
+  --------------------
+  Flash messages, as a toast pinned to the TOP CENTRE of the viewport.
+
+  It used to be a Bootstrap alert in the document flow at the top left,
+  which pushed the page down as it appeared and drew the eye to the
+  corner -- away from the form the message is usually about.
+
+  WHY FIXED AND NOT IN FLOW. A message about a failed login belongs
+  over the page, not inside it: nothing should reflow because a toast
+  arrived. The wrapper is `position: fixed; top: 0` with no offset, so
+  it sits flush against the top edge and centred, and it is
+  `pointer-events: none` so the invisible strip either side of it can
+  never swallow a click meant for the page underneath.
+
+  COLOUR CARRIES MEANING. Green for something that worked (registered,
+  signed in, saved), red for something that did not (wrong password,
+  invalid input), amber for a warning, blue for neutral information.
+  The category comes from the flash() calls in the controllers, so the
+  mapping below is the single place it is decided.
+
+  The icon and the role are not decoration: colour alone is not an
+  accessible signal, and a screen reader should announce an error
+  assertively but a confirmation politely.
+#}
 {% with messages = get_flashed_messages(with_categories=true) %}
   {% if messages %}
-    <div class="dss-flash-wrap">
+    <div class="dss-flash-wrap" id="flashWrap">
       {% for category, message in messages %}
-        <div class="alert alert-{{ 'danger' if category == 'danger' else category }} alert-dismissible fade show" role="alert">
-          {{ message }}
-          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        {% set tone =
+             'error'   if category in ('danger', 'error') else
+             'success' if category == 'success' else
+             'warn'    if category == 'warning' else 'info' %}
+        {% set icon =
+             'bi-x-octagon-fill'            if tone == 'error'   else
+             'bi-check-circle-fill'         if tone == 'success' else
+             'bi-exclamation-triangle-fill' if tone == 'warn'    else
+             'bi-info-circle-fill' %}
+        <div class="dss-flash dss-flash-{{ tone }}"
+             role="{{ 'alert' if tone in ('error', 'warn') else 'status' }}"
+             aria-live="{{ 'assertive' if tone in ('error', 'warn') else 'polite' }}">
+          <i class="bi {{ icon }} dss-flash-icon" aria-hidden="true"></i>
+          <span class="dss-flash-text">{{ message }}</span>
+          <button type="button" class="dss-flash-close" aria-label="Dismiss">
+            <i class="bi bi-x-lg" aria-hidden="true"></i>
+          </button>
+          {# Drains left to right over the auto-dismiss delay, so the
+             toast leaving is something you saw coming rather than a
+             flicker at the edge of your vision. #}
+          <span class="dss-flash-timer" aria-hidden="true"></span>
         </div>
       {% endfor %}
     </div>

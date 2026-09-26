@@ -90,3 +90,58 @@ document.addEventListener("DOMContentLoaded", function () {
     if (event.matches) setOpen(false);
   });
 });
+
+// ---------------------------------------------------------------------
+// Flash toasts
+// ---------------------------------------------------------------------
+// The toast markup is in shared/_flash.html; this dismisses it. Not
+// Bootstrap's alert component, because these are fixed-position toasts
+// with their own entry/exit animation and a countdown bar -- wiring
+// Bootstrap's dismiss to that would fight it rather than help.
+//
+// Errors are NOT auto-dismissed. A confirmation you missed costs you
+// nothing; a "that password was wrong" that vanished before you looked
+// up costs you the reason your login failed.
+document.addEventListener("DOMContentLoaded", function () {
+  const wrap = document.getElementById("flashWrap");
+  if (!wrap) return;
+
+  const AUTO_DISMISS_MS = 5000;
+
+  function dismiss(toast) {
+    if (toast.dataset.leaving) return;
+    toast.dataset.leaving = "1";
+    toast.classList.add("is-leaving");
+    // Remove after the exit animation rather than on a fixed timer, so
+    // the two can never drift apart.
+    toast.addEventListener("animationend", () => {
+      toast.remove();
+      if (!wrap.querySelector(".dss-flash")) wrap.remove();
+    }, { once: true });
+  }
+
+  wrap.querySelectorAll(".dss-flash").forEach((toast) => {
+    toast.querySelector(".dss-flash-close")?.addEventListener("click", () => dismiss(toast));
+
+    const permanent = toast.classList.contains("dss-flash-error");
+    const timer = toast.querySelector(".dss-flash-timer");
+    if (permanent) {
+      // No countdown bar on something that is not counting down --
+      // showing one that never empties would be a lie about the UI.
+      timer?.remove();
+      return;
+    }
+
+    let handle = setTimeout(() => dismiss(toast), AUTO_DISMISS_MS);
+
+    // Hovering pauses it. Reading a message should not be a race.
+    toast.addEventListener("mouseenter", () => {
+      clearTimeout(handle);
+      if (timer) timer.style.animationPlayState = "paused";
+    });
+    toast.addEventListener("mouseleave", () => {
+      handle = setTimeout(() => dismiss(toast), 1200);
+      if (timer) timer.style.animationPlayState = "running";
+    });
+  });
+});

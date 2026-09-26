@@ -267,7 +267,7 @@ body.dss-body {
 .dss-scroll-legend-item.dss-legend-off { opacity: .4; text-decoration: line-through; }
 
 /* ---------------- Misc ---------------- */
-.dss-flash-wrap { padding: 1rem 1.5rem 0; }
+/* Replaced by the fixed top-centre toast at the end of this file. */
 .dss-fw-600 { font-weight: 600; }
 .dss-text-muted-sm { font-size: .8rem; color: #6b7280; }
 
@@ -749,7 +749,7 @@ body.dss-body {
 .ml-footer-note { margin: 0; font-size: .78rem; color: rgba(255,255,255,.42); max-width: 22rem; }
 
 /* Flash messages sit above the landing; keep them readable on navy. */
-.ml-landing ~ .dss-flash-wrap, .dss-flash-wrap:has(+ .ml-landing) { position: relative; z-index: 40; }
+
 
 /* ---------------- Responsive ---------------- */
 @media (max-width: 1080px) {
@@ -1231,4 +1231,149 @@ body.dss-body {
 }
 [data-bs-theme="dark"] .dss-rec-footer-saturated {
   background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.30); color: #fca5a5;
+}
+
+
+/* =====================================================================
+   FLASH TOASTS  (shared/_flash.html)
+   =====================================================================
+   Pinned to the top CENTRE, flush to the viewport edge -- no offset, and
+   outside the document flow so a message arriving never reflows the page
+   under it. */
+.dss-flash-wrap {
+  position: fixed;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;              /* above Bootstrap modals' backdrop (1050) */
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column; align-items: center; gap: .4rem;
+  width: max-content; max-width: min(92vw, 560px);
+  /* The wrapper is wider than the toast it holds. Without this, the
+     transparent strip either side would sit over the page and swallow
+     clicks aimed at whatever is underneath. */
+  pointer-events: none;
+}
+
+.dss-flash {
+  pointer-events: auto;       /* the toast itself IS clickable */
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: .6rem;
+  width: 100%;
+  padding: .7rem 1rem;
+  /* Square at the top because it meets the viewport edge; rounded
+     below, so it reads as something that came down from off-screen
+     rather than a box that happens to be near the top. */
+  border-radius: 0 0 .7rem .7rem;
+  color: #fff;
+  font-size: .9rem; font-weight: 500;
+  box-shadow: 0 10px 30px rgba(8, 15, 24, .28);
+  animation: dss-flash-in .42s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+/* Gradients rather than flat fills: the sheen below travels across
+   them, which a flat colour would not show.
+   
+   EACH ONE IS BUILT FROM THE EXISTING PALETTE, not from new colours.
+   The base stop of every gradient is a :root variable this project
+   already defines -- --dss-green, --dss-deep-red, --dss-orange,
+   --dss-blue -- so these toasts are the prototype's own colours with a
+   lighter tint added for depth, not a second palette living alongside
+   it. Change a variable and these follow. */
+.dss-flash-success { background: linear-gradient(135deg, var(--dss-green), #22c55e 55%, #4ade80); }
+.dss-flash-error   { background: linear-gradient(135deg, var(--dss-deep-red), var(--dss-red) 55%, #f87171); }
+.dss-flash-warn    { background: linear-gradient(135deg, #b45309, var(--dss-orange) 55%, #fbbf24); }
+.dss-flash-info    { background: linear-gradient(135deg, var(--dss-blue-dark), var(--dss-blue) 55%, #60a5fa); }
+
+.dss-flash-icon { font-size: 1.05rem; flex-shrink: 0; }
+.dss-flash-text { flex: 1; min-width: 0; }
+
+.dss-flash-close {
+  flex-shrink: 0; border: 0; background: none; cursor: pointer;
+  color: rgba(255, 255, 255, .85);
+  font-size: .8rem; line-height: 1; padding: .25rem; border-radius: .3rem;
+}
+.dss-flash-close:hover { color: #fff; background: rgba(255, 255, 255, .18); }
+
+/* The auto-dismiss countdown, drawn as a draining bar along the bottom. */
+.dss-flash-timer {
+  position: absolute; left: 0; bottom: 0; height: 3px;
+  width: 100%; background: rgba(255, 255, 255, .55);
+  transform-origin: left center;
+  animation: dss-flash-drain 5s linear forwards;
+}
+
+/* A single highlight sweeping across once on arrival. One pass, not a
+   loop -- a toast that keeps shimmering is a toast you stop reading. */
+.dss-flash::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.38) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: dss-flash-sheen 1.1s ease-out .28s 1 both;
+  pointer-events: none;
+}
+
+@keyframes dss-flash-in {
+  from { opacity: 0; transform: translateY(-120%) scale(.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes dss-flash-out {
+  to { opacity: 0; transform: translateY(-120%) scale(.96); }
+}
+@keyframes dss-flash-drain { to { transform: scaleX(0); } }
+@keyframes dss-flash-sheen { to { transform: translateX(100%); } }
+
+.dss-flash.is-leaving { animation: dss-flash-out .3s ease-in forwards; }
+
+/* =====================================================================
+   PAGE TRANSITION
+   =====================================================================
+   Content rises and fades in on every navigation, so moving between
+   Home, the map and the reports feels continuous instead of each page
+   snapping into place.
+
+   Deliberately NOT a fade-OUT on click: intercepting navigation to play
+   an exit animation delays the browser and leaves a blank page if the
+   next request is slow. This costs nothing and cannot strand anyone.
+
+   TWO THINGS HERE ARE LOAD-BEARING, both for the same reason.
+
+   An element with a transform becomes the containing block for its
+   `position: fixed` descendants -- they stop being positioned against
+   the viewport and start being positioned against it. The rise below is
+   a translateY, so anything this animation touches must not have a
+   fixed descendant. Hence:
+
+   1. NO FILL MODE. This deliberately does not say `both`. `forwards`
+      would leave `transform: translateY(0)` applied for the life of the
+      page, and translateY(0) is still a transform -- `none` is the only
+      value that is not. .dss-main holds the modals authored inside
+      {% block content %} (the avatar picker in Settings, Create Account
+      in admin/users), and a modal opened an hour later would have been
+      sized and centred against .dss-main rather than the screen: off to
+      the right of the sidebar, scrolling with the page behind it. With
+      no fill mode the transform exists only for the .34s the animation
+      runs, which is over long before anyone can click anything.
+
+   2. THE LANDING ANIMATES ITS CHILDREN, NOT ITSELF. .ml-landing
+      contains .ml-bg, the fixed full-screen backdrop with the grid and
+      the drifting orbs. Transforming .ml-landing stretched that
+      backdrop to the full scroll height of the page and made it scroll
+      away with the content instead of staying put. Excluding it and
+      animating the siblings looks identical -- they all rise together
+      with no delay between them -- and leaves .ml-bg measuring itself
+      against the viewport, which is the whole point of it. */
+.dss-main,
+.ml-landing > :not(.ml-bg) {
+  animation: dss-page-in .34s cubic-bezier(.16, 1, .3, 1);
+}
+@keyframes dss-page-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dss-flash, .dss-main, .ml-landing > :not(.ml-bg) { animation: none; }
+  .dss-flash::after { display: none; }
+  /* The countdown bar still drains: it conveys the remaining time,
+     which is information rather than decoration. */
 }

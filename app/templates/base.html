@@ -48,17 +48,33 @@
 </head>
 <body class="dss-body">
 
+{#
+  FLASH TOASTS SIT HERE, as a direct child of <body>, and not inside
+  .dss-main where they used to be.
+
+  This is load-bearing, not tidying. The toasts are position: fixed,
+  and a fixed element is positioned against the VIEWPORT only while no
+  ancestor has a transform, filter or perspective -- any of those make
+  that ancestor the containing block instead. .dss-main carries the
+  page-entry animation, which uses translateY, so a toast rendered
+  inside it was positioned against .dss-main and landed wherever that
+  box happened to be (measured: 1190px across, 272px down) rather than
+  centred at the top of the screen.
+
+  Keeping it out here means no animation added to page content can
+  move the toasts again. One include serves both layouts, too.
+#}
+{% include "shared/_flash.html" %}
+
 {% if current_user.is_authenticated %}
   {% include "shared/_sidebar.html" %}
   <div class="dss-content">
     {% include "shared/_topbar.html" %}
     <main class="dss-main">
-      {% include "shared/_flash.html" %}
       {% block content %}{% endblock %}
     </main>
   </div>
 {% else %}
-  {% include "shared/_flash.html" %}
   {% block auth_content %}{% endblock %}
 {% endif %}
 
