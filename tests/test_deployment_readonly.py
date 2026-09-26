@@ -512,3 +512,45 @@ def test_the_entry_point_refuses_to_run_as_a_shadowed_import():
     # The guard has to run BEFORE the import it is guarding, or it
     # guards nothing.
     assert source.index("_assert_app_means_the_package()") < source.index("from app import create_app")
+
+
+def test_db_password_special_characters_survive_url_assembly():
+    """A generated database password can contain '@', '/', ':', '#' or
+    '?'. Every one of those means something structural in a URL, and an
+    unencoded '@' is the dangerous one: the parser reads everything
+    after it as the hostname, so the app tries to authenticate against
+    a different server with half a password -- and the error it gets
+    back blames DNS or the credentials, never the URL.
+
+    Composing from the five DB_* variables must therefore encode them,
+    which is what makes DB_* the safe way to configure a managed host:
+    paste the password exactly as the provider prints it."""
+    import importlib
+    import os
+
+    from sqlalchemy.engine import make_url
+
+    from app import config as config_module
+
+    saved = {k: os.environ.get(k) for k in
+             ("DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME")}
+    try:
+        os.environ.pop("DATABASE_URL", None)
+        os.environ.update({
+            "DB_HOST": "myhost.aivencloud.com", "DB_PORT": "23964",
+            "DB_USER": "avnadmin", "DB_NAME": "defaultdb",
+        })
+        for password in ("plainpw123", "pa@ss", "p:a/s#s?w@rd", "with spaces"):
+            os.environ["DB_PASSWORD"] = password
+            importlib.reload(config_module)
+            url = make_url(config_module.Config.SQLALCHEMY_DATABASE_URI)
+            assert url.host == "myhost.aivencloud.com", f"{password!r} corrupted the host"
+            assert url.port == 23964, f"{password!r} corrupted the port"
+            assert url.password == password, f"{password!r} did not round-trip"
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        importlib.reload(config_module)

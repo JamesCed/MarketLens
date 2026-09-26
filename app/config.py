@@ -12,6 +12,7 @@ different database or to plug in real API keys.
 
 import os
 from datetime import timedelta
+from urllib.parse import quote
 
 
 def _bool(value, default=False):
@@ -131,9 +132,26 @@ class Config:
     # passed through normalise_database_url() so that the connection
     # string a managed host hands you can be pasted in unedited -- see
     # that function for what it repairs and why.
+    #
+    # WHEN THERE IS NO DATABASE_URL the five parts above are assembled
+    # into one, and the user and password are PERCENT-ENCODED on the way
+    # in. A generated database password can contain '@', '/', ':', '#'
+    # or '?', every one of which means something structural inside a
+    # URL -- an unencoded '@' in particular makes the parser read the
+    # rest of the password as part of the hostname, so the app then
+    # tries to log in somewhere else with half a password. Encoding here
+    # means the five DB_* variables are the SAFE way to configure a
+    # host: you paste the password exactly as the provider shows it and
+    # never think about URL syntax at all.
     SQLALCHEMY_DATABASE_URI = normalise_database_url(
         os.environ.get("DATABASE_URL")
-        or f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+        or "mysql+pymysql://{user}:{password}@{host}:{port}/{name}?charset=utf8mb4".format(
+            user=quote(DB_USER, safe=""),
+            password=quote(DB_PASSWORD, safe=""),
+            host=DB_HOST,
+            port=DB_PORT,
+            name=DB_NAME,
+        )
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
