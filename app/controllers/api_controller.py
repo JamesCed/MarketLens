@@ -28,6 +28,7 @@ from app.extensions import db
 from app.models import LguData, MarketData, Notification, SystemSetting, SmeProfile
 from app.ml.constants import BUSINESS_TYPES, DETAIL_PANEL_SECTIONS
 from app.ml.seed_data import BARANGAY_NAMES
+from app.services.response_cache import cached_on_data
 from app.services.forecasting_service import compute_scores
 from app.services.places_service import search_competitors, search_competitors_detailed
 
@@ -254,6 +255,7 @@ def places_refresh():
     docstring. Batching keeps that visible and interruptible.
     """
     from app.services.market_refresh_service import MAX_BATCH, refresh_batch
+    from app.services.response_cache import clear_response_cache
     from app.services.trend_analytics_service import clear_trend_caches
 
     # READ-ONLY DEPLOYMENTS. places_service.live_fetch_enabled() already
@@ -283,6 +285,7 @@ def places_refresh():
     # sweep and snapshot rather than waiting for the fingerprint to be
     # re-read on the next request.
     clear_trend_caches()
+    clear_response_cache()
     return jsonify(result)
 
 
@@ -304,6 +307,7 @@ def places_refresh_progress():
 
 @api_bp.route("/trend-data")
 @login_required
+@cached_on_data("trend-data", query_args=("industry_type", "as_of"))
 def trend_data():
     """Aggregate, CITY-WIDE data for the LGU/Admin Trend Reports page --
     see app/services/trend_analytics_service.py for exactly how this
@@ -327,6 +331,7 @@ def trend_data():
 
 @api_bp.route("/trend-period")
 @login_required
+@cached_on_data("trend-period", query_args=("industry_type", "as_of"))
 def trend_period():
     """JUST the half of the Trend Reports page that moves when an SME or
     LGU user picks a different month in "Select Period": the four Figure

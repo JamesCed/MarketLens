@@ -76,7 +76,7 @@ from app.extensions import db
 from app.models import SmeProfile, ForecastResult, MarketData
 from app.ml.constants import BUSINESS_TYPES, FEATURED_BUSINESS_TYPES, DETAIL_PANEL_SECTIONS
 from app.ml.seed_data import BARANGAY_NAMES, get_barangay_profile, get_real_population
-from app.services.forecasting_service import compute_scores
+from app.services.forecasting_service import compute_scores, compute_scores_batch
 from app.services.recommendation_service import parse_recommendation
 from app.services.historical_baseline_service import (
     EARLIEST_HISTORY,
@@ -389,15 +389,19 @@ def _sweep_baseline(industry_type=None):
         if from_disk is not None:
             return from_disk
 
+        # One batched call, not 500 separate ones. See
+        # forecasting_service.compute_scores_batch: it resolves every
+        # market/lgu row in two GROUP BY queries instead of ~1,000
+        # round trips, and runs the forest once over the whole matrix
+        # instead of once per pair. Same numbers, same order.
         if industry_type:
-            rows = [compute_scores(industry_type, barangay) for barangay in BARANGAY_NAMES]
+            pairs = [(industry_type, barangay) for barangay in BARANGAY_NAMES]
         else:
             barangays = _baseline_barangays()
-            rows = [
-                compute_scores(industry, barangay)
-                for industry in BUSINESS_TYPES
-                for barangay in barangays
-            ]
+            pairs = [(industry, barangay)
+                     for industry in BUSINESS_TYPES
+                     for barangay in barangays]
+        rows = compute_scores_batch(pairs)
 
         # compute_scores() can itself write market_data rows, which moves
         # the fingerprint -- so file the result under the fingerprint as
@@ -478,21 +482,28 @@ def latest_market_data_by_key():
     refresh (a full history over time), so naively summing every row in
     the table would double/triple-count the same barangay+industry
     every time it's re-seeded -- this collapses it back down to "one
-    number per (industry, location), right now"."""
-    rows = (
-        MarketData.query.order_by(
-            MarketData.industry_type,
-            MarketData.location,
-            MarketData.date_recorded.desc(),
-            MarketData.market_id.desc(),
-        ).all()
-    )
-    latest = {}
-    for row in rows:
-        key = (row.industry_type, row.location)
-        if key not in latest:
-            latest[key] = row
-    return latest
+    number per (industry, location), right now".
+
+    RESOLVED IN SQL, NOT IN PYTHON. This used to load every row in
+    market_data as an ORM object and throw most of them away. That
+    table grows by one row per (industry, location) per refresh, so
+    its size tracks how often the app has been used, while the answer
+    is always at most 1,520 rows -- one per combo. On a 512 MB
+    instance, materialising an unbounded history to produce a bounded
+    result is the wrong end of the trade, and it got worse every week.
+
+    The GROUP BY below asks the database for the winning market_id per
+    combo (newest date; highest id among same-date ties, which is the
+    ordering the old Python loop implemented) and then loads only
+    those rows.
+    """
+    from app.services.forecasting_service import _latest_market_rows
+
+    industries = [row[0] for row in db.session.query(MarketData.industry_type).distinct().all()]
+    locations = [row[0] for row in db.session.query(MarketData.location).distinct().all()]
+    if not industries or not locations:
+        return {}
+    return _latest_market_rows(industries, locations)
 
 
 def get_overview_stats(baseline, real_forecasts):

@@ -338,14 +338,29 @@ def test_changing_the_month_does_not_re_run_the_city_wide_sweep(app, monkeypatch
         _seed_market()
         trends.clear_trend_caches()
 
+        # Counts PAIRS SCORED, not function calls. The sweep used to
+        # call compute_scores() once per pair; it now hands the whole
+        # list to compute_scores_batch() in one call. Counting calls
+        # would silently read 0 for the batch path and the test would
+        # pass while measuring nothing -- which is exactly what it did
+        # when the batching landed. Both paths are wrapped so this
+        # keeps meaning "how much scoring work happened" whichever one
+        # is in use.
         calls = {"n": 0}
-        real = trends.compute_scores
+        real_single = trends.compute_scores
+        real_batch = trends.compute_scores_batch
 
-        def counting(*args, **kwargs):
+        def counting_single(*args, **kwargs):
             calls["n"] += 1
-            return real(*args, **kwargs)
+            return real_single(*args, **kwargs)
 
-        monkeypatch.setattr(trends, "compute_scores", counting)
+        def counting_batch(pairs, *args, **kwargs):
+            pairs = list(pairs)
+            calls["n"] += len(pairs)
+            return real_batch(pairs, *args, **kwargs)
+
+        monkeypatch.setattr(trends, "compute_scores", counting_single)
+        monkeypatch.setattr(trends, "compute_scores_batch", counting_batch)
 
         trends.build_trend_period(as_of=date(2026, 1, 1))
         after_first = calls["n"]

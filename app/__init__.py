@@ -11,7 +11,7 @@ import os
 from flask import Flask, render_template
 
 from app.config import config_by_name
-from app.extensions import db, login_manager, csrf
+from app.extensions import db, login_manager, csrf, cache
 
 
 def create_app(config_name=None):
@@ -48,6 +48,27 @@ def create_app(config_name=None):
 
     # ---- extensions ----
     db.init_app(app)
+
+    # Response cache for the Trend Reports endpoints.
+    #
+    # FileSystemCache, not SimpleCache: SimpleCache keeps every cached
+    # payload in the worker's own heap, and a trend report is a few
+    # hundred KB. On a 512 MB instance that competes with the model and
+    # the request itself for exactly the memory we are trying to
+    # protect. The filesystem copy costs nothing resident and survives
+    # for the life of the deploy.
+    #
+    # cache is None when Flask-Caching is not installed (see
+    # app/extensions.py) -- the app runs without it, just slower.
+    if cache is not None:
+        cache.init_app(app, config={
+            "CACHE_TYPE": "FileSystemCache",
+            "CACHE_DIR": os.path.join(app.instance_path, "response_cache"),
+            "CACHE_DEFAULT_TIMEOUT": 900,
+            # Bounded so a long-running instance cannot fill its disk;
+            # Flask-Caching prunes the oldest entries past this.
+            "CACHE_THRESHOLD": 200,
+        })
     login_manager.init_app(app)
     csrf.init_app(app)
 

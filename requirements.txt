@@ -50,6 +50,12 @@ cryptography==43.0.1          # required by PyMySQL for MySQL's default auth plu
 # --- Auth / sessions / forms & CSRF ---
 Flask-Login==0.6.3
 Flask-WTF==1.2.1
+# Response cache for the Trend Reports endpoints. A FLOOR, not an exact
+# pin: it is imported defensively (app/extensions.py) precisely so a
+# resolution problem here degrades the site to "slower" rather than
+# "down". Configured as FileSystemCache -- see app/__init__.py for why
+# not SimpleCache on a 512 MB instance.
+Flask-Caching>=2.1,<3
 
 # --- Environment variables ---
 python-dotenv==1.0.1

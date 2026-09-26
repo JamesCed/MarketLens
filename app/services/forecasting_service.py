@@ -361,6 +361,27 @@ def build_feature_vector(market, lgu, years_in_operation, industry_type):
     ]
 
 
+def _tree_predictions(rf_model, X):
+    """Every tree's prediction for every row: shape (n_trees, n_rows).
+
+    The forest's own per-tree spread is what confidence_level is
+    derived from, and there is no scikit-learn API that returns it --
+    so the trees have to be asked individually. The thing that matters
+    is asking each tree ONCE for the whole batch instead of once per
+    row.
+
+    That distinction dominated the Trend Reports page. The city-wide
+    sweep scores 500 (industry, barangay) pairs, and the old code
+    called tree.predict() on a single row inside a loop over the
+    forest: 500 x n_trees separate calls. Each one goes through
+    joblib's dispatch machinery, and profiling the page showed 13 of
+    its 28 seconds inside time.sleep() in joblib's worker handshake --
+    pure overhead, not arithmetic. Batched, it is n_trees calls in
+    total for the whole sweep.
+    """
+    return np.array([tree.predict(X) for tree in rf_model.estimators_])
+
+
 def _predict_saturation(feature_vector):
     """Returns (saturation_index 0-100, confidence_level 0-100,
     model_version). confidence_level comes from how much the Random
@@ -391,7 +412,10 @@ def _predict_saturation(feature_vector):
     prediction = float(rf_model.predict(X)[0])
     saturation_index = max(0.0, min(100.0, prediction))
 
-    tree_predictions = np.array([tree.predict(X)[0] for tree in rf_model.estimators_])
+    # One pass per tree over X, rather than a scalar predict() per
+    # tree. Same arithmetic, and it is the shape the batch path needs,
+    # so there is one implementation instead of two.
+    tree_predictions = _tree_predictions(rf_model, X)[:, 0]
     spread = float(np.std(tree_predictions))
     # Map tree-disagreement spread -> 0-100 confidence: 0 spread = 100%
     # confidence, decaying linearly to a floor of 40% once spread
@@ -424,6 +448,160 @@ def compute_scores(industry_type, location, years_in_operation=0):
         "cluster_label": cluster_label,
         "model_version": model_version,
     }
+
+
+def compute_scores_batch(pairs, years_in_operation=0):
+    """compute_scores() for many (industry_type, location) pairs at
+    once, returning the same dicts in the same order.
+
+    WHY THIS EXISTS. The Trend Reports page scores 500 pairs to build
+    its city-wide baseline. Calling compute_scores() in a loop does
+    that correctly and slowly, in two separate ways:
+
+      QUERIES. find_or_create_market_data() and find_or_create_lgu_data()
+      each run a SELECT per pair -- about 1,000 round trips for one
+      page. Against a managed database in another data centre (Aiven,
+      from Render) that is 1,000 network round trips. Here the freshest
+      market_data row per (industry, location) is resolved in ONE
+      GROUP BY, and every lgu_data row in one more.
+
+      PREDICTION. See _tree_predictions() above. One predict() over a
+      500-row matrix replaces 500 one-row predicts, and n_trees passes
+      replace 500 x n_trees.
+
+    Pairs whose market/lgu rows do not exist yet fall back to the
+    ordinary per-pair path, which can create them. So a cold database
+    behaves exactly as before and a warm one -- which is every request
+    after the first -- takes the fast route.
+    """
+    pairs = list(pairs)
+    if not pairs:
+        return []
+
+    industries = {industry for industry, _location in pairs}
+    locations = {location for _industry, location in pairs}
+
+    market_by_key = _latest_market_rows(industries, locations)
+    lgu_by_location = _lgu_rows(locations)
+
+    resolved, missing = [], []
+    for index, (industry, location) in enumerate(pairs):
+        market = market_by_key.get((industry, location))
+        lgu = lgu_by_location.get(location)
+        if market is None or lgu is None:
+            missing.append(index)          # needs the row-creating path
+        else:
+            resolved.append((index, industry, location, market, lgu))
+
+    results = [None] * len(pairs)
+
+    if resolved:
+        matrix = np.array([
+            build_feature_vector(market, lgu, years_in_operation, industry)
+            for _i, industry, _loc, market, lgu in resolved
+        ])
+        _load_models()
+        rf_model = _MODEL_CACHE["rf"]
+
+        if rf_model is None:
+            # No trained model on disk yet (before the first
+            # train_and_save). There is nothing to batch, and the
+            # weighted-formula fallback lives in _predict_saturation --
+            # so defer to it rather than restating the formula here.
+            for position, (index, industry, location, market, lgu) in enumerate(resolved):
+                saturation, confidence, version = _predict_saturation(list(matrix[position]))
+                results[index] = _score_dict(industry, location, market, lgu,
+                                             saturation, confidence, version)
+        else:
+            predictions = np.clip(rf_model.predict(matrix), 0.0, 100.0)
+            spreads = _tree_predictions(rf_model, matrix).std(axis=0)
+            confidences = np.clip(100.0 - (spreads / 25.0) * 60.0, 40.0, 100.0)
+            for position, (index, industry, location, market, lgu) in enumerate(resolved):
+                results[index] = _score_dict(
+                    industry, location, market, lgu,
+                    float(predictions[position]), float(confidences[position]), "rf_v1",
+                )
+
+    for index in missing:
+        industry, location = pairs[index]
+        results[index] = compute_scores(industry, location, years_in_operation)
+
+    return results
+
+
+def _score_dict(industry_type, location, market, lgu, saturation_index, confidence_level, model_version):
+    """The one place the compute_scores() result shape is defined, so
+    the batch path cannot drift away from the single-row path."""
+    saturation_index = round(max(0.0, min(100.0, saturation_index)), 2)
+    return {
+        "industry_type": industry_type,
+        "location": location,
+        "market_id": market.market_id,
+        "lgu_id": lgu.lgu_id,
+        "competitor_count": market.competitor_count,
+        "saturation_index": saturation_index,
+        "viability_score": round(max(0.0, min(10.0, (100.0 - saturation_index) / 10.0)), 1),
+        "confidence_level": round(confidence_level, 2),
+        "cluster_label": _cluster_label_for(saturation_index),
+        "model_version": model_version,
+    }
+
+
+def _latest_market_rows(industries, locations):
+    """{(industry_type, location): freshest MarketData row} for the
+    given combos, in two queries.
+
+    market_data keeps one row per refresh -- a full history -- so
+    "freshest" is a greatest-n-per-group problem. It is solved here in
+    SQL (GROUP BY the pair, take the newest date, then the highest
+    market_id among any same-date ties) so the database returns one
+    row per combo instead of the app pulling the whole table and
+    discarding most of it.
+    """
+    newest = (
+        db.session.query(
+            MarketData.industry_type.label("industry_type"),
+            MarketData.location.label("location"),
+            db.func.max(MarketData.date_recorded).label("newest_date"),
+        )
+        .filter(MarketData.industry_type.in_(industries), MarketData.location.in_(locations))
+        .group_by(MarketData.industry_type, MarketData.location)
+        .subquery()
+    )
+    winning_ids = (
+        db.session.query(db.func.max(MarketData.market_id))
+        .join(
+            newest,
+            db.and_(
+                MarketData.industry_type == newest.c.industry_type,
+                MarketData.location == newest.c.location,
+                MarketData.date_recorded == newest.c.newest_date,
+            ),
+        )
+        .group_by(MarketData.industry_type, MarketData.location)
+        .all()
+    )
+    ids = [row[0] for row in winning_ids if row[0] is not None]
+    if not ids:
+        return {}
+    rows = MarketData.query.filter(MarketData.market_id.in_(ids)).all()
+    return {(row.industry_type, row.location): row for row in rows}
+
+
+def _lgu_rows(locations):
+    """{location: freshest LguData row} for the given barangays, in one
+    query. Same greatest-n-per-group reasoning as above, resolved on
+    the (much smaller) result rather than with a second round trip."""
+    rows = (
+        LguData.query.filter(LguData.barangay.in_(locations))
+        .order_by(LguData.barangay, LguData.upload_date.desc(), LguData.lgu_id.desc())
+        .all()
+    )
+    latest = {}
+    for row in rows:
+        if row.barangay not in latest:
+            latest[row.barangay] = row
+    return latest
 
 
 def generate_forecast_for_profile(sme_profile):
