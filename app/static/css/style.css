@@ -1122,3 +1122,40 @@ body.dss-body {
   padding-top: .3rem;
   min-height: 2.5em;
 }
+
+/* ---------- Dark mode: the SME Home / LGU Dashboard hero ---------- */
+/* The hero kept its light blue gradient in dark mode while everything
+   inside it flipped to light text -- so the title and subtitle were
+   light-on-light and effectively invisible. .dss-topbar already had a
+   dark gradient; this is the same treatment, so the two bands match
+   instead of one being a bright slab in a dark page. */
+[data-bs-theme="dark"] .dss-hero {
+  background: linear-gradient(to right, #16304f, #14202e);
+  border-color: #223040;
+}
+/* Bootstrap's .text-muted in dark mode is a pale grey tuned for the
+   page background, not for this deeper gradient. Lifted so the
+   subtitle is readable rather than technically present. */
+[data-bs-theme="dark"] .dss-hero .text-muted { color: #a9bdd4 !important; }
+
+/* ---------- Dark mode: saturation pills ---------- */
+/* Pale tint + dark ink is right on white and unreadable on a dark
+   card. Inverted: the hue is kept (it is what the tier MEANS, and the
+   legend uses the same colours) but carried by the text on a muted
+   version of itself. */
+[data-bs-theme="dark"] .dss-pill-low { background: rgba(34,197,94,.16); color: #86efac; }
+[data-bs-theme="dark"] .dss-pill-moderate { background: rgba(250,204,21,.16); color: #fde047; }
+[data-bs-theme="dark"] .dss-pill-high { background: rgba(249,115,22,.18); color: #fdba74; }
+[data-bs-theme="dark"] .dss-pill-saturated { background: rgba(239,68,68,.18); color: #fca5a5; }
+
+/* ---------- Dark mode: recommendation badges and footers ---------- */
+[data-bs-theme="dark"] .dss-rec-badge-ai { background: rgba(99,102,241,.18); color: #a5b4fc; }
+[data-bs-theme="dark"] .dss-rec-footer-high {
+  background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.30); color: #86efac;
+}
+[data-bs-theme="dark"] .dss-rec-footer-moderate {
+  background: rgba(250,204,21,.10); border-color: rgba(250,204,21,.30); color: #fde047;
+}
+[data-bs-theme="dark"] .dss-rec-footer-saturated {
+  background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.30); color: #fca5a5;
+}
