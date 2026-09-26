@@ -6,6 +6,15 @@
     a phone would be unbranded. On desktop it reads as a header lockup
     next to the page context.
   #}
+  <!-- The nav is off-canvas below 900px (see style.css). Without this
+       button there is no way to open it, so on a phone or tablet the
+       whole menu was simply unreachable. Hidden on desktop, where the
+       sidebar is always visible. -->
+  <button type="button" class="dss-nav-toggle" id="sidebarToggle"
+          aria-label="Open menu" aria-controls="dssSidebar" aria-expanded="false">
+    <i class="bi bi-list"></i>
+  </button>
+
   <div class="dss-topbar-brand">
     {% with variant='auto', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
     <span class="dss-topbar-context">SME Business Planning &amp; Market Entry Decision Support</span>
