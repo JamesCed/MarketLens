@@ -342,3 +342,69 @@ def test_tarlac_city_boundary_endpoint_shape(client, app):
     ring = feature["geometry"]["coordinates"][0]
     assert len(ring) > 50
     assert ring[0] == ring[-1]
+
+
+def test_the_choropleth_fits_in_a_free_tier_instance(app):
+    """The bug this pins: the Voronoi step used to build one
+    (n_grid x n_barangays) float64 array -- 648,000 x 76 x 8 = 394 MB,
+    with two same-sized temporaries before it. Measured peak: 767 MB.
+
+    A free Render instance has 512 MB TOTAL and this app already holds
+    roughly 210 MB once Flask, numpy, pandas, scikit-learn and the
+    Random Forest are resident. So the endpoint could not complete
+    there at all -- the worker was OOM-killed mid-request and the
+    Saturation Map rendered the city outline with no cells inside it,
+    which looks like a front-end bug and is not one.
+
+    _nearest_index_grid now works in fixed-size blocks, which bounds
+    the peak regardless of grid resolution. The threshold here is
+    deliberately loose: it is here to catch a return to hundreds of
+    megabytes, not to police a few MB either way.
+    """
+    import tracemalloc
+
+    from app.services.choropleth_service import compute_choropleth_geojson
+    from app.services.geocoding_service import load_seed_coords
+
+    with app.app_context():
+        coords = load_seed_coords(app)
+
+        tracemalloc.start()
+        try:
+            result = compute_choropleth_geojson(coords, app=app, force=True)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+    peak_mb = peak / (1024 * 1024)
+    assert result["features"], "the choropleth should not be empty"
+    assert peak_mb < 200, (
+        f"the choropleth peaked at {peak_mb:.0f} MB. A free 512 MB instance "
+        f"already holds ~210 MB of this app, so anything near that gets the "
+        f"worker OOM-killed and the map renders with no cells."
+    )
+
+
+def test_chunking_does_not_change_the_geometry():
+    """The memory fix must be an allocation change and nothing else.
+    Running the nearest-neighbour step in one shot and in blocks has to
+    produce the same partition, exactly -- otherwise the cells moved
+    and the map is quietly wrong."""
+    import numpy as np
+
+    from app.services import choropleth_service as cs
+
+    rng = np.random.default_rng(20260926)
+    X, Y = np.meshgrid(np.linspace(120.4, 120.7, 240), np.linspace(15.3, 15.6, 200))
+    points = rng.uniform([120.4, 15.3], [120.7, 15.6], size=(76, 2))
+
+    saved = cs._NEAREST_CHUNK
+    try:
+        cs._NEAREST_CHUNK = 1024
+        chunked = cs._nearest_index_grid(X, Y, points)
+        cs._NEAREST_CHUNK = 10 ** 9
+        one_shot = cs._nearest_index_grid(X, Y, points)
+    finally:
+        cs._NEAREST_CHUNK = saved
+
+    assert np.array_equal(chunked, one_shot)

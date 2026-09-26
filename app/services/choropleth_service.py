@@ -131,14 +131,48 @@ def _point_in_polygon_grid(X, Y, ring):
     return inside.reshape(X.shape)
 
 
+# How many grid points to measure against every barangay at once.
+#
+# THIS NUMBER IS A MEMORY BUDGET, NOT A SPEED KNOB. The distance
+# computation below is (n_grid x n_points) float64. Done in one shot at
+# the shipped 900x720 resolution that is 648,000 x 76 x 8 bytes = 394 MB
+# for the result alone, and numpy materialises two same-sized
+# temporaries before it (the subtraction, then the square) -- measured
+# peak was 762 MB.
+#
+# A free Render instance has 512 MB TOTAL and this app already holds
+# about 210 MB (Flask, numpy, pandas, scikit-learn, the Random Forest).
+# So the un-chunked version could not run there at all: the worker was
+# OOM-killed mid-request, and the Saturation Map drew the city outline
+# (a separate, cheap endpoint) with no cells inside it.
+#
+# Chunking bounds the peak at roughly CHUNK x n_points x 8 x 3 bytes --
+# about 58 MB at this value, whatever the grid resolution. The output
+# is bit-for-bit identical; only the allocation pattern changes.
+_NEAREST_CHUNK = 32_768
+
+
 def _nearest_index_grid(X, Y, points):
     """For every grid point, the index (into `points`) of the nearest
     one -- an ordinary Euclidean Voronoi partition, computed by brute
-    force. `points` is small (Tarlac City's 76-ish barangays), so this
-    is a single vectorized (n_grid, n_points) distance computation."""
+    force. `points` is small (Tarlac City's 76-ish barangays).
+
+    Computed in fixed-size blocks of grid points rather than all at
+    once, so peak memory is bounded by _NEAREST_CHUNK above instead of
+    scaling with the grid. See that constant for why that matters.
+    """
     flat_x, flat_y = X.ravel(), Y.ravel()
-    d2 = (flat_x[:, None] - points[:, 0][None, :]) ** 2 + (flat_y[:, None] - points[:, 1][None, :]) ** 2
-    return np.argmin(d2, axis=1).reshape(X.shape)
+    out = np.empty(flat_x.shape[0], dtype=np.intp)
+    px, py = points[:, 0][None, :], points[:, 1][None, :]
+    for start in range(0, flat_x.shape[0], _NEAREST_CHUNK):
+        stop = start + _NEAREST_CHUNK
+        dx = flat_x[start:stop, None] - px
+        dy = flat_y[start:stop, None] - py
+        np.multiply(dx, dx, out=dx)          # in place: no third temporary
+        np.multiply(dy, dy, out=dy)
+        np.add(dx, dy, out=dx)
+        np.argmin(dx, axis=1, out=out[start:stop])
+    return out.reshape(X.shape)
 
 
 def _ring_area(ring_pts):
