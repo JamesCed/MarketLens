@@ -1,0 +1,1060 @@
+/* app/static/css/style.css
+   --------------------------
+   Small, hand-written overrides on top of Bootstrap 5 -- mirrors the
+   blue/white palette + card-heavy layout from the Figma storyboard
+   without needing Tailwind or a build step. */
+
+:root {
+  --dss-blue: #2563eb;
+  --dss-blue-dark: #1e40af;
+  --dss-blue-light: #eff6ff;
+  --dss-green: #16a34a;
+  --dss-red: #ef4444;
+  /* Saturation tier colours. The middle two are deliberately pushed
+     apart -- a DARK orange and a LIGHT yellow -- because the previous
+     #f59e0b / #eab308 pair read as nearly the same amber once drawn as
+     translucent map circles. Mirrored in static/js/map.js CLUSTER_COLORS. */
+  --dss-orange: #f97316; /* "Moderate" tier      -- bright orange */
+  --dss-yellow: #fde047; /* "Low-Moderate" tier  -- light yellow */
+  --dss-deep-red: #b91c1c; /* "High Saturation"  -- deep red */
+  --dss-gray-bg: #f8fafc;
+}
+
+body.dss-body {
+  background: var(--dss-gray-bg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  display: flex;
+  min-height: 100vh;
+  margin: 0;
+}
+
+/* ---------------- Sidebar ---------------- */
+.dss-sidebar {
+  width: 230px;
+  flex-shrink: 0;
+  background: #f3f4f6;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+}
+.dss-sidebar-header { padding: 1rem; border-bottom: 1px solid #e5e7eb; }
+.dss-sidebar-brand { font-weight: 700; font-size: 0.85rem; line-height: 1.3; display:flex; gap:.5rem; align-items:flex-start;}
+.dss-logo-dot { width: 10px; height: 10px; background: var(--dss-blue); border-radius: 2px; margin-top:4px; flex-shrink:0;}
+.dss-nav { flex: 1; padding: .75rem; overflow-y: auto; }
+.dss-nav-link {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .55rem .75rem; margin-bottom: .2rem; border-radius: .4rem;
+  color: #374151; text-decoration: none; font-size: .9rem;
+}
+.dss-nav-link:hover { background: #e5e7eb; }
+.dss-nav-link.active { background: var(--dss-blue-light); color: var(--dss-blue-dark); font-weight: 600; }
+.dss-nav-section { font-size: .7rem; color: #9ca3af; letter-spacing: .05em; margin: .75rem .5rem .25rem; }
+.dss-sidebar-footer { padding: .75rem 1rem; font-size: .7rem; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+
+/* ---------------- Layout ---------------- */
+.dss-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.dss-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: linear-gradient(to right, #dbeafe, #eff6ff);
+  border-bottom: 1px solid #d1d5db;
+  padding: .85rem 1.5rem;
+}
+.dss-topbar-title { font-weight: 600; font-size: 1rem; }
+.dss-topbar-actions { display: flex; gap: .6rem; align-items: center; }
+.dss-avatar {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--dss-blue); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center; font-size: .75rem; font-weight: 600; margin-right:.4rem;
+}
+.dss-avatar-img-sm {
+  width: 28px; height: 28px; border-radius: 50%; object-fit: cover; margin-right: .4rem; vertical-align: middle;
+}
+.dss-avatar-img {
+  width: 72px; height: 72px; border-radius: 50%; object-fit: cover; display: block;
+}
+.dss-user-btn { display: flex; align-items: center; }
+.dss-badge { position: absolute; top: -2px; right: -2px; font-size: .6rem; padding: .25em .4em; }
+.dss-notif-menu { width: 320px; max-height: 360px; overflow-y: auto; }
+.dss-main { padding: 1.5rem; }
+
+/* --------- Business plan rows (Settings > Business Preferences) --------- */
+.dss-plan-row:last-child { margin-bottom: 0 !important; }
+[data-bs-theme="dark"] .dss-plan-row { border-color: var(--ml-line) !important; }
+
+/* ---------------- SME Home hero + footer ---------------- */
+.dss-hero {
+  background: linear-gradient(to right, #dbeafe, #eff6ff);
+  border: 1px solid #e5e7eb;
+  border-radius: .75rem;
+  padding: 1.5rem 1.5rem 1.75rem;
+}
+.dss-home-footer {
+  background: #1f2937;
+  color: #e5e7eb;
+  border-radius: .6rem;
+  padding: .85rem 1.25rem;
+  font-size: .85rem;
+}
+.dss-home-footer a { color: #e5e7eb; }
+.dss-home-footer a:hover { color: #fff; text-decoration: underline; }
+
+/* ---------------- Cards ---------------- */
+.dss-card { background: #fff; border-radius: .6rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 1.25rem; }
+.dss-card:hover.dss-card-hover { box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+.dss-industry-icon {
+  width: 56px; height: 56px; border-radius: 50%; background: var(--dss-blue); color:#fff;
+  display: flex; align-items: center; justify-content: center; font-size: 1.6rem; margin: 0 auto .75rem;
+}
+.dss-stat-pill { display:inline-block; padding:.2rem .6rem; border-radius:1rem; font-size:.8rem;}
+/* Pill tints track the map tiers: green / light-yellow / dark-orange /
+   red. The "high" (= "Moderate" label) pill is tinted noticeably
+   warmer than the "moderate" (= "Low-Moderate") pill so the two are
+   distinguishable in the barangay lists, not just on the map. */
+.dss-pill-low { background:#dcfce7; color:#166534;}
+.dss-pill-moderate { background:#fefce8; color:#854d0e;}
+.dss-pill-high { background:#ffedd5; color:#9a3412;}
+.dss-pill-saturated { background:#fee2e2; color:#991b1b;}
+
+/* ---------------- Recommendations page (storyboard-matched) ---------------- */
+/* Layout/structure follows Reference/Figma_Storyboard's recommendations
+   page (gradient summary cards, per-plan Key Metrics row, two-column
+   Why This Works / Considerations, status-badge footer) -- but every
+   figure shown with these classes is real or derived from real data on
+   file, never the storyboard's placeholder example numbers. */
+.dss-rec-stat-card { border-radius:.6rem; padding:1.25rem; color:#fff; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+.dss-rec-stat-high { background: linear-gradient(135deg, #22c55e, var(--dss-green)); }
+.dss-rec-stat-moderate { background: linear-gradient(135deg, #facc15, var(--dss-orange)); }
+.dss-rec-stat-locations { background: linear-gradient(135deg, #60a5fa, var(--dss-blue)); }
+.dss-rec-stat-icon { font-size: 1.75rem; }
+
+.dss-rec-badge-ai { background:#eef2ff; color:#4338ca; }
+
+.dss-rec-why h6 { color:#15803d; }
+.dss-rec-considerations h6 { color:#a16207; }
+
+.dss-rec-footer { border-top:1px solid; padding:.65rem 1.5rem; }
+.dss-rec-footer-high { background:#f0fdf4; border-color:#bbf7d0; color:#166534; }
+.dss-rec-footer-moderate { background:#fefce8; border-color:#fef08a; color:#854d0e; }
+.dss-rec-footer-saturated { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+
+/* ---------------- Auth pages ---------------- */
+.dss-auth-wrap {
+  min-height: 100vh; width: 100%; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, #eff6ff, #f8fafc);
+  padding: 2rem 1rem;
+}
+.dss-auth-card { max-width: 440px; width: 100%; }
+
+/* Two-panel shell (branding + form) used by login/register/verify-email.
+   The brand panel is hidden below md (see d-none d-md-flex in the
+   templates), so on phones this collapses to just the form card. */
+.dss-auth-shell {
+  display: flex;
+  width: 100%;
+  max-width: 920px;
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 20px 50px -20px rgba(30, 64, 175, .35), 0 2px 8px rgba(0,0,0,.06);
+}
+.dss-auth-shell .dss-auth-card {
+  max-width: none;
+  flex: 1 1 55%;
+  border: none;
+  border-radius: 0;
+}
+.dss-auth-brand {
+  flex: 1 1 45%;
+  background: linear-gradient(155deg, var(--dss-blue) 0%, var(--dss-blue-dark) 100%);
+  color: #fff;
+  padding: 2.5rem 2.25rem;
+  flex-direction: column;
+  justify-content: center;
+}
+.dss-auth-brand h3 { font-weight: 700; }
+.dss-auth-brand p { color: rgba(255,255,255,.85); }
+.dss-auth-brand-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .85rem; font-size: .9rem; }
+.dss-auth-brand-list i { margin-right: .5rem; }
+.dss-role-btn-group .btn-outline-primary { border-color: #d1d5db; }
+.dss-otp-input { letter-spacing: .6em; font-weight: 700; }
+
+/* ---------------- Saturation map ---------------- */
+/* `overflow:hidden` and `position:relative` are load-bearing, not
+   decoration. Leaflet's own stylesheet normally clips the map, but if
+   leaflet.css is slow, blocked (a wrong SRI hash silently blocks it) or
+   unreachable on a campus network, an unclipped map is catastrophic:
+   the choropleth SVG is far larger than the container, so it spills
+   across the whole page and adds a horizontal scrollbar. These two
+   lines keep a CSS failure inside the map box. */
+#dss-map { width: 100%; height: 500px; border-radius: .5rem; overflow: hidden; position: relative; }
+/* Bootstrap sets `img { max-width: 100% }`, which squashes Leaflet's
+   tiles into the wrong size and scatters them. Leaflet's CSS overrides
+   this itself, but repeating it here means our own stylesheet -- which
+   is served locally and cannot fail -- also protects against it. */
+.leaflet-container img { max-width: none !important; }
+/* Shown in place of the map when Leaflet's stylesheet didn't load --
+   see assertLeafletCssLoaded() in app/static/js/map.js. */
+.dss-map-unavailable {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  height: 100%; padding: 1.5rem; background: #f1f3f5; color: #6c757d; font-size: .875rem;
+}
+/* Home page's map preview reuses the exact same #dss-map (see map.js) --
+   just smaller. #dss-map.dss-mini-map beats the plain #dss-map rule
+   above on specificity regardless of stylesheet order. */
+#dss-map.dss-mini-map { height: 260px; }
+.dss-legend-swatch { width: 16px; height: 16px; display:inline-block; border-radius:3px; margin-right:.4rem; vertical-align:middle;}
+
+/* "Powered by Google" mark pinned inside the TOP-LEFT of the Leaflet
+   map. Required by Google's Places policy: the competitor counts shown
+   on this map come from the Google Places API, and Places-derived
+   content must carry Google attribution in the same visual element,
+   near the top or bottom of the content. See
+   addGoogleAttributionControl() in app/static/js/map.js -- including
+   the Maps ToS section 10.5 caveat documented there and in README 5.2. */
+.dss-google-attribution {
+  background: #fff;
+  padding: 3px 6px;
+  border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
+  line-height: 0;
+}
+.dss-google-attribution img { display: block; }
+.dss-google-attribution-text {
+  font-size: .7rem;
+  line-height: 1.1;
+  color: #5f6368;
+  font-weight: 500;
+  white-space: nowrap;
+}
+/* Leaflet's popup, styled to match the compact hover tooltip the Google
+   InfoWindow used to render. */
+.dss-map-popup .leaflet-popup-content { margin: .55rem .7rem; font-size: .82rem; }
+.dss-map-popup .leaflet-popup-content-wrapper { border-radius: .4rem; }
+
+/* Saturation-tier legend buttons on the map -- clicking one filters that
+   tier off the map. A filtered-off tier goes grey + struck through, so
+   its state is readable without relying on colour. */
+.dss-tier-toggle {
+  background: none; border: 1px solid transparent; border-radius: .4rem;
+  padding: .15rem .5rem; cursor: pointer; font: inherit; color: inherit;
+  display: inline-flex; align-items: center; transition: opacity .12s ease, background .12s ease;
+}
+.dss-tier-toggle:hover { background: #f1f3f5; border-color: #dee2e6; }
+.dss-tier-toggle.dss-tier-off { opacity: .45; text-decoration: line-through; }
+.dss-tier-toggle.dss-tier-off .dss-legend-swatch { filter: grayscale(1); }
+
+/* ---------------- Trend Reports: scrollable industry legend ---------------- */
+.dss-scroll-legend {
+  max-height: 190px;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: .4rem;
+  padding: .5rem .75rem;
+}
+.dss-scroll-legend-item {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .3rem 0;
+  cursor: pointer;
+  font-size: .8rem;
+  border-bottom: 1px solid #f1f5f9;
+  user-select: none;
+}
+.dss-scroll-legend-item:last-child { border-bottom: none; }
+.dss-scroll-legend-item:hover { color: var(--dss-blue); }
+.dss-scroll-legend-item.dss-legend-off { opacity: .4; text-decoration: line-through; }
+
+/* ---------------- Misc ---------------- */
+.dss-flash-wrap { padding: 1rem 1.5rem 0; }
+.dss-fw-600 { font-weight: 600; }
+.dss-text-muted-sm { font-size: .8rem; color: #6b7280; }
+
+@media (max-width: 900px) {
+  .dss-sidebar { position: fixed; z-index: 1030; transform: translateX(-100%); transition: transform .2s; }
+  .dss-sidebar.open { transform: translateX(0); }
+}
+
+/* =====================================================================
+   MARKETLENS BRAND + PUBLIC LANDING (sign-in / register)
+   =====================================================================
+   Appended rather than woven into the rules above so the authenticated
+   app's styling is untouched: everything here is namespaced `ml-` and
+   only the auth pages and the two brand lockups use it.
+
+   Palette sampled from the supplied logo artwork rather than guessed --
+   #112a48 is the navy of the mark and the "Market" wordmark, #5ccfea the
+   cyan of "Lens" and the chart bars.
+   ===================================================================== */
+:root {
+  --ml-navy:      #112a48;
+  --ml-navy-800:  #16324f;
+  --ml-navy-700:  #1d4066;
+  --ml-navy-600:  #285a80;
+  --ml-cyan:      #5ccfea;
+  --ml-cyan-600:  #2ba6c8;
+  --ml-cyan-700:  #1d87a6;
+  --ml-ink:       #0d1b2a;
+  --ml-body:      #4a5a6a;
+  --ml-line:      #e3e9f0;
+  --ml-surface:   #ffffff;
+  --ml-surface-2: #f4f8fb;
+}
+
+/* ---------------- Brand lockup (shared/_brand.html) ---------------- */
+.ml-brand { display: inline-flex; align-items: center; gap: .6rem; line-height: 1; }
+.ml-brand-text { display: flex; flex-direction: column; gap: .18rem; min-width: 0; }
+.ml-brand-icon { display: block; width: auto; flex-shrink: 0; }
+.ml-brand-word { display: block; width: auto; }
+
+.ml-brand-sm .ml-brand-icon { height: 30px; }
+.ml-brand-sm .ml-brand-word { height: 19px; }
+.ml-brand-md .ml-brand-icon { height: 38px; }
+.ml-brand-md .ml-brand-word { height: 24px; }
+.ml-brand-lg .ml-brand-icon { height: 58px; }
+.ml-brand-lg .ml-brand-word { height: 36px; }
+
+.ml-brand-tagline {
+  font-size: .62rem; letter-spacing: .09em; text-transform: uppercase;
+  font-weight: 600; color: #7c8ea1; white-space: nowrap;
+}
+.ml-brand-light .ml-brand-tagline { color: rgba(255,255,255,.62); }
+
+/* =====================================================================
+   The landing shell
+   =====================================================================
+   body.dss-body is `display:flex`, so this has to claim the full row --
+   without flex:1 the landing would shrink to its content width and sit
+   against the left edge.
+   ===================================================================== */
+.ml-landing {
+  flex: 1 1 100%;
+  min-width: 0;
+  position: relative;
+  background: var(--ml-navy);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  overflow-x: clip;   /* the drifting orbs are wider than the viewport */
+}
+
+/* ---------------- Animated backdrop ----------------
+   Fixed, behind everything, and click-through. Four layers:
+   a panning grid, three drifting colour orbs, radar rings that echo the
+   magnifier in the logo, and a row of rising bars. All transform/opacity
+   only, so they run on the compositor and never trigger layout. */
+.ml-bg {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 620px at 78% -8%, #1d4066 0%, transparent 62%),
+    radial-gradient(760px 520px at 8% 12%, #14395c 0%, transparent 60%),
+    linear-gradient(180deg, #112a48 0%, #0d2239 55%, #0b1d31 100%);
+}
+
+.ml-bg-grid {
+  position: absolute; inset: -60% -20%;
+  background-image:
+    linear-gradient(rgba(92,207,234,.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(92,207,234,.055) 1px, transparent 1px);
+  background-size: 64px 64px;
+  transform: perspective(620px) rotateX(58deg);
+  transform-origin: 50% 0;
+  animation: ml-grid-pan 26s linear infinite;
+  mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 55%, transparent 88%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 55%, transparent 88%);
+}
+@keyframes ml-grid-pan { to { background-position: 0 64px, 64px 0; } }
+
+.ml-orb {
+  position: absolute; border-radius: 50%;
+  filter: blur(70px); opacity: .5;
+  will-change: transform;
+}
+.ml-orb-1 {
+  width: 620px; height: 620px; top: -180px; right: -140px;
+  background: radial-gradient(circle, rgba(92,207,234,.62), transparent 68%);
+  animation: ml-drift-a 24s ease-in-out infinite alternate;
+}
+.ml-orb-2 {
+  width: 520px; height: 520px; top: 34%; left: -190px;
+  background: radial-gradient(circle, rgba(43,166,200,.52), transparent 68%);
+  animation: ml-drift-b 30s ease-in-out infinite alternate;
+}
+.ml-orb-3 {
+  width: 440px; height: 440px; bottom: -160px; left: 46%;
+  background: radial-gradient(circle, rgba(63,129,201,.45), transparent 70%);
+  animation: ml-drift-c 27s ease-in-out infinite alternate;
+}
+@keyframes ml-drift-a { to { transform: translate3d(-120px, 90px, 0) scale(1.14); } }
+@keyframes ml-drift-b { to { transform: translate3d(140px, -70px, 0) scale(1.09); } }
+@keyframes ml-drift-c { to { transform: translate3d(-90px, -110px, 0) scale(1.17); } }
+
+/* Radar rings -- the visual rhyme with the magnifying glass in the mark. */
+.ml-radar { position: absolute; top: 20%; right: 13%; width: 0; height: 0; }
+.ml-radar i {
+  position: absolute; left: 50%; top: 50%;
+  width: 240px; height: 240px; margin: -120px 0 0 -120px;
+  border: 1px solid rgba(92,207,234,.42);
+  border-radius: 50%;
+  opacity: 0;
+  animation: ml-ping 7s ease-out infinite;
+}
+.ml-radar i:nth-child(2) { animation-delay: 2.33s; }
+.ml-radar i:nth-child(3) { animation-delay: 4.66s; }
+@keyframes ml-ping {
+  0%   { transform: scale(.28); opacity: 0; }
+  12%  { opacity: .85; }
+  100% { transform: scale(2.3); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* A still backdrop, not a broken one: the layers stay, they just stop. */
+  .ml-bg-grid, .ml-orb, .ml-radar i { animation: none !important; }
+  .ml-radar i { opacity: .3; }
+  .ml-landing * { scroll-behavior: auto !important; }
+}
+
+/* Everything above the backdrop. */
+.ml-landing > *:not(.ml-bg) { position: relative; z-index: 1; }
+
+/* ---------------- Top nav ---------------- */
+.ml-nav {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: 1.5rem;
+  padding: .9rem clamp(1rem, 4vw, 3rem);
+  transition: background .25s ease, box-shadow .25s ease, backdrop-filter .25s ease;
+}
+.ml-nav.is-stuck {
+  background: rgba(13, 27, 42, .82);
+  backdrop-filter: saturate(150%) blur(12px);
+  -webkit-backdrop-filter: saturate(150%) blur(12px);
+  box-shadow: 0 1px 0 rgba(255,255,255,.08), 0 10px 30px -18px rgba(0,0,0,.8);
+}
+.ml-nav-brand { text-decoration: none; flex-shrink: 0; }
+.ml-nav-links { display: flex; gap: 1.75rem; margin-left: auto; }
+.ml-nav-links a {
+  color: rgba(255,255,255,.78); text-decoration: none; font-size: .92rem; font-weight: 500;
+  padding: .25rem 0; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s;
+}
+.ml-nav-links a:hover { color: #fff; border-bottom-color: var(--ml-cyan); }
+.ml-nav-cta { flex-shrink: 0; }
+
+/* ---------------- Buttons ---------------- */
+.ml-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+  padding: .62rem 1.25rem; border-radius: .65rem; border: 1px solid transparent;
+  font-weight: 600; font-size: .94rem; text-decoration: none; cursor: pointer;
+  transition: transform .12s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease;
+}
+.ml-btn:active { transform: translateY(1px); }
+.ml-btn-lg { padding: .85rem 1.7rem; font-size: 1rem; border-radius: .75rem; }
+
+.ml-btn-primary {
+  background: linear-gradient(135deg, var(--ml-cyan) 0%, var(--ml-cyan-600) 100%);
+  color: var(--ml-navy);
+  box-shadow: 0 10px 26px -12px rgba(92,207,234,.85);
+}
+.ml-btn-primary:hover { color: var(--ml-navy); box-shadow: 0 14px 32px -12px rgba(92,207,234,1); }
+
+.ml-btn-outline { border-color: rgba(255,255,255,.34); color: #fff; background: transparent; }
+.ml-btn-outline:hover { border-color: #fff; background: rgba(255,255,255,.08); color: #fff; }
+
+.ml-btn-ghost {
+  border-color: rgba(255,255,255,.22); color: #fff;
+  background: rgba(255,255,255,.07); padding: .5rem 1.05rem; font-size: .9rem;
+}
+.ml-btn-ghost:hover { background: rgba(255,255,255,.15); color: #fff; }
+
+/* ---------------- Hero ---------------- */
+.ml-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
+  gap: clamp(2rem, 5vw, 4.5rem);
+  align-items: center;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: clamp(2.5rem, 6vw, 5rem) clamp(1rem, 4vw, 3rem) clamp(3.5rem, 7vw, 6rem);
+}
+.ml-hero-compact { padding-top: clamp(1.5rem, 3vw, 2.5rem); align-items: start; }
+
+.ml-eyebrow {
+  display: inline-flex; align-items: center; gap: .45rem;
+  padding: .35rem .85rem; border-radius: 999px;
+  background: rgba(92,207,234,.14); border: 1px solid rgba(92,207,234,.3);
+  color: var(--ml-cyan); font-size: .78rem; font-weight: 600; letter-spacing: .02em;
+}
+.ml-hero h1 {
+  margin: 1.1rem 0 0; font-size: clamp(2.3rem, 5.2vw, 3.9rem); line-height: 1.06;
+  font-weight: 800; letter-spacing: -.025em; color: #fff;
+}
+.ml-hero h1 em {
+  font-style: normal;
+  background: linear-gradient(100deg, var(--ml-cyan), #9ae6f7);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.ml-lede {
+  margin: 1.15rem 0 0; max-width: 34rem;
+  font-size: clamp(1rem, 1.3vw, 1.1rem); line-height: 1.65; color: rgba(255,255,255,.76);
+}
+.ml-hero-cta { display: flex; flex-wrap: wrap; gap: .8rem; margin-top: 2rem; }
+
+.ml-hero-stats {
+  display: flex; flex-wrap: wrap; gap: clamp(1.5rem, 4vw, 3rem);
+  margin: 2.6rem 0 0; padding-top: 1.6rem;
+  border-top: 1px solid rgba(255,255,255,.12);
+}
+.ml-hero-stats dt {
+  font-size: 1.65rem; font-weight: 800; color: var(--ml-cyan); line-height: 1;
+}
+.ml-hero-stats dd {
+  margin: .3rem 0 0; font-size: .82rem; color: rgba(255,255,255,.6);
+}
+
+.ml-hero-form { width: 100%; }
+.ml-hero-form-wide { max-width: 560px; }
+.ml-hero-form-note {
+  margin: 1rem .25rem 0; font-size: .8rem; line-height: 1.5;
+  color: rgba(255,255,255,.55);
+}
+.ml-hero-form-note i { color: var(--ml-cyan); }
+
+/* ---------------- Cards & the auth form ---------------- */
+.ml-card {
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-line);
+  border-radius: 1rem;
+  color: var(--ml-ink);
+}
+.ml-auth-card {
+  padding: clamp(1.5rem, 3vw, 2.15rem);
+  box-shadow: 0 30px 60px -24px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.14);
+}
+.ml-auth-head { margin-bottom: 1.4rem; }
+.ml-auth-head h2 { margin: 0 0 .3rem; font-size: 1.45rem; font-weight: 700; color: var(--ml-ink); }
+.ml-auth-head p  { margin: 0; font-size: .9rem; color: var(--ml-body); }
+
+.ml-auth-card .form-label { font-weight: 600; font-size: .86rem; color: #33445a; margin-bottom: .35rem; }
+.ml-auth-card .input-group-text { background: var(--ml-surface-2); border-color: #dbe3ec; color: #64778c; }
+.ml-auth-card .form-control { border-color: #dbe3ec; padding-top: .6rem; padding-bottom: .6rem; }
+.ml-auth-card .form-control:focus {
+  border-color: var(--ml-cyan-600);
+  box-shadow: 0 0 0 .2rem rgba(92,207,234,.25);
+}
+.ml-auth-card .form-text { font-size: .78rem; }
+.ml-auth-alt {
+  margin: 1.35rem 0 0; padding-top: 1.15rem; border-top: 1px solid var(--ml-line);
+  text-align: center; font-size: .9rem; color: var(--ml-body);
+}
+.ml-auth-alt a { color: var(--ml-cyan-700); font-weight: 600; text-decoration: none; }
+.ml-auth-alt a:hover { text-decoration: underline; }
+
+/* Role picker on the registration form. */
+.ml-role-picker { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; }
+.ml-role-picker label {
+  display: flex; flex-direction: column; gap: .15rem;
+  padding: .8rem .9rem; border: 1.5px solid #dbe3ec; border-radius: .7rem;
+  cursor: pointer; transition: border-color .15s, background .15s, box-shadow .15s;
+  margin: 0;
+}
+.ml-role-picker label i { font-size: 1.15rem; color: var(--ml-cyan-700); margin-bottom: .2rem; }
+.ml-role-title { font-weight: 700; font-size: .87rem; color: var(--ml-ink); }
+.ml-role-sub   { font-size: .74rem; color: var(--ml-body); }
+.ml-role-picker label:hover { border-color: var(--ml-cyan); background: #f6fcfe; }
+.ml-role-picker .btn-check:checked + label {
+  border-color: var(--ml-cyan-600); background: #eefaff;
+  box-shadow: 0 0 0 .18rem rgba(92,207,234,.22);
+}
+.ml-role-picker .btn-check:focus-visible + label { outline: 2px solid var(--ml-cyan-600); outline-offset: 2px; }
+
+/* ---------------- Content sections ---------------- */
+.ml-section {
+  max-width: 1240px; margin: 0 auto;
+  padding: clamp(3rem, 7vw, 5.5rem) clamp(1rem, 4vw, 3rem);
+}
+.ml-section-alt {
+  max-width: none;
+  background: rgba(255,255,255,.035);
+  border-top: 1px solid rgba(255,255,255,.08);
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.ml-section-alt > * { max-width: 1240px; margin-left: auto; margin-right: auto; }
+
+.ml-section-head { max-width: 46rem; margin-bottom: 2.6rem; }
+.ml-kicker {
+  display: inline-block; font-size: .76rem; font-weight: 700; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ml-cyan); margin-bottom: .7rem;
+}
+.ml-section-head h2 {
+  margin: 0; font-size: clamp(1.6rem, 3vw, 2.25rem); font-weight: 800;
+  letter-spacing: -.02em; color: #fff;
+}
+.ml-section-head p { margin: .9rem 0 0; color: rgba(255,255,255,.68); line-height: 1.65; }
+
+.ml-grid { display: grid; gap: 1.15rem; }
+.ml-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ml-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* Glass cards on the dark backdrop, rather than the white .ml-card. */
+.ml-feature, .ml-audience {
+  background: rgba(255,255,255,.055);
+  border: 1px solid rgba(255,255,255,.1);
+  color: #fff;
+  padding: 1.6rem 1.45rem;
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+}
+.ml-feature:hover, .ml-audience:hover {
+  transform: translateY(-3px);
+  border-color: rgba(92,207,234,.45);
+  background: rgba(255,255,255,.085);
+}
+.ml-feature h3 { margin: 1rem 0 .45rem; font-size: 1.05rem; font-weight: 700; }
+.ml-feature p  { margin: 0; font-size: .89rem; line-height: 1.6; color: rgba(255,255,255,.68); }
+
+.ml-feature-icon, .ml-audience-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: .7rem; font-size: 1.25rem; flex-shrink: 0;
+}
+.ml-i-blue  { background: rgba(63,129,201,.22);  color: #8ec2f5; }
+.ml-i-cyan  { background: rgba(92,207,234,.2);   color: var(--ml-cyan); }
+.ml-i-green { background: rgba(34,197,94,.18);   color: #6ee7a0; }
+.ml-i-amber { background: rgba(249,115,22,.18);  color: #fbbf72; }
+.ml-i-navy  { background: rgba(255,255,255,.12); color: #cfe6f5; }
+
+.ml-audience { display: flex; gap: 1.15rem; padding: 1.8rem 1.7rem; }
+.ml-audience h3 { margin: 0 0 .5rem; font-size: 1.15rem; font-weight: 700; }
+.ml-audience p  { margin: 0 0 .9rem; font-size: .9rem; line-height: 1.6; color: rgba(255,255,255,.68); }
+.ml-audience ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+.ml-audience li { font-size: .86rem; color: rgba(255,255,255,.8); }
+.ml-audience li i { color: var(--ml-cyan); margin-right: .45rem; }
+
+/* Numbered steps. */
+.ml-steps {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.6rem;
+  counter-reset: ml-step;
+}
+.ml-steps li { position: relative; padding-top: .4rem; }
+.ml-step-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--ml-cyan), var(--ml-cyan-600));
+  color: var(--ml-navy); font-weight: 800; font-size: 1.05rem;
+  box-shadow: 0 8px 20px -10px rgba(92,207,234,.9);
+}
+.ml-steps h3 { margin: .95rem 0 .45rem; font-size: 1.08rem; font-weight: 700; color: #fff; }
+.ml-steps p  { margin: 0; font-size: .89rem; line-height: 1.6; color: rgba(255,255,255,.68); }
+
+/* Reassurance list on the register page. */
+.ml-assure { list-style: none; margin: 2.2rem 0 0; padding: 0; display: grid; gap: 1.1rem; max-width: 30rem; }
+.ml-assure li { display: flex; gap: .85rem; align-items: flex-start; }
+.ml-assure i { color: var(--ml-cyan); font-size: 1.1rem; margin-top: .12rem; }
+.ml-assure span { font-size: .91rem; line-height: 1.55; color: rgba(255,255,255,.7); }
+.ml-assure strong { color: #fff; font-weight: 650; }
+
+/* ---------------- Closing CTA + footer ---------------- */
+.ml-cta-band {
+  max-width: 1240px; margin: 0 auto clamp(3rem, 6vw, 4.5rem);
+  padding: clamp(2rem, 4vw, 3rem) clamp(1.5rem, 4vw, 3rem);
+  border-radius: 1.25rem;
+  background: linear-gradient(120deg, rgba(92,207,234,.16), rgba(43,166,200,.07));
+  border: 1px solid rgba(92,207,234,.28);
+  display: flex; flex-wrap: wrap; gap: 1.6rem; align-items: center; justify-content: space-between;
+}
+.ml-cta-band h2 { margin: 0 0 .4rem; font-size: clamp(1.4rem, 2.6vw, 1.85rem); font-weight: 800; color: #fff; }
+.ml-cta-band p  { margin: 0; color: rgba(255,255,255,.72); font-size: .95rem; }
+.ml-cta-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+
+.ml-footer {
+  border-top: 1px solid rgba(255,255,255,.1);
+  padding: 2.2rem clamp(1rem, 4vw, 3rem);
+  max-width: 1240px; margin: 0 auto;
+  display: flex; flex-wrap: wrap; gap: 1.2rem;
+  align-items: center; justify-content: space-between;
+}
+.ml-footer-brand p { margin: .6rem 0 0; font-size: .82rem; color: rgba(255,255,255,.55); max-width: 34rem; }
+.ml-footer-note { margin: 0; font-size: .78rem; color: rgba(255,255,255,.42); max-width: 22rem; }
+
+/* Flash messages sit above the landing; keep them readable on navy. */
+.ml-landing ~ .dss-flash-wrap, .dss-flash-wrap:has(+ .ml-landing) { position: relative; z-index: 40; }
+
+/* ---------------- Responsive ---------------- */
+@media (max-width: 1080px) {
+  .ml-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .ml-hero { grid-template-columns: minmax(0, 1fr); }
+  .ml-hero-form { order: -1; }          /* form first on a phone */
+  .ml-hero-form-wide { max-width: none; }
+  .ml-nav-links { display: none; }
+  .ml-steps { grid-template-columns: minmax(0, 1fr); }
+  .ml-grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .ml-grid-4 { grid-template-columns: minmax(0, 1fr); }
+  .ml-role-picker { grid-template-columns: 1fr; }
+  .ml-audience { flex-direction: column; }
+  .ml-hero-stats { gap: 1.4rem; }
+  .ml-cta-band, .ml-footer { flex-direction: column; align-items: flex-start; }
+}
+
+/* =====================================================================
+   Brand inside the authenticated app (sidebar + topbar)
+   ===================================================================== */
+.dss-sidebar-brand-link { display: block; text-decoration: none; color: inherit; }
+.dss-sidebar-brand-link:hover { opacity: .85; }
+.dss-sidebar-sub {
+  display: block; margin-top: .55rem; font-size: .62rem; line-height: 1.35;
+  letter-spacing: .04em; color: #94a3b8; text-transform: uppercase; font-weight: 600;
+}
+.dss-topbar-brand { display: flex; align-items: center; gap: .75rem; min-width: 0; }
+.dss-topbar-brand .ml-brand { flex-shrink: 0; }
+.dss-topbar-context {
+  font-weight: 600; font-size: .92rem; color: #334155;
+  border-left: 1px solid #c7d7e6; padding-left: .75rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The sidebar already carries the full lockup, so the topbar shows the
+   mark plus the page context on desktop and does not repeat the name.
+   Below 900px the sidebar slides off-screen (see the layout media query
+   above) -- there the wordmark comes back and the context text goes, so
+   every page stays branded on a phone. */
+@media (min-width: 901px) {
+  .dss-topbar-brand .ml-brand-word { display: none; }
+  .dss-topbar-brand .ml-brand { gap: 0; }
+}
+@media (max-width: 900px) {
+  .dss-topbar-context { display: none; }
+}
+
+/* ---------------- Verify-email page ---------------- */
+.ml-landing-short { display: flex; flex-direction: column; min-height: 100vh; }
+.ml-verify {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1.5rem; padding: clamp(2rem, 6vw, 4rem) 1rem clamp(3rem, 8vw, 5rem);
+}
+.ml-verify .ml-auth-card { width: 100%; max-width: 440px; }
+.ml-verify-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 54px; height: 54px; border-radius: 50%; margin-bottom: .9rem;
+  background: rgba(92,207,234,.16); color: var(--ml-cyan-700); font-size: 1.5rem;
+}
+.ml-verify-notes {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem;
+  font-size: .85rem; color: rgba(255,255,255,.6); text-align: center;
+}
+.ml-verify-notes i { color: var(--ml-cyan); margin-right: .4rem; }
+.ml-landing-short .ml-nav-cta { margin-left: auto; }
+.dss-otp-input { letter-spacing: .5em; font-weight: 700; }
+
+/* ---------------- Sign-up wizard (auth/register.html) ---------------- */
+.ml-steps-rail {
+  list-style: none; display: flex; gap: .4rem; margin: 0 0 1.5rem; padding: 0 0 1.1rem;
+  border-bottom: 1px solid var(--ml-line);
+}
+.ml-steps-rail li {
+  display: flex; align-items: center; gap: .45rem; flex: 1 1 0; min-width: 0;
+  font-size: .76rem; font-weight: 600; color: #93a3b5; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.ml-steps-rail li span {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #e8eef5; color: #7a8ca0; font-size: .72rem; font-weight: 700;
+}
+.ml-steps-rail li.is-active { color: var(--ml-ink); }
+.ml-steps-rail li.is-active span { background: var(--ml-cyan-600); color: #fff; }
+.ml-steps-rail li.is-done { color: var(--ml-cyan-700); }
+.ml-steps-rail li.is-done span { background: rgba(92,207,234,.25); color: var(--ml-cyan-700); }
+
+.ml-step-actions { display: flex; gap: .65rem; margin-top: 1.6rem; }
+.ml-step-actions .ml-btn { flex: 1 1 auto; justify-content: center; }
+.ml-step-actions .ml-btn-outline-dark { flex: 0 0 auto; }
+
+/* The dark-on-light outline button -- .ml-btn-outline is white-on-navy,
+   which is invisible inside the white form card. */
+.ml-btn-outline-dark { border-color: #cfdae6; color: #45596e; background: #fff; }
+.ml-btn-outline-dark:hover { border-color: var(--ml-cyan-600); color: var(--ml-cyan-700); background: #f4fbfe; }
+
+.ml-step-note {
+  margin: .9rem 0 0; font-size: .8rem; line-height: 1.5; color: var(--ml-body);
+}
+.ml-step-note i { color: var(--ml-cyan-700); margin-right: .3rem; }
+.ml-step-note:empty { display: none; }
+
+.ml-auth-card .form-select { border-color: #dbe3ec; padding-top: .6rem; padding-bottom: .6rem; }
+.ml-auth-card .form-select:focus {
+  border-color: var(--ml-cyan-600); box-shadow: 0 0 0 .2rem rgba(92,207,234,.25);
+}
+
+@media (max-width: 480px) {
+  /* Numbers only -- three labels will not fit, and a wrapped rail reads
+     worse than a compact one. */
+  .ml-steps-rail li { font-size: 0; gap: 0; justify-content: center; }
+  .ml-steps-rail li span { font-size: .72rem; }
+  .ml-step-actions { flex-direction: column-reverse; }
+}
+
+/* =====================================================================
+   SETTINGS PAGE
+   ===================================================================== */
+.dss-settings { display: grid; grid-template-columns: 268px minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.dss-settings-nav { display: flex; flex-direction: column; gap: .3rem; position: sticky; top: 1rem; }
+.dss-settings-tab {
+  display: flex; align-items: flex-start; gap: .7rem; width: 100%; text-align: left;
+  padding: .7rem .85rem; border: 1px solid transparent; border-radius: .6rem;
+  background: transparent; color: #374151; cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.dss-settings-tab i { font-size: 1.05rem; margin-top: .12rem; flex-shrink: 0; }
+.dss-settings-tab span { display: flex; flex-direction: column; min-width: 0; }
+.dss-settings-tab strong { font-size: .9rem; font-weight: 600; }
+.dss-settings-tab small { font-size: .74rem; color: #8494a6; line-height: 1.35; }
+.dss-settings-tab:hover { background: #eef2f7; }
+.dss-settings-tab.active {
+  background: var(--dss-blue-light); border-color: #c7dcfb; color: var(--dss-blue-dark);
+}
+.dss-settings-tab.active small { color: #5b7fb5; }
+
+/* Until the page's script runs, every pane is visible and stacked -- a
+   worse layout, but a working page with JavaScript off. `is-tabbed` is
+   added by that script and is what turns them into real tabs. */
+.dss-settings.is-tabbed .dss-settings-pane { display: none; }
+.dss-settings.is-tabbed .dss-settings-pane.active { display: block; }
+.dss-settings-pane + .dss-settings-pane { margin-top: 1.5rem; }
+.dss-settings.is-tabbed .dss-settings-pane + .dss-settings-pane { margin-top: 0; }
+
+.dss-notif-list { max-height: 420px; overflow-y: auto; }
+.dss-notif-unread { background: rgba(37,99,235,.05); }
+.min-w-0 { min-width: 0; }
+
+/* Theme picker */
+.dss-theme-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; max-width: 460px; }
+.dss-theme-picker label {
+  display: flex; flex-direction: column; gap: .3rem; margin: 0; cursor: pointer;
+  padding: .85rem; border: 1.5px solid #dbe3ec; border-radius: .7rem;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.dss-theme-picker label strong { font-size: .9rem; }
+.dss-theme-picker label small { font-size: .74rem; color: #6b7c8f; line-height: 1.4; }
+.dss-theme-picker label:hover { border-color: var(--ml-cyan); }
+.dss-theme-picker .btn-check:checked + label {
+  border-color: var(--ml-cyan-600); background: rgba(92,207,234,.09);
+  box-shadow: 0 0 0 .18rem rgba(92,207,234,.2);
+}
+.dss-theme-picker .btn-check:focus-visible + label { outline: 2px solid var(--ml-cyan-600); outline-offset: 2px; }
+
+/* A miniature of the interface, so the choice is recognisable at a
+   glance rather than a word. */
+.dss-theme-swatch {
+  display: block; height: 52px; border-radius: .4rem; overflow: hidden; margin-bottom: .35rem;
+  border: 1px solid rgba(0,0,0,.12); position: relative;
+}
+.dss-theme-swatch span { position: absolute; display: block; }
+.dss-theme-swatch span:nth-child(1) { inset: 0 auto 0 0; width: 30%; }        /* sidebar */
+.dss-theme-swatch span:nth-child(2) { inset: 0 0 auto 30%; right: 0; height: 30%; } /* topbar */
+.dss-theme-swatch span:nth-child(3) { inset: 38% 12% 18% 38%; border-radius: 2px; } /* card */
+.dss-theme-swatch-light span:nth-child(1) { background: #f3f4f6; }
+.dss-theme-swatch-light span:nth-child(2) { background: #dbeafe; }
+.dss-theme-swatch-light span:nth-child(3) { background: #ffffff; box-shadow: 0 0 0 1px rgba(0,0,0,.08); }
+.dss-theme-swatch-light { background: #f8fafc; }
+.dss-theme-swatch-dark span:nth-child(1) { background: #131c26; }
+.dss-theme-swatch-dark span:nth-child(2) { background: #16304f; }
+.dss-theme-swatch-dark span:nth-child(3) { background: #1b2733; box-shadow: 0 0 0 1px rgba(255,255,255,.1); }
+.dss-theme-swatch-dark { background: #0f1720; }
+@media (max-width: 992px) {
+  .dss-settings { grid-template-columns: minmax(0, 1fr); }
+  .dss-settings-nav { position: static; flex-direction: row; overflow-x: auto; padding-bottom: .4rem; }
+  .dss-settings-tab { width: auto; flex: 0 0 auto; }
+  .dss-settings-tab small { display: none; }
+  .dss-theme-picker { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* =====================================================================
+   DARK MODE
+   =====================================================================
+   Bootstrap 5.3 recolours its OWN components from data-bs-theme="dark"
+   (see base.html), which covers cards, tables, dropdowns, modals, form
+   controls and buttons for free. What is left is this project's custom
+   `dss-` surfaces, which were written with hard-coded light greys --
+   they are re-pointed here rather than rewritten, so light mode is
+   byte-for-byte what it was.
+
+   The map is a deliberate exception. Its tiles and the choropleth colour
+   scale stay exactly as they are in either theme: those colours ENCODE
+   saturation, and re-tinting them for contrast would change what the map
+   says.
+   ===================================================================== */
+[data-bs-theme="dark"] {
+  --dss-blue: #4f9bff;
+  --dss-blue-dark: #8bbcff;
+  --dss-blue-light: rgba(79,155,255,.16);
+  --dss-gray-bg: #0f1720;
+
+  --ml-line: #26313d;
+  --ml-ink: #e6edf5;
+  --ml-body: #9fb3c8;
+  --ml-surface: #16202b;
+  --ml-surface-2: #1b2733;
+}
+
+[data-bs-theme="dark"] body.dss-body { background: var(--dss-gray-bg); color: #dbe5f0; }
+
+[data-bs-theme="dark"] .dss-sidebar { background: #131c26; border-right-color: #223040; }
+[data-bs-theme="dark"] .dss-sidebar-header { border-bottom-color: #223040; }
+[data-bs-theme="dark"] .dss-sidebar-footer { border-top-color: #223040; color: #64798f; }
+[data-bs-theme="dark"] .dss-sidebar-sub { color: #6f8399; }
+[data-bs-theme="dark"] .dss-nav-link { color: #b9c9db; }
+[data-bs-theme="dark"] .dss-nav-link:hover { background: #1d2936; }
+[data-bs-theme="dark"] .dss-nav-link.active { background: var(--dss-blue-light); color: #9cc4ff; }
+[data-bs-theme="dark"] .dss-nav-section { color: #62748a; }
+
+[data-bs-theme="dark"] .dss-topbar {
+  background: linear-gradient(to right, #16304f, #14202e);
+  border-bottom-color: #223040;
+}
+[data-bs-theme="dark"] .dss-topbar-context { color: #c3d3e5; border-left-color: #2c3d50; }
+
+[data-bs-theme="dark"] .dss-card {
+  background: var(--ml-surface); border-color: var(--ml-line); color: #dbe5f0;
+}
+[data-bs-theme="dark"] .dss-settings-tab { color: #b9c9db; }
+[data-bs-theme="dark"] .dss-settings-tab small { color: #6f8399; }
+[data-bs-theme="dark"] .dss-settings-tab:hover { background: #1d2936; }
+[data-bs-theme="dark"] .dss-settings-tab.active { background: var(--dss-blue-light); border-color: #2d4a6b; color: #9cc4ff; }
+[data-bs-theme="dark"] .dss-notif-unread { background: rgba(79,155,255,.10); }
+[data-bs-theme="dark"] .dss-theme-picker label { border-color: #2b3746; }
+
+/* The landing pages are dark by design in BOTH themes, so they need no
+   dark variant -- but their white form card must not be re-tinted by the
+   rules above either. Left explicitly alone. */
+[data-bs-theme="dark"] .ml-card { background: #16202b; border-color: #26313d; color: #e6edf5; }
+[data-bs-theme="dark"] .ml-auth-head h2 { color: #e6edf5; }
+[data-bs-theme="dark"] .ml-auth-card .form-label { color: #c3d3e5; }
+[data-bs-theme="dark"] .ml-auth-card .input-group-text { background: #1b2733; border-color: #2b3746; color: #8ba0b6; }
+[data-bs-theme="dark"] .ml-role-picker label,
+[data-bs-theme="dark"] .ml-steps-rail { border-color: #2b3746; }
+[data-bs-theme="dark"] .ml-role-title { color: #e6edf5; }
+[data-bs-theme="dark"] .ml-btn-outline-dark { background: #1b2733; border-color: #33475c; color: #c3d3e5; }
+[data-bs-theme="dark"] .ml-steps-rail li span { background: #253242; color: #8ba0b6; }
+
+/* Keep the map itself light-on-light regardless of theme -- see the note
+   at the top of this block. */
+[data-bs-theme="dark"] .dss-map-shell, [data-bs-theme="dark"] .leaflet-container { color-scheme: light; }
+
+/* Theme-aware brand lockup (variant='auto' in shared/_brand.html).
+   Both files are in the markup; exactly one is ever displayed. Driven by
+   data-bs-theme, which base.html resolves BEFORE first paint -- including
+   the "match system" case -- so the right logo is painted first time
+   rather than swapped in afterwards. */
+.ml-brand-auto .ml-on-dark { display: none; }
+[data-bs-theme="dark"] .ml-brand-auto .ml-on-light { display: none; }
+[data-bs-theme="dark"] .ml-brand-auto .ml-on-dark { display: block; }
+
+/* ---------------------------------------------------------------------
+   Bootstrap utilities that are LIGHT BY NAME
+   ---------------------------------------------------------------------
+   .bg-light, .bg-white, .text-dark and .table-light are fixed colours,
+   not theme tokens -- Bootstrap deliberately leaves them alone in dark
+   mode, because "light" is the name of the colour, not a role. Any panel
+   using them therefore stays white on a dark page. That is what left the
+   recommendation metrics strip glowing white in dark mode.
+
+   Re-pointed here, in ONE place, rather than by editing each template:
+   it fixes every current use and every future one, and light mode is
+   untouched. `!important` is required only because the utilities
+   themselves are declared that way.
+
+   (The idiomatic fix is to swap each class for .bg-body-tertiary and
+   friends, which would mean touching a dozen templates and breaking any
+   that genuinely want a permanently-light surface.) */
+[data-bs-theme="dark"] .bg-light { background-color: var(--ml-surface-2) !important; }
+[data-bs-theme="dark"] .bg-white { background-color: var(--ml-surface) !important; }
+[data-bs-theme="dark"] .text-dark { color: #dbe5f0 !important; }
+[data-bs-theme="dark"] .badge.bg-light { background-color: #24313f !important; color: #cfe0f0 !important; }
+[data-bs-theme="dark"] .table-light { --bs-table-bg: #1b2733; --bs-table-color: #dbe5f0; }
+[data-bs-theme="dark"] .list-group-item { background-color: transparent; border-color: var(--ml-line); }
+[data-bs-theme="dark"] .border, [data-bs-theme="dark"] .border-top,
+[data-bs-theme="dark"] .border-bottom, [data-bs-theme="dark"] .border-start,
+[data-bs-theme="dark"] .border-end { border-color: var(--ml-line) !important; }
+
+/* The landing pages are dark in BOTH themes, so their deliberately-white
+   form card must not be caught by the rules above. */
+[data-bs-theme="dark"] .ml-landing .bg-white { background-color: #fff !important; }
+
+/* ---------------------------------------------------------------------
+   Trend report loading bar
+   ---------------------------------------------------------------------
+   The first build of the city-wide report is genuinely slow -- it is 500
+   Random Forest predictions -- so the bar has to hold attention for
+   ~10 seconds without lying about progress it cannot measure. It shows
+   named stages instead of a percentage, and a shimmer that keeps moving
+   so a slow step never looks like a hang. */
+.dss-loader {
+  display: flex; gap: 1rem; align-items: flex-start;
+  padding: 1.1rem 1.25rem;
+  border-radius: .8rem;
+  border: 1px solid var(--ml-line, #e3e9f0);
+  background: linear-gradient(135deg, rgba(37,99,235,.06), rgba(92,207,234,.05));
+}
+[data-bs-theme="dark"] .dss-loader {
+  background: linear-gradient(135deg, rgba(79,155,255,.10), rgba(92,207,234,.06));
+  border-color: #26313d;
+}
+.dss-loader-spin {
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 50%;
+  border: 3px solid rgba(37,99,235,.18);
+  border-top-color: var(--dss-blue, #2563eb);
+  animation: dss-spin .8s linear infinite;
+}
+@keyframes dss-spin { to { transform: rotate(360deg); } }
+
+.dss-loader-body { flex: 1; min-width: 0; }
+.dss-loader-title { font-weight: 600; margin-bottom: .15rem; }
+.dss-loader-step { font-size: .82rem; color: #6b7c8f; min-height: 1.2em; }
+[data-bs-theme="dark"] .dss-loader-step { color: #8ba0b6; }
+
+.dss-loader-track {
+  position: relative; height: 7px; border-radius: 99px; margin-top: .7rem;
+  background: rgba(37,99,235,.12); overflow: hidden;
+}
+.dss-loader-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--dss-blue, #2563eb), #5ccfea);
+  transition: width .45s cubic-bezier(.4, 0, .2, 1);
+}
+/* A sheen travelling along the filled part: motion that is honest,
+   because it represents "still working", not "this much done". */
+.dss-loader-fill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
+  transform: translateX(-100%);
+  animation: dss-sheen 1.4s ease-in-out infinite;
+}
+@keyframes dss-sheen { to { transform: translateX(100%); } }
+
+.dss-loader-done .dss-loader-fill { background: linear-gradient(90deg, #16a34a, #4ade80); }
+.dss-loader-done .dss-loader-fill::after { animation: none; opacity: 0; }
+.dss-loader-done .dss-loader-spin {
+  border-color: rgba(22,163,74,.2); border-top-color: #16a34a; animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dss-loader-spin { animation: none; }
+  .dss-loader-fill::after { animation: none; opacity: 0; }
+}
+
+/* ---------------- Notification preference switches ---------------- */
+.dss-pref { padding: .7rem 0; border-bottom: 1px solid var(--ml-line, #e3e9f0); }
+.dss-pref:last-of-type { border-bottom: 0; }
+.dss-pref .form-check-label { cursor: pointer; display: block; }
+.dss-pref-label { display: block; font-weight: 600; font-size: .9rem; }
+.dss-pref-blurb { display: block; font-size: .78rem; color: #6b7c8f; margin-top: .1rem; }
+[data-bs-theme="dark"] .dss-pref-blurb { color: #8ba0b6; }
+.dss-pref-soon {
+  font-size: .62rem; font-weight: 600; letter-spacing: .02em; vertical-align: middle;
+  margin-left: .35rem; padding: .2em .5em; border-radius: 99px;
+  background: #fff4e5; color: #8a5a00; border: 1px solid #ffe0b2;
+}
+[data-bs-theme="dark"] .dss-pref-soon { background: #3a2c14; color: #f0c485; border-color: #5a4520; }

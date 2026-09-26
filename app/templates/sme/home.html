@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+
+{% block extra_head %}
+<!-- Leaflet's stylesheet MUST load before the map is built, and it must
+     be in <head>, not next to the script at the end of <body>.
+
+     NOTE: no `integrity` attribute on purpose. An SRI hash that does not
+     match exactly what the CDN serves makes the browser silently BLOCK
+     the file -- and a blocked leaflet.css is catastrophic rather than
+     cosmetic: without it the tiles lose `position:absolute` and scatter
+     across the page, and the map container loses `overflow:hidden`, so
+     the choropleth polygons spill over the whole layout. That is exactly
+     the bug this attribute caused here. If you want SRI back, copy the
+     current hashes from https://cdnjs.com/libraries/leaflet -- do not
+     type them from memory. -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
+      crossorigin="anonymous" referrerpolicy="no-referrer">
+{% endblock %}
+
+{% block content %}
+<!-- Hero / search -- matches Reference/Figma_Storyboard/src/app/pages/home.tsx's
+     gradient header + centered search bar, minus the duplicate app title
+     (already shown in the shared top bar). -->
+<div class="dss-hero mb-4">
+  <h2 class="text-center mb-1">Tarlac City Market Entry Assistant</h2>
+  <p class="text-center text-muted mb-3">AI-powered saturation &amp; viability insights across all 76 barangays</p>
+
+  <form id="smeSearchForm" class="mx-auto" style="max-width:700px;" role="search" autocomplete="off">
+    <div class="input-group input-group-lg position-relative">
+      <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+      <input type="text" id="smeSearchInput" class="form-control" autocomplete="off" list="locationOptions"
+             placeholder='Search a location (e.g., &quot;Poblacion&quot; or &quot;Food &amp; Beverage in San Vicente&quot;)'>
+      <select id="smeSearchIndustry" class="form-select flex-grow-0" style="max-width:200px;">
+        {% for bt in business_types %}<option value="{{ bt }}">{{ bt }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
+      <div id="smeSearchSuggestions" class="list-group position-absolute w-100 shadow-sm" style="top:100%; left:0; z-index:1050;" hidden></div>
+    </div>
+  </form>
+  <div id="smeSearchResults" class="mx-auto" style="max-width:700px;" hidden></div>
+</div>
+
+<!-- Industry cards (live viability score per business type, for your current/default location) -->
+<div class="row g-3 mb-2">
+  {% for card in industry_cards %}
+  <div class="col-6 col-lg-3">
+    <div class="dss-card dss-card-hover text-center h-100">
+      <div class="dss-industry-icon">{{ card.icon }}</div>
+      <h6 class="mb-0">{{ card.name }}</h6>
+      {% if card.subtitle %}<p class="dss-text-muted-sm mb-2">({{ card.subtitle }})</p>{% else %}<p class="mb-2">&nbsp;</p>{% endif %}
+      <div class="d-flex align-items-center justify-content-center gap-2 small">
+        <span>Market Score</span>
+        <strong class="fs-5">{{ card.score }}</strong>
+        {% if card.trend == 'up' %}<i class="bi bi-arrow-up-circle-fill text-success"></i>
+        {% elif card.trend == 'down' %}<i class="bi bi-arrow-down-circle-fill text-danger"></i>
+        {% else %}<i class="bi bi-dash-circle text-secondary"></i>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="col-12 text-muted">Add a business profile to see live industry scores.</div>
+  {% endfor %}
+</div>
+<p class="text-muted small mb-4">Scores above are for <strong>{{ default_location }}</strong> &middot; use <strong>Add New Plan</strong> below to plan a new business, or scroll down for {{ business_types|length }} more industries.</p>
+
+{% if profiles %}
+<div class="dss-card mb-4">
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <h6 class="mb-0"><i class="bi bi-bookmark-star"></i> Your Saved Business Plans</h6>
+    <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addPlanModal">
+      <i class="bi bi-plus-lg"></i> Add New Plan
+    </button>
+  </div>
+  <ul class="list-group list-group-flush">
+    {% for p in profiles %}
+    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+      <span>{{ p.business_name }} <span class="text-muted small">({{ p.location }})</span></span>
+      <span class="badge bg-light text-dark">{{ p.industry_type }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="text-muted small mt-2 mb-0">To update or delete a plan, open
+     <a href="{{ url_for('profile.settings', section='plans') }}">Settings &rsaquo; Business Preferences</a>.</p>
+</div>
+{% else %}
+<div class="dss-card mb-4 text-center py-4">
+  <p class="text-muted mb-2">You haven't created a business plan yet.</p>
+  <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addPlanModal">
+    <i class="bi bi-plus-lg"></i> Add New Plan
+  </button>
+</div>
+{% endif %}
+
+<!-- Main analysis section -->
+<h4 class="text-center mb-3">AI-Powered Market Saturation &amp; Viability Analysis</h4>
+<div class="row g-4">
+  <!-- Saturation map preview (real data) -->
+  <div class="col-lg-6">
+    <div class="dss-card h-100">
+      <h6 class="mb-3">Interactive Saturation Map: Tarlac City Barangays</h6>
+      <!-- OpenStreetMap via Leaflet -- no API key needed. -->
+      <div id="dss-map" class="dss-mini-map mb-3"></div>
+      <div class="small">
+        <div class="mb-2"><span class="fw-bold">Saturation Intensity Scale</span></div>
+        <div class="d-flex align-items-center gap-2 mb-1"><span class="dss-legend-swatch" style="background:#b91c1c"></span><span>High Saturation</span></div>
+        <div class="d-flex align-items-center gap-2 mb-1"><span class="dss-legend-swatch" style="background:#f97316"></span><span>Moderate</span></div>
+        <div class="d-flex align-items-center gap-2 mb-1"><span class="dss-legend-swatch" style="background:#fde047"></span><span>Low-Moderate</span></div>
+        <div class="d-flex align-items-center gap-2"><span class="dss-legend-swatch" style="background:#22c55e"></span><span>High Opportunity</span></div>
+      </div>
+      <p class="text-muted mt-2 mb-0" style="font-size:.72rem;">Bold outline = Tarlac City's real border. City border data &copy; OpenStreetMap contributors, ODbL.</p>
+      <a href="{{ url_for('sme.saturation_map') }}?industry_type={{ featured_industry_type|urlencode }}" class="btn btn-outline-primary btn-sm w-100 mt-3">
+        <i class="bi bi-map"></i> Open Full Interactive Map
+      </a>
+    </div>
+  </div>
+
+  <!-- Forecast & Recommendations -->
+  <div class="col-lg-6">
+    <div class="dss-card h-100">
+      <h6 class="mb-3">Forecast &amp; Recommendations</h6>
+
+      {% if featured_forecast %}
+        {% set f = featured_forecast %}
+        <p class="text-muted small mb-2">{{ f.input_industry_type }} in {{ f.input_location }}</p>
+
+        <p class="dss-text-muted-sm mb-1">Current vs. Projected Demand &amp; Viability (6-12 month)</p>
+        <canvas id="outlookBarChart" height="130"></canvas>
+        <p class="text-muted mb-3" style="font-size:.68rem;">Q1 uses this forecast's real AI score and this barangay's real foot-traffic data; Q2-Q4 are an illustrative projection, not a separate model run.</p>
+
+        <div class="d-flex align-items-center justify-content-center mb-2">
+          <div class="position-relative" style="width:160px; height:160px;">
+            <canvas id="viabilityGauge" width="160" height="160"></canvas>
+            <div class="position-absolute top-50 start-50 translate-middle text-center">
+              <div class="fs-3 fw-bold">{{ f.viability_score }}</div>
+              <div class="dss-text-muted-sm">/10</div>
+            </div>
+          </div>
+        </div>
+        <div class="text-center mb-3">
+          <div class="dss-text-muted-sm mb-1">Overall Viability Score</div>
+          <div class="d-flex align-items-center justify-content-center gap-2 small">
+            <span class="px-3 py-1 bg-light rounded">Low</span>
+            <span class="px-3 py-1 text-white rounded" style="background: var(--dss-blue);">High</span>
+          </div>
+        </div>
+
+        <div class="border-top pt-3">
+          {% set pill = {'Low':'dss-pill-low','Moderate':'dss-pill-moderate','High':'dss-pill-high','Saturated':'dss-pill-saturated'} %}
+          {% set viability_word = 'HIGH' if f.viability_score >= 6.5 else ('MODERATE' if f.viability_score >= 4 else 'LOW') %}
+          <ul class="small mb-3 list-unstyled">
+            <li>&bull; Current Market Saturation: <span class="dss-stat-pill {{ pill.get(f.cluster_label,'dss-pill-moderate') }}">{{ f.cluster_label|upper }}</span></li>
+            <li class="mt-1">&bull; Projected Viability: <strong>{{ viability_word }}</strong> ({{ f.viability_score }}/10, {{ f.confidence_level }}% confidence)</li>
+          </ul>
+
+          <div class="bg-light rounded p-3">
+            <div class="d-flex gap-3">
+              <div class="fs-3">💡</div>
+              <div class="flex-grow-1">
+                <div class="small mb-2">
+                  <span class="fw-bold">LGU Recommendations</span>
+                  <div id="lguRecommendationList" class="mt-1">
+                    <div class="text-muted"><span class="spinner-border spinner-border-sm"></span> Ranking barangays&hellip;</div>
+                  </div>
+                </div>
+                <div class="small">
+                  <span class="fw-bold">Recommendation:</span><br>
+                  {% if featured_recommendation and featured_recommendation.headline %}
+                    <strong>{{ featured_recommendation.headline }}</strong><br>
+                    {{ featured_recommendation.summary }}
+                  {% else %}
+                    No recommendation available yet.
+                  {% endif %}
+                  <a href="{{ url_for('sme.recommendations') }}" class="d-inline-block mt-1">See full AI-Powered Recommendations &raquo;</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      {% else %}
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-cpu display-4"></i>
+          <p class="mt-2">Add a business plan to generate your first AI forecast.</p>
+          <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addPlanModal">
+            <i class="bi bi-plus-lg"></i> Add New Plan
+          </button>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Footer -- matches Reference/Figma_Storyboard/src/app/pages/home.tsx -->
+<footer class="dss-home-footer mt-4">
+  <div class="d-flex flex-wrap justify-content-between gap-2">
+    <a href="https://psa.gov.ph" target="_blank" rel="noopener" class="text-white text-decoration-none">🌐 PSA Data Source</a>
+    <span>📊 DTI-Verified</span>
+    <span>💬 Community Forum</span>
+    <span>📞 Contact Us</span>
+  </div>
+</footer>
+
+<!-- "+ New Business Plan" modal -- triggered from the top bar's + button
+     (see shared/_topbar.html). Replaces the old always-visible inline
+     "Input Business Parameters" form. -->
+<div class="modal fade" id="addPlanModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('sme.analyze') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-sliders"></i> New Business Plan</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Business name</label>
+              <input type="text" name="business_name" class="form-control" placeholder="e.g., Juan's Coffee Corner" required>
+            </div>
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Industry Type</label>
+              <select name="industry_type" class="form-select" required>
+                {% for bt in business_types %}<option value="{{ bt }}">{{ bt }}</option>{% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Location / Barangay</label>
+            <input type="text" name="location" class="form-control" list="locationOptions"
+                   placeholder="e.g., Poblacion" value="{{ default_location }}" required>
+            <datalist id="locationOptions">
+              {% for loc in locations %}<option value="{{ loc }}">{% endfor %}
+            </datalist>
+            <div class="form-text">Type any of Tarlac City's 76 barangays, or any other location -- the list is just a starting point.</div>
+          </div>
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Business stage</label>
+              <select name="business_stage" id="businessStage" class="form-select">
+                {% for stage in business_stages %}<option value="{{ stage }}">{{ stage|capitalize }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6 mb-3" id="registrationDateField" style="display:none;">
+              <label class="form-label">Registration date</label>
+              <input type="date" name="registration_date" class="form-control">
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-md-4 mb-3">
+              <label class="form-label">Startup Capital (₱)</label>
+              <input type="number" name="startup_capital" class="form-control" min="0" step="1000" placeholder="500000">
+            </div>
+            <div class="col-md-4 mb-3">
+              <label class="form-label">Employee count</label>
+              <input type="number" name="employee_count" class="form-control" min="0" step="1" placeholder="3">
+            </div>
+            <div class="col-md-4 mb-3">
+              <label class="form-label">Est. monthly revenue (₱)</label>
+              <input type="number" name="monthly_revenue_est" class="form-control" min="0" step="1000" placeholder="50000">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-cpu"></i> Run AI Forecast</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+  const stageSelect = document.getElementById('businessStage');
+  const regField = document.getElementById('registrationDateField');
+  function toggleRegField() { regField.style.display = (stageSelect.value === 'existing') ? 'block' : 'none'; }
+  stageSelect.addEventListener('change', toggleRegField);
+  toggleRegField();
+
+  {% if profiles and not featured_forecast %}
+  // A plan exists but couldn't produce a forecast for some reason -- no-op, keep quiet in the UI.
+  {% endif %}
+
+  // The "New plan" button in Settings > Business Preferences
+  // (shared/settings.html) sends the user here with ?new_plan=1 so the
+  // creation modal opens immediately instead of requiring a second
+  // click. Creating a plan still lives on this page; editing one no
+  // longer does.
+  if (new URLSearchParams(window.location.search).get('new_plan') === '1') {
+    document.addEventListener('DOMContentLoaded', function () {
+      const addPlanModalEl = document.getElementById('addPlanModal');
+      if (addPlanModalEl && window.bootstrap) {
+        new bootstrap.Modal(addPlanModalEl).show();
+      }
+    });
+  }
+</script>
+<script>
+  // ---- SME Home search bar ---------------------------------------
+  // Searches locations using the same AI engine / market data the rest
+  // of the app uses (GET /api/forecast) -- see app/controllers/api_controller.py.
+  // No barangays table exists in the real schema, so "known locations"
+  // here means the 76 reference Tarlac City barangays in
+  // app/ml/seed_data.py; any other typed location still works (the AI
+  // engine falls back to dataset averages / an auto-generated
+  // placeholder for it -- see forecasting_service.py), it's just
+  // flagged as an estimate rather than "on file" data.
+  window.DSS_SME_LOCATIONS = {{ locations|tojson }};
+  window.DSS_SME_BUSINESS_TYPES = {{ business_types|tojson }};
+  window.DSS_FORECAST_URL = "{{ url_for('api.forecast') }}";
+  window.DSS_SATURATION_MAP_URL = "{{ url_for('sme.saturation_map') }}";
+</script>
+<script src="{{ url_for('static', filename='js/sme_search.js') }}"></script>
+
+{% if featured_forecast %}
+<script>
+  // Current vs. Projected Demand & Viability bar chart -- see
+  // app/services/trend_analytics_service.py's project_quarterly_outlook()
+  // for exactly what's real (Q1) vs. an illustrative projection (Q2-Q4).
+  const outlook = {{ quarterly_outlook|tojson }};
+  new Chart(document.getElementById('outlookBarChart'), {
+    type: 'bar',
+    data: {
+      labels: outlook.labels,
+      datasets: [
+        { label: 'Demand', data: outlook.demand, backgroundColor: '#3b82f6' },
+        { label: 'Saturation', data: outlook.saturation, backgroundColor: '#ef4444' },
+        { label: 'Viability', data: outlook.viability, backgroundColor: '#22c55e' },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
+      scales: { y: { beginAtZero: true, max: 60 } },
+    },
+  });
+
+  // Real-data doughnut gauge for the featured forecast's viability score
+  // (matches the storyboard's radial score gauge, but with actual numbers).
+  new Chart(document.getElementById('viabilityGauge'), {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [{{ featured_forecast.viability_score }}, {{ 10 - featured_forecast.viability_score }}],
+        backgroundColor: ['#2563eb', '#e5e7eb'],
+        borderWidth: 0,
+      }],
+    },
+    options: {
+      cutout: '72%',
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      rotation: -90,
+      circumference: 360,
+      responsive: false,
+    },
+  });
+</script>
+{% endif %}
+
+<script>
+  // ---- LGU recommendations (Forecast & Recommendations panel) -------
+  // Ranks all known barangays by AI saturation score for the featured
+  // industry (same endpoint the full Saturation Map page uses) and
+  // shows the real top-3 opportunity / top-3 saturated barangays --
+  // no placeholder barangay names. The mini map itself is drawn by
+  // map.js below, which calls this same endpoint on its own.
+  (function () {
+    const industryType = {{ featured_industry_type|tojson }};
+    const lguBox = document.getElementById('lguRecommendationList');
+    if (!lguBox) return;
+
+    fetch(`{{ url_for('api.locations_forecast') }}?industry_type=${encodeURIComponent(industryType)}`)
+      .then((r) => r.json())
+      .then((rows) => {
+        if (!Array.isArray(rows) || !rows.length) {
+          lguBox.innerHTML = '<div class="text-muted">No barangay data yet.</div>';
+          return;
+        }
+        const sorted = [...rows].sort((a, b) => a.saturation_index - b.saturation_index);
+        const topOpportunity = sorted.slice(0, 3);
+        const topSaturated = sorted.slice(-3).reverse();
+        const rows3 = topOpportunity.map((r) => `<li>Top Opportunity: Brgy. ${r.location} (${r.saturation_index.toFixed(0)}% saturated)</li>`).join('');
+        const rows4 = topSaturated.map((r) => `<li>Top Saturated: Brgy. ${r.location} (${r.saturation_index.toFixed(0)}% saturated)</li>`).join('');
+        lguBox.innerHTML = `<ul class="mt-1 mb-0 ps-3">${rows3}${rows4}</ul>`;
+      })
+      .catch(() => {
+        lguBox.innerHTML = '<div class="text-muted">Could not load rankings.</div>';
+      });
+  })();
+</script>
+
+<script>
+  // Reuses the exact same map.js the full Saturation Map page runs
+  // (same #dss-map id, same shaded-zone circles, same click-to-select
+  // behavior) -- just smaller (see .dss-mini-map in style.css) and
+  // defaulted to this SME's featured industry instead of a <select>.
+  // OpenStreetMap/Leaflet basemap -- no API key required.
+  window.DSS_DEFAULT_INDUSTRY = {{ featured_industry_type|tojson }};
+  window.DSS_LOCATIONS_FORECAST_URL = "{{ url_for('api.locations_forecast') }}";
+  window.DSS_FORECAST_URL = "{{ url_for('api.forecast') }}";
+  window.DSS_PLACES_URL = "{{ url_for('api.places_nearby') }}";
+  window.DSS_BARANGAY_DETAIL_URL = "{{ url_for('api.barangay_detail') }}";
+  // REAL, PhilAtlas-sourced coordinates for all 76 Tarlac City barangays
+  // (app/services/geocoding_service.py + app/static/data/barangay_coords.json).
+  window.DSS_BARANGAY_COORDS_URL = "{{ url_for('api.barangay_coords') }}";
+  // Choropleth polygon cells computed from those same real coordinates,
+  // clipped to Tarlac City's REAL boundary (app/services/choropleth_service.py)
+  // -- see map.js's module docstring.
+  window.DSS_BARANGAY_CHOROPLETH_URL = "{{ url_for('api.barangay_choropleth') }}";
+  // Tarlac City's own real outline (OpenStreetMap, ODbL), drawn as its
+  // own bold overlay on this mini map preview too.
+  window.DSS_TARLAC_CITY_BOUNDARY_URL = "{{ url_for('api.tarlac_city_boundary') }}";
+  window.DSS_CSRF_TOKEN = "{{ csrf_token() }}";
+  // Real PSA FIES (2023) household spending-category figures -- see
+  // app/services/socio_demographic_service.py.
+  window.DSS_DEMAND_SUMMARY = {{ demand_summary|tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/map.js') }}"></script>
+
+{% endblock %}

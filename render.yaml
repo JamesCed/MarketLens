@@ -1,0 +1,125 @@
+# =====================================================================
+# render.yaml -- Render Blueprint for this app.
+#
+# With this file in the repo root, Render can set the whole service up
+# from GitHub in one step ("New +" > "Blueprint" > pick this repo)
+# instead of you filling in build and start commands by hand. Everything
+# below is also settable in Render's dashboard; keeping it in the repo
+# means the deployment is version-controlled and reviewable like the rest
+# of the code.
+#
+# THE DATABASE IS NOT DEFINED HERE. Render's managed database is
+# PostgreSQL, and this app is MySQL (see app/config.py -- the connection
+# string is mysql+pymysql://). So MySQL lives on Aiven's free plan and
+# you paste its connection string in as DATABASE_URL. See DEPLOYMENT.md
+# steps 2-4.
+# =====================================================================
+
+services:
+  - type: web
+    name: sme-market-saturation-dss
+    runtime: python
+    plan: free
+    region: singapore          # closest Render region to the Philippines
+    branch: main
+
+    # seed.py both prepares the database AND trains the model, and it
+    # is safe to re-run: it creates only what is missing and skips
+    # training when a model is already on disk. Running it HERE rather
+    # than in the start command means the trained model is baked into
+    # the build, so a restart does not retrain it -- see DEPLOYMENT.md
+    # section 5.
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      python seed.py
+
+    # One worker, several threads. NOT an arbitrary choice: a free Render
+    # instance has 512 MB of RAM, and this app's footprint was measured at
+    # roughly 210 MB once Flask, numpy/pandas/scikit-learn and the trained
+    # Random Forest are all resident. Two workers would be ~420 MB before
+    # serving a single request and would start getting OOM-killed under
+    # any real load. Threads add concurrency without a second copy of the
+    # model.
+    #
+    # --timeout 120 because the very first request after a cold start runs
+    # the full city-wide AI sweep (~17 s on this hardware) on top of
+    # Render's own ~1 minute wake-up; gunicorn's 30 s default would kill
+    # the worker mid-sweep and the visitor would see a 502.
+    #
+    # --preload loads the app once in the master process before forking,
+    # so the model is read from disk a single time.
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --preload --access-logfile - wsgi:app
+
+    healthCheckPath: /login
+
+    envVars:
+      # Flask signs the login session cookie with this. generateValue
+      # makes Render mint a long random value and keep it -- so it is
+      # never in the repo, and you cannot forget to set it.
+      # ProductionConfig.validate() refuses to boot without it.
+      - key: SECRET_KEY
+        generateValue: true
+
+      - key: FLASK_CONFIG
+        value: production
+
+      # Matches the Python this project's pinned numpy / pandas /
+      # scikit-learn versions were installed against locally. Also set in
+      # .python-version; either is enough, both is harmless.
+      - key: PYTHON_VERSION
+        value: "3.14"
+
+      # ---- READ-ONLY GOOGLE DATA ----
+      # false = this deployment never calls the Google Places API. It
+      # serves the competitor counts already in market_data, which you
+      # import from your local database (DEPLOYMENT.md step 4).
+      #
+      # A full city sweep is thousands of billable Google calls on
+      # whoever owns the key, and on a public URL the button that starts
+      # one is reachable by anyone who can log in. Leave this false and
+      # do your fetching locally.
+      - key: PLACES_LIVE_FETCH
+        value: "false"
+
+      # ---- Set these in the Render dashboard, not here ----
+      # sync: false means "this Blueprint declares the variable but does
+      # NOT carry its value", so a secret never lands in the repo. Render
+      # prompts you for each one the first time you deploy.
+      - key: DATABASE_URL
+        sync: false
+
+      # The ONE administrator seed.py creates on a production config.
+      # Without these it creates no login account at all, because the
+      # demo passwords are published in seed.py and this repo is public.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+
+      # Optional. Only needed if you want the AI-written recommendation
+      # paragraphs instead of the built-in rule-based text. Leave unset
+      # and the app falls back automatically -- nothing breaks.
+      - key: USE_LLM_RECOMMENDATIONS
+        value: "false"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # Optional. Email verification for self-registration. Unset means
+      # registration completes immediately without a code, which is the
+      # behaviour from before that feature existed.
+      - key: GMAIL_ADDRESS
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+
+      # Deliberately ABSENT: GOOGLE_PLACES_API_KEY,
+      # GOOGLE_GEOCODING_API_KEY, GOOGLE_MAPS_JS_API_KEY.
+      #
+      # With PLACES_LIVE_FETCH=false nothing can spend them, so the
+      # safest place for your billable keys is nowhere near a public
+      # host. The map needs no key at all -- it is OpenStreetMap via
+      # Leaflet (README section 5.2), and all 76 barangay coordinates are
+      # already precomputed and committed.

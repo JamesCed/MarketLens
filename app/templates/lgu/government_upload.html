@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Gov't Data Upload{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <h4 class="mb-0"><i class="bi bi-database-add text-primary"></i> Government Data Repository</h4>
+  <p class="text-muted small mb-0">Upload official datasets (Excel/CSV) for SME market analysis and decision support.</p>
+  <div class="alert alert-warning small mt-2 mb-0">
+    <i class="bi bi-shield-lock"></i> This page is only visible to <strong>LGU</strong> and <strong>Admin</strong> accounts.
+    Entrepreneur / Business Owner (SME) accounts cannot see this link and are blocked (HTTP 403) if they try the URL directly.
+  </div>
+</div>
+
+<div class="dss-card mb-4">
+  <h6 class="mb-3">Upload Dataset</h6>
+  <form method="POST" action="{{ url_for('lgu.government_upload') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">Target Table</label>
+        <select name="dataset_type" id="datasetType" class="form-select" required>
+          <option value="LGU_DATA">Gov't / Zoning Data (lgu_data)</option>
+          <option value="MARKET_DATA">Market Data (market_data)</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Source</label>
+        <select name="source" id="sourceSelect" class="form-select" required>
+          {% for s in lgu_sources %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">File (.xlsx, .xls, .csv &mdash; max 50MB)</label>
+        <input type="file" name="dataset_file" class="form-control" accept=".xlsx,.xls,.csv" required>
+      </div>
+      <div class="col-md-2">
+        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-upload"></i> Upload</button>
+      </div>
+    </div>
+  </form>
+
+  <div class="alert alert-info mt-3 mb-0 small">
+    <strong>Important Guidelines:</strong>
+    <ul class="mb-0">
+      <li><strong>Gov't / Zoning Data (lgu_data)</strong> needs a <code>barangay</code> column, plus any of
+        <code>zoning_info, closure_records, permit_count, business_density, effective_date</code>.</li>
+      <li><strong>Market Data (market_data)</strong> needs <code>industry_type, location</code> columns, plus any of
+        <code>competitor_count, population_density, historical_success_rate, foot_traffic_index, average_rent, date_recorded</code>.</li>
+      <li>Missing numeric values in columns you DO include are automatically filled in using that column's average (data imputation).</li>
+      <li>The uploaded file itself is not stored -- only the parsed data rows are saved.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="dss-card">
+      <h6 class="mb-3">Recent LGU Data</h6>
+      {% if recent_lgu_data %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Barangay</th><th>Source</th><th>Uploaded</th></tr></thead>
+          <tbody>
+            {% for d in recent_lgu_data %}
+            <tr>
+              <td>{{ d.barangay }}</td>
+              <td><span class="badge bg-light text-dark">{{ d.source }}</span></td>
+              <td class="text-muted small">{{ d.upload_date.strftime('%b %d, %Y') if d.upload_date else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-4"><i class="bi bi-database display-6"></i><p class="mt-2 mb-0">No LGU data uploaded yet.</p></div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="dss-card">
+      <h6 class="mb-3">Recent Market Data</h6>
+      {% if recent_market_data %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Industry</th><th>Location</th><th>Recorded</th></tr></thead>
+          <tbody>
+            {% for m in recent_market_data %}
+            <tr>
+              <td>{{ m.industry_type }}</td>
+              <td>{{ m.location }}</td>
+              <td class="text-muted small">{{ m.date_recorded.strftime('%b %d, %Y') if m.date_recorded else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-4"><i class="bi bi-database display-6"></i><p class="mt-2 mb-0">No market data uploaded yet.</p></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const LGU_SOURCES = {{ lgu_sources|tojson }};
+  const MARKET_SOURCES = {{ market_sources|tojson }};
+  const datasetType = document.getElementById('datasetType');
+  const sourceSelect = document.getElementById('sourceSelect');
+
+  function refreshSources() {
+    const opts = datasetType.value === 'MARKET_DATA' ? MARKET_SOURCES : LGU_SOURCES;
+    sourceSelect.innerHTML = opts.map(s => `<option value="${s}">${s}</option>`).join('');
+  }
+  datasetType.addEventListener('change', refreshSources);
+</script>
+{% endblock %}

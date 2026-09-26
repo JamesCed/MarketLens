@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Not found{% endblock %}
+{% block content %}
+<div class="text-center py-5">
+  <div class="display-1">🗺️</div>
+  <h2>404 - Page Not Found</h2>
+  <a href="{{ url_for('auth.index') }}" class="btn btn-primary">Go back home</a>
+</div>
+{% endblock %}
+{% block auth_content %}
+<div class="text-center py-5 container">
+  <div class="display-1">🗺️</div>
+  <h2>404 - Page Not Found</h2>
+  <a href="{{ url_for('auth.login') }}" class="btn btn-primary">Go to login</a>
+</div>
+{% endblock %}

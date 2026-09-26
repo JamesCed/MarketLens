@@ -1,0 +1,106 @@
+# =====================================================================
+# Decision Support System for SME Business Planning and Market Entry
+# -- Python package requirements.
+#
+# This list has been audited against every `import`/`from ...import`
+# statement in the codebase (app/, tests/, seed.py, app.py) -- including
+# packages that are only imported INDIRECTLY at runtime, e.g. PyMySQL
+# (loaded by SQLAlchemy from the "mysql+pymysql://" connection string in
+# app/config.py, never `import pymysql` directly) and openpyxl (loaded
+# by pandas.read_excel() in app/services/data_import_service.py, never
+# `import openpyxl` directly). Everything the app actually needs to run
+# is listed below -- nothing more, nothing missing.
+#
+# ---- Normal install (inside a virtual environment) ----
+#
+#   python -m venv venv
+#   venv\Scripts\activate          (Windows)
+#   source venv/bin/activate       (macOS/Linux)
+#   pip install -r requirements.txt
+#
+# ---- Force prebuilt-wheel-only ("binary") install ----
+# Use this if a normal `pip install` ever tries to compile a package
+# from source (slow, and fails without a C/Fortran compiler installed --
+# most common on a brand-new Windows machine or a very new Python
+# version). It forces pip to use ONLY prebuilt wheels for every package
+# in this file (and their dependencies) and fails fast instead of
+# compiling if one isn't available -- every pin below has a prebuilt
+# wheel for Python 3.10-3.13/3.14, so this should simply work.
+#
+#   Windows (PowerShell):
+#     python -m pip install --upgrade pip
+#     python -m pip install --only-binary=:all: -r requirements.txt
+#
+#   macOS / Linux:
+#     python3 -m pip install --upgrade pip
+#     python3 -m pip install --only-binary=:all: -r requirements.txt
+#
+# See README.md for the full setup walkthrough.
+# =====================================================================
+
+# --- Web framework ---
+Flask==3.0.3
+Werkzeug==3.0.4
+
+# --- Database (MySQL) ---
+Flask-SQLAlchemy==3.1.1
+PyMySQL==1.1.1
+cryptography==43.0.1          # required by PyMySQL for MySQL's default auth plugin
+
+# --- Auth / sessions / forms & CSRF ---
+Flask-Login==0.6.3
+Flask-WTF==1.2.1
+
+# --- Environment variables ---
+python-dotenv==1.0.1
+
+# --- AI / Machine Learning (K-Means, Random Forest) ---
+# Bumped from the original 1.26/2.2/1.5 pins -- those don't have
+# prebuilt wheels for newer Python versions (e.g. 3.13/3.14 on
+# Windows), which breaks `pip install` unless you compile from source.
+# These versions install cleanly with `pip install --only-binary=:all:
+# -r requirements.txt` on Python 3.10+.
+numpy==2.5.3
+pandas==3.0.5
+scikit-learn==1.9.0
+joblib==1.4.2
+
+# --- Saturation Map choropleth cells: rasterizes each barangay's
+# nearest-neighbor region clipped to Tarlac City's REAL boundary, then
+# traces it back into a vector polygon with marching squares (the same
+# contouring engine matplotlib uses, depended on directly here so the
+# whole of matplotlib doesn't have to be installed just for this) --
+# see app/services/choropleth_service.py. ---
+contourpy==1.3.3
+
+# --- Reading uploaded Excel files (Gov't Data Upload page) ---
+openpyxl==3.1.5
+
+# --- Calling the Google Places API ---
+requests==2.32.3
+
+# --- Optional: AI-generated recommendation text (see .env USE_LLM_RECOMMENDATIONS
+# and LLM_PROVIDER) -- both packages are lightweight and pure-Python-wheel,
+# so both are listed even though only one provider is normally used at a
+# time; whichever one has an API key set in .env is the one that gets used. ---
+openai==1.51.2
+anthropic==0.34.2
+
+# --- Production WSGI server (deployment only) ---
+# app.py uses Flask's built-in development server, which handles one
+# request at a time and prints a warning telling you not to serve it
+# publicly. On a host (see DEPLOYMENT.md and the Procfile) gunicorn
+# serves wsgi.py instead.
+#
+# Deliberately a FLOOR (>=) rather than an exact pin, unlike everything
+# above. This project runs on Python 3.14, which is newer than gunicorn
+# 23.0.0, so pinning that exact release risks a build failure on a Python
+# it predates; a floor lets pip take the newest compatible version.
+# waitress is a pure-Python drop-in kept as a fallback -- if gunicorn
+# ever misbehaves, change the start command to
+#     waitress-serve --port=$PORT wsgi:app
+gunicorn>=23.0.0
+waitress==3.0.0
+
+# --- Dev/testing ---
+pytest==8.3.2

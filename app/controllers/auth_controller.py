@@ -1,0 +1,412 @@
+"""
+app/controllers/auth_controller.py
+-------------------------------------
+Registration, login and logout. Plain HTML forms (not Flask-WTF form
+classes) are used on purpose -- it keeps the beginner-friendly path
+obvious: read `request.form`, validate, save. CSRF protection is still
+active (Flask-WTF's CSRFProtect is enabled in app/extensions.py); every
+form template includes {{ csrf_token() }} in a hidden input.
+
+Account types a visitor can self-register as: 'SME' (entrepreneur /
+business owner) or 'LGU' (Local Government Unit) -- matching the real
+user.role ENUM exactly. 'Admin' accounts are NOT self-registrable --
+per the paper's RBAC section, only an existing Admin creates other
+Admins (see app/controllers/admin_controller.py and seed.py, which
+creates the first Admin account).
+
+Note the real `user` table has only name/email/password/role/
+contact_number/status -- no location/organization_name column. An SME's
+business details (industry, location, capital, etc.) live in a separate
+SmeProfile row.
+
+SIGN-UP COLLECTS THE FIRST BUSINESS PLAN (SME accounts only):
+registration asks for the business parameters BEFORE the account
+fields, and creates the matching SmeProfile the moment the account
+exists. That profile is an ordinary business plan -- it appears in "My
+Plans" and on the Home page straight away, exactly like one added
+later, because both are just rows in `sme_profile`.
+
+Collecting it here rather than after the first login is deliberate:
+this system has nothing to show an SME without a plan. The Home page,
+the recommendations and the personalised half of the map all key off
+one, so an account created without a plan lands on an empty app.
+
+LGU accounts skip that step entirely -- an LGU official is planning for
+the city, not running a business, and has no SmeProfile.
+
+EMAIL VERIFICATION (SME/LGU self-registration only -- optional):
+when Gmail is configured (see app/services/email_service.py and
+GMAIL_ADDRESS/GMAIL_APP_PASSWORD in .env), register() does NOT create
+the User row immediately. Instead it stashes the validated form data
+(with the password already hashed -- the raw password is never held
+onto) plus a 6-digit code in the session, emails the code, and sends
+the visitor to verify_email() to confirm they own that inbox before
+the account is actually created. If Gmail is NOT configured, or
+sending the email fails for any reason, registration falls back to
+creating the account immediately, exactly as it did before this
+feature existed -- a missing/broken email setup never blocks sign-ups.
+"""
+
+import secrets
+from datetime import date, datetime, timedelta
+
+from flask import Blueprint, render_template, redirect, url_for, request, flash, session, current_app
+from flask_login import login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash
+
+from app.extensions import db
+from app.models import User, SmeProfile
+from app.ml.constants import BUSINESS_TYPES
+from app.ml.seed_data import BARANGAY_NAMES
+from app.utils.audit import log_action
+from app.services import email_service
+
+auth_bp = Blueprint("auth", __name__)
+
+ROLE_MAP = {"sme": "SME", "lgu": "LGU"}
+PENDING_SESSION_KEY = "pending_registration"
+
+# Kept in step with sme_controller.BUSINESS_STAGES and the
+# sme_profile.business_stage ENUM.
+BUSINESS_STAGES = ["startup", "existing"]
+
+
+def _collect_business_params(form):
+    """Pull the first business plan out of the registration form.
+
+    Returns (data, errors). `data` is JSON-serialisable on purpose -- it
+    is stashed in the session between submitting the form and verifying
+    the email, and a `date` object would not survive that round trip, so
+    registration_date is carried as an ISO string.
+
+    Only the three fields the forecasting engine cannot work without are
+    required: the business needs a name to appear in "My Plans", and an
+    industry and a location because those two ARE the query the AI
+    answers. Capital, headcount and revenue sharpen the ROI estimate but
+    have documented fallbacks, so demanding them would block a sign-up
+    over numbers a new entrepreneur may not have yet.
+    """
+    errors = []
+
+    business_name = (form.get("business_name") or "").strip()
+    industry_type = (form.get("industry_type") or "").strip()
+    location = (form.get("location") or "").strip()
+    business_stage = (form.get("business_stage") or "startup").strip().lower()
+
+    if not business_name:
+        errors.append("Business name is required.")
+    if not industry_type:
+        errors.append("Please choose an industry type.")
+    elif industry_type not in BUSINESS_TYPES:
+        errors.append("That industry type is not one of the options.")
+    if not location:
+        errors.append("Please give the barangay or location you are planning for.")
+    if business_stage not in BUSINESS_STAGES:
+        business_stage = "startup"
+
+    def _number(field, label, cast):
+        raw = (form.get(field) or "").strip()
+        if raw == "":
+            return None
+        try:
+            value = cast(raw)
+        except (TypeError, ValueError):
+            errors.append(f"{label} must be a number.")
+            return None
+        if value < 0:
+            errors.append(f"{label} cannot be negative.")
+            return None
+        return value
+
+    startup_capital = _number("startup_capital", "Startup capital", float)
+    employee_count = _number("employee_count", "Employee count", int)
+    monthly_revenue_est = _number("monthly_revenue_est", "Estimated monthly revenue", float)
+
+    registration_date = None
+    raw_date = (form.get("registration_date") or "").strip()
+    if raw_date:
+        try:
+            parsed = datetime.strptime(raw_date, "%Y-%m-%d").date()
+        except ValueError:
+            errors.append("Registration date must be a real date.")
+            parsed = None
+        else:
+            if parsed > date.today():
+                errors.append("Registration date cannot be in the future.")
+                parsed = None
+        registration_date = parsed.isoformat() if parsed else None
+
+    # An existing business with no date given is dated today, matching
+    # sme_controller.analyze(); years_in_operation() then reads 0 rather
+    # than crashing on a null.
+    if business_stage == "existing" and registration_date is None and not errors:
+        registration_date = date.today().isoformat()
+
+    data = {
+        "business_name": business_name,
+        "industry_type": industry_type,
+        "location": location,
+        "business_stage": business_stage,
+        "startup_capital": startup_capital,
+        "employee_count": employee_count,
+        "monthly_revenue_est": monthly_revenue_est,
+        "registration_date": registration_date,
+    }
+    return data, errors
+
+
+def _create_user_from_pending(pending):
+    """Shared by the "email verified" path and the "Gmail not
+    configured" fallback path -- builds and saves the real User row
+    from a validated pending-registration dict. `password` in the dict
+    is already a Werkzeug hash (see register()), never a raw password.
+
+    For an SME this also creates the first business plan from the
+    parameters given during sign-up, so the new account arrives with
+    something in "My Plans" instead of an empty Home page.
+    """
+    user = User(
+        name=pending["full_name"],
+        email=pending["email"],
+        role=pending["role"],
+        contact_number=pending["contact_number"],
+    )
+    user.password = pending["password_hash"]
+    db.session.add(user)
+    db.session.commit()
+    log_action("register", details=f"New {pending['role']} account: {pending['email']}", user_id=user.user_id)
+
+    business = pending.get("business")
+    if business and not SmeProfile.query.filter_by(user_id=user.user_id).first():
+        # ONE row, and only one. The parameters entered during sign-up are
+        # not copied anywhere afterwards -- `sme_profile` IS where a
+        # business plan lives, and "My Plans" and the Home page both read
+        # straight from it (see SmeProfile.to_dict and the My Plans popup
+        # in shared/_topbar.html). So this single insert is the plan; no
+        # second record is created to represent it, and no forecast row is
+        # written either.
+        #
+        # The existence check guards the one way a duplicate could appear:
+        # a double-submitted verification form, or a retried request,
+        # calling this twice for the same account.
+        raw_date = business.get("registration_date")
+        profile = SmeProfile(
+            user_id=user.user_id,
+            business_name=business["business_name"],
+            industry_type=business["industry_type"],
+            location=business["location"],
+            startup_capital=business.get("startup_capital") or 0,
+            registration_date=date.fromisoformat(raw_date) if raw_date else None,
+            employee_count=business.get("employee_count"),
+            business_stage=business.get("business_stage", "startup"),
+            monthly_revenue_est=business.get("monthly_revenue_est"),
+        )
+        db.session.add(profile)
+        db.session.commit()
+        log_action(
+            "create_plan",
+            details=f"First plan from sign-up: {profile.industry_type} @ {profile.location}",
+            user_id=user.user_id,
+        )
+        # No forecast is run here on purpose. Scoring loads the trained
+        # model and can hit the Places API, which would make the visitor
+        # wait -- possibly through a request timeout -- on the one page
+        # where abandoning costs them the whole account. The plan is
+        # ready; the forecast runs when they open Home.
+
+    return user
+
+
+def _register_form_context(form=None):
+    """Everything auth/register.html needs to redraw itself, including
+    after a validation error -- the dropdowns AND whatever the visitor
+    had already typed, so a mistake in step 3 never wipes step 2."""
+    return {
+        "form": form if form is not None else {},
+        "business_types": BUSINESS_TYPES,
+        "locations": BARANGAY_NAMES,
+        "business_stages": BUSINESS_STAGES,
+        "today": date.today().isoformat(),
+    }
+
+
+@auth_bp.route("/")
+def index():
+    if current_user.is_authenticated:
+        return redirect(
+            url_for("sme.home") if current_user.is_sme()
+            else url_for("lgu.dashboard") if current_user.is_lgu()
+            else url_for("admin.dashboard")
+        )
+    return redirect(url_for("auth.login"))
+
+
+@auth_bp.route("/register", methods=["GET", "POST"])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for("auth.index"))
+
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        contact_number = request.form.get("contact_number", "").strip()
+        role = ROLE_MAP.get(request.form.get("role", "sme").strip().lower())
+
+        errors = []
+        if not full_name or not email or not password:
+            errors.append("Full name, email and password are required.")
+        if password != confirm_password:
+            errors.append("Passwords do not match.")
+        if len(password) < 6:
+            errors.append("Password must be at least 6 characters.")
+        if role is None:
+            errors.append("Invalid account type.")
+        if User.query.filter_by(email=email).first():
+            errors.append("An account with that email already exists.")
+
+        # The first business plan, for SME sign-ups only. Validated in the
+        # same pass as the account fields so the visitor sees everything
+        # that is wrong at once rather than one error per submit.
+        business = None
+        if role == "SME":
+            business, business_errors = _collect_business_params(request.form)
+            errors.extend(business_errors)
+
+        if errors:
+            for e in errors:
+                flash(e, "danger")
+            return render_template("auth/register.html", **_register_form_context(request.form))
+
+        pending = {
+            "full_name": full_name,
+            "email": email,
+            "password_hash": generate_password_hash(password),
+            "role": role,
+            "contact_number": contact_number or None,
+            "business": business,
+        }
+
+        if email_service.is_configured():
+            code = f"{secrets.randbelow(1_000_000):06d}"
+            ttl = int(current_app.config.get("EMAIL_VERIFICATION_CODE_TTL_MINUTES", 10))
+            sent = email_service.send_verification_code(email, full_name, code)
+            if sent:
+                pending["code"] = code
+                pending["expires_at"] = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat()
+                session[PENDING_SESSION_KEY] = pending
+                flash(f"We sent a 6-digit verification code to {email}. Enter it below to finish creating your account.", "info")
+                return redirect(url_for("auth.verify_email"))
+            # Gmail is configured but the send failed (bad creds, offline,
+            # rate-limited, etc.) -- don't block registration over an
+            # email problem; fall through to creating the account now.
+            flash("Couldn't send a verification email right now, so your account was created directly.", "warning")
+
+        _create_user_from_pending(pending)
+        flash(
+            "Account created with your first business plan. Log in to see its forecast."
+            if pending.get("business")
+            else "Account created. You can now log in.",
+            "success",
+        )
+        return redirect(url_for("auth.login"))
+
+    return render_template("auth/register.html", **_register_form_context())
+
+
+@auth_bp.route("/register/verify", methods=["GET", "POST"])
+def verify_email():
+    pending = session.get(PENDING_SESSION_KEY)
+    if not pending or "code" not in pending:
+        flash("Start registration again.", "warning")
+        return redirect(url_for("auth.register"))
+
+    if request.method == "POST":
+        entered = request.form.get("code", "").strip()
+        expires_at = datetime.fromisoformat(pending["expires_at"])
+
+        if datetime.utcnow() > expires_at:
+            session.pop(PENDING_SESSION_KEY, None)
+            flash("That code expired. Please register again.", "danger")
+            return redirect(url_for("auth.register"))
+
+        if not entered or entered != pending["code"]:
+            flash("Incorrect code -- please try again.", "danger")
+            return render_template("auth/verify_email.html", email=pending["email"])
+
+        if User.query.filter_by(email=pending["email"]).first():
+            # Extremely unlikely (someone else registered the same email
+            # while this code was pending), but handle it cleanly.
+            session.pop(PENDING_SESSION_KEY, None)
+            flash("An account with that email already exists. Please log in.", "danger")
+            return redirect(url_for("auth.login"))
+
+        _create_user_from_pending(pending)
+        session.pop(PENDING_SESSION_KEY, None)
+        flash(
+            "Email verified -- your account and your first business plan are ready. Log in to see its forecast."
+            if pending.get("business")
+            else "Email verified -- your account has been created. You can now log in.",
+            "success",
+        )
+        return redirect(url_for("auth.login"))
+
+    return render_template("auth/verify_email.html", email=pending["email"])
+
+
+@auth_bp.route("/register/resend-code", methods=["POST"])
+def resend_verification_code():
+    pending = session.get(PENDING_SESSION_KEY)
+    if not pending:
+        flash("Start registration again.", "warning")
+        return redirect(url_for("auth.register"))
+
+    ttl = int(current_app.config.get("EMAIL_VERIFICATION_CODE_TTL_MINUTES", 10))
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    sent = email_service.send_verification_code(pending["email"], pending["full_name"], code)
+    if sent:
+        pending["code"] = code
+        pending["expires_at"] = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat()
+        session[PENDING_SESSION_KEY] = pending
+        flash("A new code was sent to your email.", "success")
+    else:
+        flash("Couldn't send a new code right now -- please try again in a moment.", "danger")
+    return redirect(url_for("auth.verify_email"))
+
+
+@auth_bp.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("auth.index"))
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        remember = bool(request.form.get("remember"))
+
+        user = User.query.filter_by(email=email).first()
+        if user is None or not user.check_password(password):
+            log_action("login_failed", details=f"email={email}")
+            flash("Invalid email or password.", "danger")
+            return render_template("auth/login.html", email=email)
+
+        if not user.is_active:
+            flash("This account has been deactivated. Contact your administrator.", "danger")
+            return render_template("auth/login.html", email=email)
+
+        login_user(user, remember=remember)
+        log_action("login", details=f"role={user.role}")
+        flash(f"Welcome back, {user.name.split(' ')[0]}!", "success")
+        return redirect(url_for("auth.index"))
+
+    return render_template("auth/login.html", email="")
+
+
+@auth_bp.route("/logout")
+@login_required
+def logout():
+    log_action("logout")
+    logout_user()
+    flash("You have been logged out.", "info")
+    return redirect(url_for("auth.login"))

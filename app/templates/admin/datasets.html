@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Datasets{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-hdd-stack"></i> Manage Government &amp; Market Data</h4>
+  </div>
+  <a href="{{ url_for('admin.export_barangay_seed_csv') }}" class="btn btn-outline-primary btn-sm">
+    <i class="bi bi-file-earmark-spreadsheet"></i> Download Barangay Seed Data (CSV)
+  </a>
+</div>
+<p class="text-muted small mb-4">
+  The real database has no separate "uploaded file" record -- Gov't Data Upload writes parsed rows
+  straight into these two tables (see app/services/data_import_service.py). Deleting a row here also
+  deletes any AI forecast that was built from it, since <code>forecast_result.market_id</code> /
+  <code>lgu_id</code> cascade on delete. The download above is a separate thing -- a full copy of the
+  76-barangay reference dataset (app/ml/seed_data.py) used to train the AI model, not data from these tables.
+</p>
+
+<div class="dss-card mb-4">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <h6 class="mb-0">Market Data -- Real Competitor Density (Google Places API, live)</h6>
+  </div>
+  <p class="text-muted small mb-0">
+    There's no separate seeding step here on purpose -- <code>competitor_count</code> on every row below
+    comes straight from a real Google Places API (New) Text Search targeted at that exact industry in that
+    exact barangay (see app/services/places_service.py), restricted to Tarlac City only, fetched
+    automatically the moment the AI engine needs it: an SME viewing the Saturation Map, generating a
+    forecast, or an LGU/Admin opening Trend Reports all trigger a real, live lookup for whatever
+    industry+barangay combos they touch (cached for 30 days after that, see
+    <code>find_or_create_market_data()</code>).
+    {% if not places_api_key_configured %}
+      <span class="text-warning"><i class="bi bi-exclamation-triangle"></i> GOOGLE_PLACES_API_KEY isn't set
+      in this deployment's .env yet -- every lookup falls back to a clearly-flagged simulated estimate
+      instead of a real competitor count until a key is added.</span>
+    {% else %}
+      {{ market_real_count }} of {{ market_total }} market_data rows on file are real Google Places API
+      results (the rest are simulated fallback rows from before the key was set, or manual/PSA/DTI rows
+      from a Gov't Data Upload). Only <code>competitor_count</code> comes from Places -- population density
+      and the other socio-demographic figures below are the separate reference dataset described in
+      app/ml/seed_data.py, never fetched from Google.
+    {% endif %}
+  </p>
+</div>
+
+<div class="dss-card mb-4">
+  <h6 class="mb-3">LGU Data (permits, zoning, closures, business density)</h6>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead><tr><th>Barangay</th><th>Source</th><th>Permits</th><th>Closures</th><th>Business Density</th><th>Uploaded By</th><th>Upload Date</th><th></th></tr></thead>
+      <tbody>
+        {% for d in lgu_rows %}
+        <tr>
+          <td>{{ d.barangay }}</td>
+          <td><span class="badge bg-light text-dark">{{ d.source }}</span></td>
+          <td>{{ d.permit_count if d.permit_count is not none else '—' }}</td>
+          <td>{{ d.closure_records if d.closure_records is not none else '—' }}</td>
+          <td>{{ d.business_density if d.business_density is not none else '—' }}</td>
+          <td>{{ d.uploader.email if d.uploader else '—' }}</td>
+          <td class="text-muted small">{{ d.upload_date.strftime('%b %d, %Y') if d.upload_date else '—' }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('admin.delete_lgu_data', lgu_id=d.lgu_id) }}"
+                  onsubmit="return confirm('Delete this LGU data row? Any forecast built on it is deleted too.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">No LGU data on file yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="dss-card">
+  <h6 class="mb-3">Market Data (competitor / demand snapshots)</h6>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead><tr><th>Industry</th><th>Location</th><th>Source</th><th>Competitors</th><th>Success Rate</th><th>Date Recorded</th><th></th></tr></thead>
+      <tbody>
+        {% for m in market_rows %}
+        <tr>
+          <td>{{ m.industry_type }}</td>
+          <td>{{ m.location }}</td>
+          <td><span class="badge bg-light text-dark">{{ m.source }}</span></td>
+          <td>{{ m.competitor_count if m.competitor_count is not none else '—' }}</td>
+          <td>{{ m.historical_success_rate if m.historical_success_rate is not none else '—' }}</td>
+          <td class="text-muted small">{{ m.date_recorded.strftime('%b %d, %Y') if m.date_recorded else '—' }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('admin.delete_market_data', market_id=m.market_id) }}"
+                  onsubmit="return confirm('Delete this market data row? Any forecast built on it is deleted too.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted py-4">No market data on file yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

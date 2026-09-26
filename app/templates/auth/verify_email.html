@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Verify your email{% endblock %}
+
+{#
+  auth/verify_email.html
+  ------------------------
+  The step between registering and having an account. Same MarketLens
+  shell as the other two auth pages -- a visitor who has just filled in
+  the registration form should not land on something that looks like a
+  different product -- but with no marketing sections: there is exactly
+  one thing to do here.
+#}
+
+{% block auth_content %}
+<div class="ml-landing ml-landing-short">
+
+  <div class="ml-bg" aria-hidden="true">
+    <span class="ml-bg-grid"></span>
+    <span class="ml-orb ml-orb-1"></span>
+    <span class="ml-orb ml-orb-2"></span>
+    <span class="ml-radar"><i></i><i></i><i></i></span>
+  </div>
+
+  <header class="ml-nav" id="top">
+    <a class="ml-nav-brand" href="{{ url_for('auth.login') }}" aria-label="MarketLens home">
+      {% with variant='light', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+    </a>
+    <a class="ml-btn ml-btn-ghost ml-nav-cta ms-auto" href="{{ url_for('auth.login') }}">Sign in</a>
+  </header>
+
+  <section class="ml-verify">
+    <div class="ml-card ml-auth-card">
+      <div class="ml-auth-head text-center">
+        <span class="ml-verify-icon"><i class="bi bi-envelope-check"></i></span>
+        <h2>Verify your email</h2>
+        <p>We sent a 6-digit code to <strong>{{ email }}</strong></p>
+      </div>
+
+      <form method="POST" action="{{ url_for('auth.verify_email') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3">
+          <label class="form-label" for="ml-code">Verification code</label>
+          <input type="text" id="ml-code" name="code"
+                 class="form-control form-control-lg text-center dss-otp-input"
+                 inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code"
+                 placeholder="------" required autofocus>
+        </div>
+        <button type="submit" class="ml-btn ml-btn-primary w-100">Verify &amp; Create Account</button>
+      </form>
+
+      <form method="POST" action="{{ url_for('auth.resend_verification_code') }}" class="mt-3 text-center">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-link btn-sm p-0">Didn't get a code? Resend it</button>
+      </form>
+
+      <p class="ml-auth-alt">
+        Wrong email? <a href="{{ url_for('auth.register') }}">Start over</a>
+      </p>
+    </div>
+
+    <ul class="ml-verify-notes">
+      <li><i class="bi bi-shield-check"></i> Verifying keeps mistyped and fake accounts out.</li>
+      <li><i class="bi bi-clock-history"></i> The code expires shortly, for your security.</li>
+    </ul>
+  </section>
+</div>
+{% endblock %}

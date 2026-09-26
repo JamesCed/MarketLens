@@ -1,0 +1,909 @@
+{% extends "base.html" %}
+{% block title %}Trend Reports{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <h4 class="mb-0">Trend Reports &amp; Analytics</h4>
+    <p class="text-muted small mb-0">Built from the full 76-barangay reference dataset (the AI engine's own
+      historical baseline) blended with every real forecast, business plan, and Google Places competitor
+      on file -- not just today's forecasts. Numbers get more "real" as more real usage accumulates.</p>
+  </div>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <!-- "Select Period" -- the storyboard's calendar control. Widening
+         it does NOT invent history: months/quarters with no real
+         snapshot behind them stay flagged as back-projections, so a
+         3-year view honestly shows mostly projection until three years
+         of real data exist. -->
+    <label class="text-muted small mb-0" for="trendMonth"><i class="bi bi-calendar3"></i> Select Period</label>
+    <!-- A real month picker: <input type="month"> gives the browser's
+         own calendar with YEAR and MONTH only and no day grid, which is
+         exactly what "as of this month" means here. `min` is January
+         2020 -- the start of the published national establishment series
+         this page's history is grounded in -- and `max` is the current
+         month, because a month that hasn't happened yet would be pure
+         projection dressed as history. -->
+    <input type="month" id="trendMonth" class="form-control form-control-sm"
+           style="max-width:190px;"
+           value="{{ selected_month }}" min="{{ earliest_month }}" max="{{ latest_month }}">
+    <!-- Changing the month no longer reloads the page, so there is no
+         browser progress bar to signal work. This does, and it sits next
+         to the control the user just touched. -->
+    <span id="trendPeriodBusy" class="d-none text-muted small">
+      <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+      <span class="visually-hidden">Loading the selected month</span>
+    </span>
+    <button class="btn btn-primary btn-sm" onclick="window.print()"><i class="bi bi-download"></i> Export / Print Report</button>
+  </div>
+</div>
+
+<!-- Loading state.
+     The FIRST build of this page is genuinely slow -- 500 Random Forest
+     predictions -- so the bar has to hold attention for several seconds
+     without claiming progress it cannot measure. It names the stage it
+     is on rather than inventing a percentage, and the fill carries a
+     travelling sheen so a slow stage never looks like a freeze.
+     Subsequent loads come from cache and finish almost instantly, in
+     which case this is on screen for a blink. -->
+<div id="trendLoading" class="dss-loader mb-3" role="status" aria-live="polite">
+  <div class="dss-loader-spin" aria-hidden="true"></div>
+  <div class="dss-loader-body">
+    <div class="dss-loader-title" id="trendLoadingLabel">Building your city-wide trend report</div>
+    <div class="dss-loader-step" id="trendLoadingDetail">Starting up&hellip;</div>
+    <div class="dss-loader-track" aria-hidden="true">
+      <div class="dss-loader-fill" id="trendLoadingBar"></div>
+    </div>
+  </div>
+</div>
+
+<div id="trendLoadError" class="alert alert-danger d-none" role="alert"></div>
+
+<!-- The paper's Figure 4 KPI row: four market indicators, each with its
+     month-over-month change, AS OF the month picked above. A card whose
+     month has no dated rows behind it shows "no comparison" rather than
+     a fabricated "+0% from last month". -->
+<div class="row g-3 mb-3" id="summaryCards">
+  <div class="col-6 col-lg-3">
+    <div class="dss-card">
+      <div class="d-flex justify-content-between align-items-start">
+        <div class="text-muted small">Total Businesses</div>
+        <i class="bi" id="statTotalBusinessesIcon"></i>
+      </div>
+      <div class="fs-3" id="statTotalBusinesses">-</div>
+      <div class="small" id="statTotalBusinessesTrend">-</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="dss-card">
+      <div class="d-flex justify-content-between align-items-start">
+        <div class="text-muted small">New Startups</div>
+        <i class="bi" id="statNewStartupsIcon"></i>
+      </div>
+      <div class="fs-3" id="statNewStartups">-</div>
+      <div class="small" id="statNewStartupsTrend">-</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="dss-card">
+      <div class="d-flex justify-content-between align-items-start">
+        <div class="text-muted small">Market Saturation</div>
+        <i class="bi" id="statSaturationIcon"></i>
+      </div>
+      <div class="fs-3" id="statSaturation">-</div>
+      <div class="small" id="statSaturationTrend">-</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="dss-card">
+      <div class="d-flex justify-content-between align-items-start">
+        <div class="text-muted small">Avg. Viability</div>
+        <i class="bi" id="statViabilityIcon"></i>
+      </div>
+      <div class="fs-3" id="statViability">-</div>
+      <div class="small" id="statViabilityTrend">-</div>
+    </div>
+  </div>
+</div>
+<p class="text-muted small mb-3" id="asOfNote"></p>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="dss-card">
+      <h6>Monthly Industry Trends</h6>
+      <p class="text-muted small mb-2">Saturation % &middot; real forecast months shown as-is, other months filled from the city-wide baseline (see page note above)</p>
+      <canvas id="monthlyChart" height="220"></canvas>
+      <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
+        <span class="text-muted small" id="monthlyTrackedCount">industries tracked &middot; click to toggle</span>
+        <div class="btn-group btn-group-sm">
+          <button type="button" class="btn btn-outline-secondary" id="monthlyShowAll">Show All</button>
+          <button type="button" class="btn btn-outline-secondary" id="monthlyHideAll">Hide All</button>
+        </div>
+      </div>
+      <div id="monthlyLegend" class="dss-scroll-legend"></div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="dss-card">
+      <h6>Industry Distribution</h6>
+      <p class="text-muted small mb-2">Share of every business on file across Tarlac City: all market data
+        (Google Places lookups + PSA/DTI and reference rows) plus registered SME plans. Every industry gets
+        its own slice &mdash; hover a slice, or read the list below, for exact counts.</p>
+      <canvas id="distributionChart" height="220"></canvas>
+      <div class="text-muted small mt-2" id="distributionCount"></div>
+      <div id="distributionLegend" class="dss-scroll-legend mt-2"></div>
+    </div>
+  </div>
+</div>
+
+<div class="dss-card mb-3">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+      <h6 class="mb-1">Quarterly Performance &amp; Growth Rate</h6>
+      <p class="text-muted small mb-0" id="quarterlyNote">How the market itself moved, quarter by quarter.</p>
+    </div>
+    <!-- Industry filter: pick which market to review. Hits the
+         lightweight /api/quarterly-performance endpoint, so switching is
+         instant -- it does not re-run the city-wide AI sweep. -->
+    <div class="d-flex align-items-center gap-2">
+      <label class="text-muted small mb-0" for="quarterlyIndustry">Industry</label>
+      <select id="quarterlyIndustry" class="form-select form-select-sm" style="max-width:260px;">
+        <option value="">All industries (city-wide)</option>
+        {% for bt in business_types %}<option value="{{ bt }}">{{ bt }}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <!-- Figure 4.1's shape: ONE chart carrying both series -- market
+       demand (businesses on file) as a filled area on the left axis,
+       and quarter-over-quarter growth % as a second area on the right.
+       Reading them together is the point: rising demand with falling
+       growth is a market flattening out, which two separate charts
+       side by side made much harder to see. -->
+  <canvas id="quarterlyChart" height="110"></canvas>
+  <div class="text-muted small mt-2" id="quarterlyProvenance"></div>
+</div>
+
+<div class="dss-card mb-3">
+  <h6 class="mb-3">Top Performing Industries (blended baseline + real data)</h6>
+  <div id="topIndustriesList"></div>
+</div>
+
+<!-- Bulk fetch from Google Places.
+     What used to sit here was a TEMPORARY verification panel: a table
+     listing every (industry x barangay) row that had come back from
+     Google, to prove the integration was real. It has served its
+     purpose and is gone.
+
+     The FETCH control is kept, because it is not verification -- it is
+     the only way to pull competitor data into the database, and the
+     grid is far from complete. -->
+<div class="dss-card" id="placesRefreshBox">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h6 class="mb-1"><i class="bi bi-cloud-download"></i> Business data from Google Places</h6>
+      <div class="text-muted small" id="placesRefreshProgressText">Checking how much is already fetched&hellip;</div>
+    </div>
+    <div class="d-flex gap-2">
+      <button type="button" class="btn btn-sm btn-primary" id="placesRefreshStart">
+        <i class="bi bi-cloud-download"></i> Fetch remaining
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="placesRefreshStop">Stop</button>
+    </div>
+  </div>
+  <div class="progress mt-2" style="height:8px;">
+    <div class="progress-bar bg-success" id="placesRefreshBar" style="width:0%"></div>
+  </div>
+  <div class="text-muted mt-2" style="font-size:.75rem;">
+    <i class="bi bi-exclamation-triangle"></i>
+    A complete sweep is 20 industries &times; 76 barangays = <strong>1,520 lookups</strong>, and with result paging
+    each can cost up to 3 Google Places requests &mdash; roughly <strong>4,560 billable calls</strong> on the billing
+    account attached to your key. It runs in batches and you can stop at any point; the most populous barangays and
+    the most common industries are fetched first, so stopping early still leaves the map and charts looking right
+    where anyone will actually look.
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// ---- Colour system for BOTH panels --------------------------------
+// Eight base hues, checked for colour-vision-deficiency separation
+// (worst adjacent pair dE 9.1 protan, worst normal-vision pair dE 19.6,
+// all inside the readable lightness band on a light surface).
+const PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
+
+// Every industry is charted now (24 of them), so eight hues aren't
+// enough and there is no honest way to make 24 categorical colours all
+// mutually distinguishable -- past ~8, colour stops being a reliable
+// identifier no matter how they're chosen. Rather than pretend
+// otherwise, the palette extends the 8 hues with a darker and a lighter
+// step of each (24 total, ordered so neighbouring indices are always
+// DIFFERENT hues), and identity is carried by TEXT, not colour:
+//   * every slice/series is listed by name with its count and share
+//   * slices are separated by a 2px white border
+//   * hovering any slice or line names it
+// The same map is used by both charts, so an industry is the same
+// colour in the pie and in the trend lines.
+function shade(hex, amount, toward) {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c) => Math.round(c + (toward - c) * amount);
+  return (
+    "#" +
+    [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+      .map((c) => mix(c).toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+const PALETTE_24 = [
+  ...PALETTE,
+  ...PALETTE.map((h) => shade(h, 0.38, 0)),
+  ...PALETTE.map((h) => shade(h, 0.45, 255)),
+];
+
+const ALL_INDUSTRIES = {{ business_types|tojson }};
+// Colour follows the INDUSTRY, never its rank -- so a slice keeps its
+// colour as counts shift, and the pie and the line chart agree.
+const BUSINESS_COLORS = Object.fromEntries(
+  ALL_INDUSTRIES.map((name, i) => [name, PALETTE_24[i % PALETTE_24.length]])
+);
+
+function buildLineChartLegend(chart, containerId, rankedLabelsDesc) {
+  const container = document.getElementById(containerId);
+  const order = [...chart.data.datasets.keys()].sort(
+    (a, b) => rankedLabelsDesc.indexOf(chart.data.datasets[a].label) - rankedLabelsDesc.indexOf(chart.data.datasets[b].label)
+  );
+  container.innerHTML = order.map(i => {
+    const ds = chart.data.datasets[i];
+    return `<div class="dss-scroll-legend-item" data-index="${i}">
+      <span class="dss-legend-swatch" style="background:${ds.borderColor}"></span><span>${ds.label}</span>
+    </div>`;
+  }).join("");
+  container.querySelectorAll(".dss-scroll-legend-item").forEach(item => {
+    item.addEventListener("click", () => {
+      const i = Number(item.dataset.index);
+      const meta = chart.getDatasetMeta(i);
+      meta.hidden = meta.hidden === null ? !chart.data.datasets[i].hidden : !meta.hidden;
+      item.classList.toggle("dss-legend-off", !!meta.hidden);
+      chart.update();
+    });
+  });
+  return container;
+}
+
+function buildPieChartLegend(chart, containerId) {
+  const container = document.getElementById(containerId);
+  const labels = chart.data.labels;
+  container.innerHTML = labels.map((label, i) => `
+    <div class="dss-scroll-legend-item" data-index="${i}">
+      <span class="dss-legend-swatch" style="background:${chart.data.datasets[0].backgroundColor[i]}"></span><span>${label}</span>
+    </div>`).join("");
+  return container;
+}
+
+function setAllHidden(chart, container, hidden) {
+  chart.data.datasets.forEach((ds, i) => { chart.getDatasetMeta(i).hidden = hidden; });
+  container.querySelectorAll(".dss-scroll-legend-item").forEach(el => el.classList.toggle("dss-legend-off", hidden));
+  chart.update();
+}
+
+// ---- The four Figure 4 KPI cards -----------------------------------
+// Each shows a value AS OF the month picked in the calendar, plus its
+// month-over-month change. Two honesty rules the storyboard's mock-up
+// doesn't have to worry about but a real dashboard does:
+//   * a month with no dated rows behind it says so, instead of showing
+//     a value that is really just today's number re-labelled; and
+//   * a missing previous month shows "no comparison available", not a
+//     "+0.0% from last month" that reads like a measurement.
+function renderKpi(valueId, trendId, iconId, card, opts) {
+  const valueEl = document.getElementById(valueId);
+  const trendEl = document.getElementById(trendId);
+  const iconEl = document.getElementById(iconId);
+  if (!valueEl || !card) return;
+
+  valueEl.textContent = opts.format(card.value);
+
+  const delta = card.delta_percent !== undefined ? card.delta_percent : card.delta_points;
+  const unit = card.delta_percent !== undefined ? "%" : (opts.pointUnit || "");
+
+  if (delta === null || delta === undefined) {
+    // Now genuinely rare: it means the month has no measurement AND
+    // nothing real to project from either (an empty database). Say why,
+    // rather than leaving a bare "no comparison available" that looks
+    // like a bug.
+    trendEl.innerHTML =
+      '<span class="text-muted" title="No data on file for this month, and nothing measured to project it from">no comparison available</span>';
+    if (iconEl) iconEl.className = "bi bi-dash text-muted";
+    return;
+  }
+
+  const good = card.higher_is_better ? delta >= 0 : delta <= 0;
+  const cls = delta === 0 ? "text-muted" : (good ? "text-success" : "text-danger");
+  const arrow = delta === 0 ? "bi-dash" : (delta > 0 ? "bi-graph-up-arrow" : "bi-graph-down-arrow");
+  const sign = delta > 0 ? "+" : "";
+  // Held at a fixed number of decimals so a month that barely moved
+  // reads as a measured "0.0 pts" rather than a bare "0" that looks like
+  // a placeholder where a figure should be.
+  const shown = opts.deltaDigits === undefined ? delta : Number(delta).toFixed(opts.deltaDigits);
+  const flag = card.measured
+    ? ""
+    : (card.projected
+        ? ' <span class="text-muted" title="This month predates the app\'s own records, so it is scaled from the published national MSME establishment series -- see the note below the cards">(estimated)</span>'
+        : ' <span class="text-muted" title="No dated rows for this month -- shown from the model baseline">(estimated)</span>');
+  trendEl.innerHTML =
+    `<span class="${cls}">${sign}${shown}${unit} from ${lastMonthLabel}</span>` + flag;
+  if (iconEl) iconEl.className = `bi ${arrow} ${cls}`;
+}
+
+let lastMonthLabel = "last month";
+
+function renderPeriodCards(po) {
+  if (!po) return;
+  lastMonthLabel = po.previous_label || "last month";
+  const c = po.cards;
+  renderKpi("statTotalBusinesses", "statTotalBusinessesTrend", "statTotalBusinessesIcon",
+    c.total_businesses, { format: (v) => Number(v).toLocaleString(), deltaDigits: 1 });
+  // An absolute change, so it needs a noun: "+3 new" reads as businesses,
+  // where a bare "+3" next to a count reads as ambiguous.
+  renderKpi("statNewStartups", "statNewStartupsTrend", "statNewStartupsIcon",
+    c.new_startups, { format: (v) => Number(v).toLocaleString(), pointUnit: " new" });
+  // Fixed to one decimal so "27%" and "23.9%" don't sit side by side on
+  // the same card across two months and look like different precisions.
+  renderKpi("statSaturation", "statSaturationTrend", "statSaturationIcon",
+    c.market_saturation, { format: (v) => `${Number(v).toFixed(1)}%`, pointUnit: " pts", deltaDigits: 1 });
+  renderKpi("statViability", "statViabilityTrend", "statViabilityIcon",
+    c.avg_viability, { format: (v) => `${Number(v).toFixed(1)}/10`, pointUnit: " pts", deltaDigits: 2 });
+
+  const note = document.getElementById("asOfNote");
+  if (!note) return;
+
+  const anyProjected = Object.values(c).some(card => card && card.projected);
+  let html =
+    `Figures as of <strong>${po.as_of_label}</strong>, compared with ${po.previous_label}. ` +
+    (po.forecasts_in_month
+      ? `${po.forecasts_in_month} real forecast(s) were run in ${po.as_of_label}.`
+      : `No forecasts were run in ${po.as_of_label}, so saturation and viability are scaled from the model's current baseline rather than measured for that month.`);
+
+  // Where a projected month's shape comes from -- named on screen, not
+  // left for anyone to take on trust. The Places API has no historical
+  // endpoint of any kind, so this is the honest alternative: real
+  // published national figures, applied to this app's real current
+  // counts.
+  if (anyProjected && po.basis) {
+    const b = po.basis;
+    html +=
+      ` <span class="text-muted">Months before this system began collecting its own data are back-projected from the ` +
+      `${b.source} &mdash; about <strong>${Number(b.national_establishments).toLocaleString()}</strong> MSME establishments nationally in ${b.year}` +
+      (b.is_published_year
+        ? ", a published figure"
+        : ", continued past the last published year at a conservative rate") +
+      `. Google Places has no historical data of any kind, so no API can supply these months; they are modelled, flagged "(estimated)" above, and replaced by real readings as this app accumulates them.</span>`;
+  }
+  note.innerHTML = html;
+}
+
+// ---- Quarterly Performance & Growth Rate ---------------------------
+// The paper's Figure 4.1 shows ONE chart carrying both series, and
+// that pairing is the useful part: demand still climbing while the
+// growth rate flattens is a market maturing, which two charts side by
+// side made much harder to read. So this is a dual-axis combo --
+// businesses on file as a filled area (left axis, a count) and
+// quarter-over-quarter growth as a line (right axis, a percentage).
+// The two axes are labelled and coloured to match their series, since
+// a shared scale between a count and a percentage would be meaningless.
+let quarterlyChart = null;
+
+function renderQuarterly(q) {
+  if (!q) return;
+
+  const note = document.getElementById("quarterlyNote");
+  const provenance = document.getElementById("quarterlyProvenance");
+  const scope = q.industry_type ? `<strong>${q.industry_type}</strong>` : "all industries city-wide";
+  note.innerHTML = `Market demand and quarter-over-quarter growth for ${scope}.`;
+
+  const projectedCount = (q.projected || []).filter(Boolean).length;
+  provenance.innerHTML = q.has_real_history
+    ? `${q.measured_quarters} of ${q.labels.length} quarters measured from real <code>market_data</code> snapshots` +
+      (projectedCount
+        ? ` &middot; the ${projectedCount} earliest quarter(s), from before any snapshot existed, are a documented back-projection (drawn with hollow points) and are replaced by real readings as history accumulates.`
+        : " &middot; every quarter shown is measured, not projected.")
+    : "No market_data snapshots on file yet -- this chart fills in as the app fetches business data.";
+
+  if (quarterlyChart) quarterlyChart.destroy();
+
+  // Reference palette from the paper's Figure 4.1: a solid steel-blue
+  // demand area with a lighter green growth area laid over it.
+  const demandColor = "#5aa9c4";
+  const growthColor = "#6ecdaa";
+  // A back-projected quarter gets a hollow point, so measured and
+  // estimated are distinguishable without reading the caption.
+  const pointStyle = (i) => (q.projected && q.projected[i] ? "#ffffff" : demandColor);
+
+  quarterlyChart = new Chart(document.getElementById("quarterlyChart"), {
+    data: {
+      labels: q.labels,
+      datasets: [
+        {
+          type: "line",
+          label: "Businesses on file (demand)",
+          data: q.businesses,
+          yAxisID: "y",
+          borderColor: demandColor,
+          backgroundColor: "rgba(90, 169, 196, 0.85)",
+          fill: true,
+          tension: 0.35,
+          pointRadius: 3,
+          pointBackgroundColor: q.businesses.map((_, i) => pointStyle(i)),
+          pointBorderColor: demandColor,
+          pointBorderWidth: 2,
+        },
+        {
+          type: "line",
+          label: "Growth rate %",
+          data: q.growth_rate_percent,
+          yAxisID: "yGrowth",
+          borderColor: growthColor,
+          // Filled like the demand series -- Figure 4.1 shows two
+          // overlapping translucent areas, not an area plus a dashed
+          // line, and the lighter green reads as "on top of" the blue.
+          backgroundColor: "rgba(110, 205, 170, 0.55)",
+          fill: true,
+          tension: 0.35,
+          pointRadius: 0,
+          borderWidth: 1.5,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 8, padding: 16 } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => (ctx.datasetIndex === 0
+              ? `${ctx.parsed.y.toLocaleString()} businesses`
+              : `${ctx.parsed.y > 0 ? "+" : ""}${ctx.parsed.y}% vs previous quarter`),
+            afterLabel: (ctx) => (ctx.datasetIndex === 0 && q.projected && q.projected[ctx.dataIndex]
+              ? "back-projected (no snapshot yet)"
+              : ""),
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          position: "left",
+          beginAtZero: true,
+          title: { display: true, text: "Businesses", color: "#6c757d" },
+          ticks: { color: "#6c757d" },
+          grid: { color: "rgba(0,0,0,.06)" },
+        },
+        yGrowth: {
+          position: "right",
+          beginAtZero: true,
+          title: { display: true, text: "Growth %", color: "#6c757d" },
+          ticks: { color: "#6c757d", callback: (v) => `${v}%` },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    },
+  });
+}
+
+// ---- Monthly Industry Trends (line) ---------------------------------
+// Built once and then UPDATED in place when the month changes. Chart.js
+// keeps the same canvas, the same 24 datasets and -- importantly -- the
+// legend's show/hide state, so switching from March to April doesn't
+// silently un-hide every industry the user had just filtered out.
+let monthlyChart = null;
+let monthlyLegendBox = null;
+
+function updateMonthlyChart(monthly) {
+  if (!monthly) return;
+  const datasets = Object.keys(monthly.series).map(bt => ({
+    label: bt,
+    data: monthly.series[bt],
+    borderColor: BUSINESS_COLORS[bt] || "#999",
+    backgroundColor: BUSINESS_COLORS[bt] || "#999",
+    tension: 0.35,
+    pointRadius: 3,
+  }));
+  const rankedLabelsDesc = [...datasets]
+    .sort((a, b) => b.data[b.data.length - 1] - a.data[a.data.length - 1])
+    .map(d => d.label);
+
+  if (monthlyChart) {
+    monthlyChart.data.labels = monthly.labels;
+    // Same industries every time, so overwrite each series' points and
+    // leave the dataset objects (and their hidden state) alone.
+    monthlyChart.data.datasets.forEach(ds => {
+      const next = monthly.series[ds.label];
+      if (next) ds.data = next;
+    });
+    monthlyChart.update();
+    return;
+  }
+
+  monthlyChart = new Chart(document.getElementById("monthlyChart"), {
+    type: "line",
+    data: { labels: monthly.labels, datasets },
+    options: { responsive: true, plugins: { legend: { display: false } },
+               scales: { y: { title: { display: true, text: "Saturation %" }, min: 0, max: 100 } } }
+  });
+  document.getElementById("monthlyTrackedCount").textContent = `${datasets.length} industries tracked · click to toggle`;
+  monthlyLegendBox = buildLineChartLegend(monthlyChart, "monthlyLegend", rankedLabelsDesc);
+  document.getElementById("monthlyShowAll").addEventListener("click", () => setAllHidden(monthlyChart, monthlyLegendBox, false));
+  document.getElementById("monthlyHideAll").addEventListener("click", () => setAllHidden(monthlyChart, monthlyLegendBox, true));
+}
+
+function renderTopIndustries(rows) {
+  const list = document.getElementById("topIndustriesList");
+  if (!list) return;
+  list.innerHTML = (rows || []).map((ind, idx) => {
+    const arrow = ind.change_percent > 0 ? "bi-arrow-up text-success" : (ind.change_percent < 0 ? "bi-arrow-down text-danger" : "bi-dash text-muted");
+    const sign = ind.change_percent > 0 ? "+" : "";
+    return `
+    <div class="d-flex justify-content-between align-items-center border rounded p-3 mb-2">
+      <div class="d-flex align-items-center gap-3">
+        <span class="fs-4 text-muted">${idx + 1}</span>
+        <div><strong>${ind.name}</strong><div class="text-muted small">Market Score: ${ind.market_score}/10</div></div>
+      </div>
+      <span class="fw-bold"><i class="bi ${arrow}"></i> ${sign}${ind.change_percent}%</span>
+    </div>`;
+  }).join("") || '<p class="text-muted">No industries to rank yet.</p>';
+}
+
+function currentMonth() {
+  const el = document.getElementById("trendMonth");
+  return el && el.value ? el.value : "{{ selected_month }}";
+}
+
+// Re-fetches only the quarterly block. Used by BOTH the industry filter
+// and the period selector, since neither needs the expensive city-wide
+// AI sweep re-run -- this endpoint is pure database reads.
+async function refreshQuarterly() {
+  const select = document.getElementById("quarterlyIndustry");
+  const industry = select ? select.value : "";
+  const params = new URLSearchParams({ as_of: currentMonth() });
+  if (industry) params.set("industry_type", industry);
+  const url = "{{ url_for('api.quarterly_performance') }}?" + params.toString();
+  if (select) select.disabled = true;
+  try {
+    renderQuarterly(await fetch(url).then(r => r.json()));
+  } finally {
+    if (select) select.disabled = false;
+  }
+}
+
+function setupQuarterlyFilter() {
+  const select = document.getElementById("quarterlyIndustry");
+  if (select) select.addEventListener("change", refreshQuarterly);
+}
+
+// ---- Select Period: fast, in-place month changes --------------------
+// Picking a month moves the KPI cards, the monthly trend chart and the
+// quarterly chart. It used to do that by RELOADING THE PAGE with
+// ?as_of=, which meant re-downloading every asset, rebuilding both
+// charts from scratch, re-running the Google Places verification table
+// and re-running the city-wide AI sweep -- seconds of work to change
+// four numbers and three charts.
+//
+// Now it fetches /api/trend-period, which returns only the parts that
+// actually depend on the month (the pie chart and the Places table
+// don't), and updates them in place. Three things keep it feeling
+// immediate:
+//   * months already looked at are answered from PERIOD_CACHE with no
+//     network call at all, so stepping back and forth is instant;
+//   * a slow month can't overwrite a newer one -- each request carries a
+//     sequence number and a stale reply is dropped; and
+//   * the control shows a spinner instead of freezing, and never blocks
+//     the user from picking a different month mid-request.
+const PERIOD_CACHE = new Map();
+let periodRequestSeq = 0;
+
+function setPeriodBusy(busy) {
+  const el = document.getElementById("trendMonth");
+  const spinner = document.getElementById("trendPeriodBusy");
+  if (spinner) spinner.classList.toggle("d-none", !busy);
+  if (el) el.classList.toggle("dss-loading", busy);
+}
+
+function renderPeriod(data) {
+  renderPeriodCards(data.period_overview);
+  updateMonthlyChart(data.monthly_trends);
+  renderQuarterly(data.market_quarterly);
+  renderTopIndustries(data.top_industries);
+}
+
+async function loadPeriod(month) {
+  // The cards and the monthly lines are city-wide, so the month alone
+  // identifies them. The industry dropdown only narrows the quarterly
+  // chart, which has its own cheap endpoint and is re-applied below --
+  // that way changing the month keeps the industry the user picked,
+  // instead of silently resetting it the way the page reload did.
+  const industry = (document.getElementById("quarterlyIndustry") || {}).value || "";
+
+  if (PERIOD_CACHE.has(month)) {
+    renderPeriod(PERIOD_CACHE.get(month));
+    if (industry) refreshQuarterly();
+    return;
+  }
+
+  const seq = ++periodRequestSeq;
+  setPeriodBusy(true);
+  try {
+    const params = new URLSearchParams({ as_of: month });
+    const data = await fetch("{{ url_for('api.trend_period') }}?" + params.toString())
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
+    // A reply for a month the user has already moved on from must not
+    // paint over the newer one.
+    if (seq !== periodRequestSeq) return;
+    PERIOD_CACHE.set(month, data);
+    renderPeriod(data);
+    if (industry) refreshQuarterly();
+  } catch (err) {
+    if (seq !== periodRequestSeq) return;
+    const errBox = document.getElementById("trendLoadError");
+    errBox.classList.remove("d-none");
+    errBox.textContent = `Could not load ${month} (${err.message}). Pick the month again to retry.`;
+  } finally {
+    if (seq === periodRequestSeq) setPeriodBusy(false);
+  }
+}
+
+function setupPeriodSelector() {
+  const el = document.getElementById("trendMonth");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    if (!el.value) return;
+    document.getElementById("trendLoadError").classList.add("d-none");
+    // Keep ?as_of= in the address bar in step, so the month survives a
+    // refresh or a shared link -- without paying for a reload.
+    const url = new URL(window.location.href);
+    url.searchParams.set("as_of", el.value);
+    window.history.replaceState({}, "", url.toString());
+    loadPeriod(el.value);
+  });
+}
+
+// Named stages with the share of the wait each one typically covers.
+// Honest about what it does NOT know: the server reports no progress, so
+// these are elapsed-time milestones, not measured completion. They exist
+// so a ten-second wait reads as work happening in a known order rather
+// than as a stuck bar.
+const TREND_STAGES = [
+  [0,     8, "Reading the businesses on file\u2026"],
+  [600,  26, "Scoring every industry across Tarlac City\u2019s barangays\u2026"],
+  [3200, 58, "Blending in the real forecasts already recorded\u2026"],
+  [7000, 78, "Back-projecting the historical trend\u2026"],
+  [10000, 90, "Drawing the charts\u2026"],
+];
+
+async function loadTrendData() {
+  const bar = document.getElementById("trendLoadingBar");
+  const loading = document.getElementById("trendLoading");
+  const step = document.getElementById("trendLoadingDetail");
+  const started = performance.now();
+
+  const creep = setInterval(() => {
+    const elapsed = performance.now() - started;
+    let stage = TREND_STAGES[0];
+    for (const s of TREND_STAGES) if (elapsed >= s[0]) stage = s;
+    if (bar) bar.style.width = stage[1] + "%";
+    if (step) step.textContent = stage[2];
+  }, 200);
+
+  let data;
+  try {
+    data = await fetch("{{ url_for('api.trend_data') }}?as_of=" + encodeURIComponent(currentMonth())).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    });
+  } catch (err) {
+    clearInterval(creep);
+    if (loading) loading.classList.add("d-none");
+    const errBox = document.getElementById("trendLoadError");
+    errBox.classList.remove("d-none");
+    errBox.textContent = `Could not build the trend report (${err.message}). Reload to try again.`;
+    return;
+  }
+  clearInterval(creep);
+  if (bar) bar.style.width = "100%";
+  if (step) step.textContent = "Done.";
+  if (loading) loading.classList.add("dss-loader-done");
+  setTimeout(() => loading && loading.classList.add("d-none"), 400);
+
+  const ov = data.overview;
+  // The first load already contains everything /api/trend-period would
+  // return for this month, so seed the cache with it -- coming back to
+  // the starting month later costs nothing.
+  PERIOD_CACHE.set(currentMonth(), {
+    period: data.period,
+    period_overview: data.period_overview,
+    monthly_trends: data.monthly_trends,
+    market_quarterly: data.market_quarterly,
+    top_industries: data.top_industries,
+  });
+  renderPeriodCards(data.period_overview);
+  updateMonthlyChart(data.monthly_trends);
+
+  // ---- Industry Distribution (pie, real counts) ----------------------
+  // Every business on file across Tarlac City, by industry: the freshest
+  // market_data competitor_count for each (industry, barangay) combo --
+  // live Google Places rows AND rows already on file -- plus registered
+  // SME plans. (This used to count ONLY rows whose source was exactly
+  // "Google Places API", which is why the whole pie collapsed to a
+  // single 100% slice whenever no live lookup had run yet.)
+  const dist = data.industry_distribution;
+
+  // EVERY industry gets its own slice -- no grouped "Other" bucket.
+  // (An earlier version collapsed everything past the top 8, which
+  // turned ~16 real industries into one dominant grey wedge and hid
+  // exactly the distribution this chart exists to show.)
+  const slices = dist.map((d) => ({
+    name: d.name,
+    count: d.count,
+    percent: d.percent,
+    fromPlaces: d.from_places_api,
+    fromMarket: d.from_market_data,
+    registered: d.registered_plans,
+    color: BUSINESS_COLORS[d.name] || "#8a8a8a",
+  }));
+
+  const distributionChart = new Chart(document.getElementById("distributionChart"), {
+    type: "pie",
+    data: {
+      labels: slices.map(s => s.name),
+      // Plot the raw COUNT and let Chart.js derive the angles -- charting
+      // pre-rounded percentages makes the wedges disagree with the labels.
+      datasets: [{
+        data: slices.map(s => s.count),
+        backgroundColor: slices.map(s => s.color),
+        borderColor: "#ffffff",
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const s = slices[ctx.dataIndex];
+              return `${s.name}: ${s.count.toLocaleString()} businesses (${s.percent}%)`;
+            },
+            // Spell out where each slice's businesses came from, so the
+            // pie itself answers "is this real Google data or not?".
+            afterLabel: (ctx) => {
+              const s = slices[ctx.dataIndex];
+              return `Places API ${s.fromPlaces.toLocaleString()} · market data ${s.fromMarket.toLocaleString()} · plans ${s.registered.toLocaleString()}`;
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // The legend IS the identity layer: with 24 industries, colour alone
+  // can't distinguish them, so every industry is listed by name with its
+  // count and share. Doubles as the table view of the chart.
+  const distLegend = document.getElementById("distributionLegend");
+  if (!dist.length) {
+    distLegend.innerHTML =
+      '<p class="text-muted small mb-0">No businesses on file yet -- add a business plan, or open the Saturation Map so the app fetches competitor data from Google Places.</p>';
+  } else {
+    distLegend.innerHTML = slices.map(s => `
+      <div class="dss-scroll-legend-item d-flex justify-content-between align-items-center">
+        <span class="text-truncate" style="min-width:0;">
+          <span class="dss-legend-swatch" style="background:${s.color}"></span>${s.name}
+        </span>
+        <span class="text-muted small ms-2 flex-shrink-0">${s.count.toLocaleString()} &middot; ${s.percent}%</span>
+      </div>`).join("");
+    document.getElementById("distributionCount").textContent =
+      `${slices.length} industries · ${slices.reduce((sum, s) => sum + s.count, 0).toLocaleString()} businesses`;
+  }
+
+  // ---- Quarterly Performance & Growth Rate ---------------------------
+  renderQuarterly(data.market_quarterly);
+
+  // ---- Top Performing Industries -------------------------------------
+  renderTopIndustries(data.top_industries);
+}
+setupQuarterlyFilter();
+setupPeriodSelector();
+loadTrendData();
+
+
+// ---- Bulk "fetch everything from Google", in stoppable batches ------
+// Drives the "Fetch remaining" card above. The verification table that
+// used to sit beside it is gone; these endpoints are not verification
+// and stay.
+(function () {
+  const startBtn = document.getElementById("placesRefreshStart");
+  const stopBtn = document.getElementById("placesRefreshStop");
+  const bar = document.getElementById("placesRefreshBar");
+  const text = document.getElementById("placesRefreshProgressText");
+  if (!startBtn) return;
+
+  let running = false;
+
+  function paint(p) {
+    const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+    bar.style.width = pct + "%";
+    text.innerHTML =
+      `<strong>${p.done.toLocaleString()}</strong> of ${p.total.toLocaleString()} industry &times; barangay lookups ` +
+      `have real Google data (${pct}%) &middot; ${p.pending.toLocaleString()} remaining`;
+    return p;
+  }
+
+  async function loadProgress() {
+    try {
+      const p = await fetch("{{ url_for('api.places_refresh_progress') }}").then(r => r.json());
+
+      // READ-ONLY DEPLOYMENT (PLACES_LIVE_FETCH=false). The whole card
+      // goes, rather than sitting there disabled: on the live site the
+      // competitor data was collected locally and imported, so there is
+      // nothing to fetch and nothing to explain. Checked BEFORE the
+      // missing-key branch, because a read-only deployment has no key
+      // on purpose and "every count is simulated" would be the exact
+      // opposite of the truth.
+      if (p.live_fetch_disabled) {
+        const box = document.getElementById("placesRefreshBox");
+        if (box) box.remove();
+        return null;
+      }
+
+      if (!p.configured) {
+        text.textContent = "No GOOGLE_PLACES_API_KEY configured in .env.";
+        startBtn.disabled = true;
+        return null;
+      }
+      return paint(p);
+    } catch (err) {
+      text.textContent = "Could not read fetch progress.";
+      return null;
+    }
+  }
+
+  async function runBatches() {
+    running = true;
+    startBtn.classList.add("d-none");
+    stopBtn.classList.remove("d-none");
+
+    while (running) {
+      let result;
+      try {
+        result = await fetch("{{ url_for('api.places_refresh') }}?limit=25", {
+          method: "POST",
+          headers: { "X-CSRFToken": "{{ csrf_token() }}" },
+        }).then(r => r.json());
+      } catch (err) {
+        text.textContent = "Fetch failed — stopping. Check your key and network, then try again.";
+        break;
+      }
+      if (result.error) {
+        text.textContent = result.error;
+        break;
+      }
+      paint(result);
+      // Nothing left, or a whole batch failed (bad key / quota) -- stop
+      // rather than hammering Google in a loop.
+      if (result.pending === 0 || result.requested === 0 || result.refreshed === 0) break;
+    }
+
+    running = false;
+    stopBtn.classList.add("d-none");
+    startBtn.classList.remove("d-none");
+  }
+
+  startBtn.addEventListener("click", runBatches);
+  stopBtn.addEventListener("click", () => {
+    running = false;
+    text.innerHTML += " &middot; stopping after this batch&hellip;";
+  });
+
+  loadProgress();
+})();
+</script>
+{% endblock %}

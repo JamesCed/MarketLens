@@ -1,0 +1,33 @@
+.env
+# .env.example ships with REAL API keys so the settings survive being
+# zipped and extracted (a bare .env kept disappearing from the project
+# folder). An .example file is normally committed -- this one must NOT
+# be, or the keys get published.
+.env.example
+venv/
+env/
+__pycache__/
+*.pyc
+instance/
+app/ml/model_store/*.pkl
+app/ml/model_store/*.json
+.DS_Store
+*.sqlite3
+
+# ---- IDE / tooling noise ----
+.idea/
+.vscode/
+.pytest_cache/
+.ruff_cache/
+
+# ---- Database dumps ----
+# mysqldump output is how you move data to the live database
+# (DEPLOYMENT.md step 4). Keep it OUT of the repo: it contains your
+# whole dataset and, once user accounts exist, their password hashes and
+# email addresses.
+dumps/
+*.dump.sql
+dss_db*.sql
+
+# ---- Render / host local artefacts ----
+.render/

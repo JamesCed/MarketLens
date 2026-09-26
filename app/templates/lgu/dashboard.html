@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}LGU Dashboard{% endblock %}
+
+{% block content %}
+<!-- Hero / city-wide search -- deliberately the same shape as the SME
+     Home page (sme/home.html), so both roles get the same dashboard
+     experience; the difference is that every figure here is CITY-WIDE
+     rather than scoped to one business plan. -->
+<div class="dss-hero mb-4">
+  <h2 class="text-center mb-1">Tarlac City Diversification &amp; Planning Dashboard</h2>
+  <p class="text-center text-muted mb-3">City-wide market saturation across all {{ locations|length }} barangays</p>
+
+  <form id="smeSearchForm" class="mx-auto" style="max-width:700px;" role="search" autocomplete="off">
+    <div class="input-group input-group-lg position-relative">
+      <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+      <input type="text" id="smeSearchInput" class="form-control" autocomplete="off" list="locationOptions"
+             placeholder='Check a barangay (e.g., &quot;Tibag&quot; or &quot;Food &amp; Beverage in San Vicente&quot;)'>
+      <datalist id="locationOptions">
+        {% for loc in locations %}<option value="{{ loc }}">{% endfor %}
+      </datalist>
+      <select id="smeSearchIndustry" class="form-select flex-grow-0" style="max-width:200px;">
+        {% for bt in business_types %}<option value="{{ bt }}">{{ bt }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Check</button>
+      <div id="smeSearchSuggestions" class="list-group position-absolute w-100 shadow-sm" style="top:100%; left:0; z-index:1050;" hidden></div>
+    </div>
+  </form>
+  <div id="smeSearchResults" class="mx-auto" style="max-width:700px;" hidden></div>
+</div>
+
+<!-- City-wide industry cards (same layout as the SME Home cards) -->
+<div class="row g-3 mb-2">
+  {% for card in industry_cards %}
+  <div class="col-6 col-lg-3">
+    <div class="dss-card dss-card-hover text-center h-100">
+      <div class="dss-industry-icon">{{ card.icon }}</div>
+      <h6 class="mb-0">{{ card.name }}</h6>
+      {% if card.subtitle %}<p class="dss-text-muted-sm mb-2">({{ card.subtitle }})</p>{% else %}<p class="mb-2">&nbsp;</p>{% endif %}
+      <div class="d-flex align-items-center justify-content-center gap-2 small">
+        <span>Market Score</span>
+        <strong class="fs-5">{{ card.score }}</strong>
+        {% if card.trend == 'up' %}<i class="bi bi-arrow-up-circle-fill text-success"></i>
+        {% elif card.trend == 'down' %}<i class="bi bi-arrow-down-circle-fill text-danger"></i>
+        {% else %}<i class="bi bi-dash-circle text-secondary"></i>{% endif %}
+      </div>
+      <div class="text-muted" style="font-size:.7rem;">{{ "{:,}".format(card.businesses) }} businesses on file</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="col-12 text-muted">No industry data on file yet.</div>
+  {% endfor %}
+</div>
+<p class="text-muted small mb-4">
+  Market Scores are AI viability scores (0-10) sampled across the city's most populous barangays
+  ({{ sample_barangays|join(', ') }}) so this page stays fast &mdash; open
+  <a href="{{ url_for('sme.trend_reports') }}">Trend Reports</a> for the full all-barangay sweep, or
+  <a href="{{ url_for('sme.saturation_map') }}">Saturation Map</a> for a per-barangay view.
+</p>
+
+<!-- Original LGU planning stats, kept exactly as they were -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="dss-card text-center">
+      <div class="text-muted small">Barangays On File</div>
+      <div class="fs-2">{{ barangays_on_file|length }}</div>
+      <div class="text-muted" style="font-size:.7rem;">{{ totals.barangays_with_businesses }} with businesses recorded</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="dss-card text-center">
+      <div class="text-muted small">Forecasts Generated</div>
+      <div class="fs-2">{{ total_forecasts }}</div>
+      <div class="text-muted" style="font-size:.7rem;">by SME accounts to date</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="dss-card text-center">
+      <div class="text-muted small">Saturated Zones Flagged</div>
+      <div class="fs-2 text-danger">{{ saturated_count }}</div>
+      <div class="text-muted" style="font-size:.7rem;">saturation index above {{ saturated_threshold }}%</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="dss-card text-center">
+      <div class="text-muted small">Opportunity Zones (Low)</div>
+      <div class="fs-2 text-success">{{ opportunity_count }}</div>
+      <div class="text-muted" style="font-size:.7rem;">underserved, room to enter</div>
+    </div>
+  </div>
+</div>
+
+<h4 class="text-center mb-3">City-Wide Market Saturation &amp; Diversification</h4>
+<div class="row g-4 mb-4">
+  <div class="col-lg-6">
+    <div class="dss-card h-100">
+      <h6 class="mb-3">Businesses On File</h6>
+      <div class="d-flex align-items-baseline gap-2 mb-1">
+        <span class="display-5 fw-bold">{{ "{:,}".format(totals.businesses) }}</span>
+        <span class="text-muted small">across Tarlac City</span>
+      </div>
+      <p class="text-muted small">
+        {{ "{:,}".format(totals.from_places_api) }} of these were fetched live from the
+        <strong>Google Places API</strong>; the rest come from market data already on file
+        (PSA/DTI uploads and the reference dataset).
+      </p>
+      <div class="small">
+        <div class="mb-2"><span class="fw-bold">Saturation Intensity Scale</span></div>
+        <div class="d-flex align-items-center gap-2 mb-1"><span class="dss-legend-swatch" style="background:#b91c1c"></span><span>High Saturation</span></div>
+        <div class="d-flex align-items-center gap-2 mb-1"><span class="dss-legend-swatch" style="background:#f97316"></span><span>Moderate</span></div>
+        <div class="d-flex align-items-center gap-2 mb-1"><span class="dss-legend-swatch" style="background:#fde047"></span><span>Low-Moderate</span></div>
+        <div class="d-flex align-items-center gap-2"><span class="dss-legend-swatch" style="background:#22c55e"></span><span>High Opportunity</span></div>
+      </div>
+      <a href="{{ url_for('sme.saturation_map') }}" class="btn btn-outline-primary btn-sm w-100 mt-3">
+        <i class="bi bi-map"></i> Open Full Interactive Map
+      </a>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="dss-card h-100">
+      <h6 class="mb-3">Diversification Guidance</h6>
+      <div class="bg-light rounded p-3 mb-3">
+        <div class="d-flex gap-3">
+          <div class="fs-3">💡</div>
+          <div class="small">
+            Use the <a href="{{ url_for('sme.saturation_map') }}">Saturation Map</a> to see which barangays are
+            over-saturated vs. underserved per industry, and
+            <a href="{{ url_for('sme.trend_reports') }}">Trend Reports</a> for longitudinal demand trends.
+          </div>
+        </div>
+      </div>
+      <p class="small text-muted mb-0">
+        Upload fresh PSA/DTI/CLUP data any time from
+        <a href="{{ url_for('lgu.government_upload') }}">Gov't Data Upload</a> to keep these forecasts current --
+        <strong>{{ "{:,}".format(lgu_data_count) }}</strong> LGU data row(s) and
+        <strong>{{ "{:,}".format(market_data_count) }}</strong> market data row(s) are on file right now.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Every barangay, with its real business counts. Replaces the old
+     plain list of name badges: the LGU needs to see WHICH barangays
+     carry how much business activity, and how much of that is live
+     Google Places data. -->
+<div class="dss-card">
+  <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
+    <h6 class="mb-0">All Barangays &mdash; Businesses Fetched From Google Places</h6>
+    <input id="barangayFilter" type="search" class="form-control form-control-sm" style="max-width:240px;"
+           placeholder="Filter barangays...">
+  </div>
+  <p class="text-muted small mb-3">
+    Business counts are the freshest <code>market_data</code> figure for every industry recorded in that barangay.
+    The <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">live</span> column
+    is the portion confirmed from a Google Places API lookup; the remainder is data already on file.
+    Click any barangay to open it on the Saturation Map.
+  </p>
+
+  {% if barangay_rows %}
+  <div class="table-responsive" style="max-height:520px; overflow-y:auto;">
+    <table class="table table-sm align-middle mb-0" id="barangayTable">
+      <thead class="table-light" style="position:sticky; top:0; z-index:1;">
+        <tr>
+          <th>Barangay</th>
+          <th class="text-end">Businesses</th>
+          <th class="text-end">From Places API</th>
+          <th class="text-end">Industries</th>
+          <th class="text-end">Population</th>
+          <th>Top Industry</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in barangay_rows %}
+        <tr class="dss-brgy-row" style="cursor:pointer;" data-location="{{ row.location }}">
+          <td class="fw-medium">{{ row.location }}</td>
+          <td class="text-end">{{ "{:,}".format(row.total_businesses) }}</td>
+          <td class="text-end">
+            {% if row.from_places_api %}
+            <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
+              {{ "{:,}".format(row.from_places_api) }} live
+            </span>
+            {% else %}
+            <span class="text-muted">&mdash;</span>
+            {% endif %}
+          </td>
+          <td class="text-end">{{ row.industries }}</td>
+          <td class="text-end">{% if row.population %}{{ "{:,}".format(row.population) }}{% else %}&mdash;{% endif %}</td>
+          <td class="text-muted small">{% if row.top_industry %}{{ row.top_industry }}{% else %}&mdash;{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-muted small mb-0">No barangay data on file yet -- the AI engine is currently relying entirely on
+    reference figures (see app/ml/seed_data.py). Upload real data to replace them.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Reuses the SME Home search bar behaviour (same element ids), so a
+  // city planner can check any barangay/industry combination from here.
+  window.DSS_SME_LOCATIONS = {{ locations|tojson }};
+  window.DSS_SME_BUSINESS_TYPES = {{ business_types|tojson }};
+  window.DSS_FORECAST_URL = "{{ url_for('api.forecast') }}";
+  window.DSS_SATURATION_MAP_URL = "{{ url_for('sme.saturation_map') }}";
+</script>
+<script src="{{ url_for('static', filename='js/sme_search.js') }}"></script>
+<script>
+  // Client-side filter + click-through for the barangay table.
+  (function () {
+    const filter = document.getElementById('barangayFilter');
+    const table = document.getElementById('barangayTable');
+    if (!table) return;
+
+    const rows = Array.from(table.querySelectorAll('tbody tr'));
+
+    if (filter) {
+      filter.addEventListener('input', function () {
+        const needle = filter.value.trim().toLowerCase();
+        rows.forEach((tr) => {
+          const name = (tr.dataset.location || '').toLowerCase();
+          tr.hidden = needle !== '' && !name.includes(needle);
+        });
+      });
+    }
+
+    const mapUrl = {{ url_for('sme.saturation_map')|tojson }};
+    rows.forEach((tr) => {
+      tr.addEventListener('click', function () {
+        window.location.href = mapUrl + '?location=' + encodeURIComponent(tr.dataset.location || '');
+      });
+    });
+  })();
+</script>
+{% endblock %}

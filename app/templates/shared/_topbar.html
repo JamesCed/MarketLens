@@ -1,0 +1,51 @@
+<!-- shared/_topbar.html : user menu + notification bell -->
+<header class="dss-topbar">
+  {#
+    The mark repeats here because the sidebar slides off-screen below
+    900px (see the media query in style.css) -- without it, every page on
+    a phone would be unbranded. On desktop it reads as a header lockup
+    next to the page context.
+  #}
+  <div class="dss-topbar-brand">
+    {% with variant='auto', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+    <span class="dss-topbar-context">SME Business Planning &amp; Market Entry Decision Support</span>
+  </div>
+  <div class="dss-topbar-actions">
+    <div class="dropdown">
+      <button class="btn btn-light position-relative" type="button" data-bs-toggle="dropdown">
+        <i class="bi bi-bell"></i>
+        {% if unread_notification_count %}
+          <span class="badge rounded-pill bg-danger dss-badge">{{ unread_notification_count }}</span>
+        {% endif %}
+      </button>
+      <div class="dropdown-menu dropdown-menu-end dss-notif-menu" id="notifDropdown">
+        <div class="px-3 py-2 text-muted small">Loading notifications...</div>
+      </div>
+    </div>
+
+    <div class="dropdown">
+      <button class="btn btn-light dss-user-btn" type="button" data-bs-toggle="dropdown">
+        {% if current_user.profile_picture %}
+          <img src="{{ current_user.profile_picture }}" alt="" class="dss-avatar-img-sm">
+        {% else %}
+          <span class="dss-avatar">{{ current_user.initials() }}</span>
+        {% endif %}
+        <span class="d-none d-md-inline">{{ current_user.name }}</span>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><span class="dropdown-item-text text-muted small">{{ current_user.role|upper }} ACCOUNT</span></li>
+        <li><a class="dropdown-item" href="{{ url_for('profile.settings', section='profile') }}"><i class="bi bi-person-circle"></i> Profile</a></li>
+        {% if current_user.is_sme() %}
+          {# Where "My Plans" went. The button used to sit in the bar
+             above; the plans and every control over them now live in
+             Settings, so this is the shortcut straight to that pane. #}
+          <li><a class="dropdown-item" href="{{ url_for('profile.settings', section='plans') }}"><i class="bi bi-briefcase"></i> Business Preferences</a></li>
+        {% endif %}
+        <li><a class="dropdown-item" href="{{ url_for('profile.settings', section='appearance') }}"><i class="bi bi-palette"></i> Appearance</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('profile.settings') }}"><i class="bi bi-gear"></i> Settings</a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><a class="dropdown-item text-danger" href="{{ url_for('auth.logout') }}"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+      </ul>
+    </div>
+  </div>
+</header>

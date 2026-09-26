@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% block title %}Recommendations{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <h4 class="mb-0">AI-Powered Recommendations</h4>
+  <p class="text-muted small mb-0">Where the AI recommends you could launch, based on the industry and parameters on your plan.</p>
+</div>
+
+{% if not has_profiles %}
+  <div class="dss-card text-center py-5">
+    <i class="bi bi-lightbulb display-4 text-muted"></i>
+    <p class="mt-2 text-muted">You haven't created a business plan yet.</p>
+    <a href="{{ url_for('sme.home') }}" class="btn btn-primary">Create your first plan on Home</a>
+  </div>
+{% else %}
+  <!-- Summary cards. High/Moderate are the two tiers the AI actually
+       recommends; the third card is their total, i.e. how many
+       locations it would put forward -- NOT every barangay it scored,
+       and not the SME's own saved plans. See RECOMMENDABLE_TIERS in
+       app/services/location_opportunity_service.py. -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="dss-rec-stat-card dss-rec-stat-high">
+        <div class="d-flex align-items-center gap-3 mb-2">
+          <i class="bi bi-lightbulb-fill dss-rec-stat-icon"></i>
+          <div>
+            <div class="small" style="opacity:.9;">High Opportunity</div>
+            <div class="fs-2">{{ high_count }}</div>
+          </div>
+        </div>
+        <p class="small mb-0" style="opacity:.9;">Locations ready to enter</p>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="dss-rec-stat-card dss-rec-stat-moderate">
+        <div class="d-flex align-items-center gap-3 mb-2">
+          <i class="bi bi-bullseye dss-rec-stat-icon"></i>
+          <div>
+            <div class="small" style="opacity:.9;">Moderate Opportunity</div>
+            <div class="fs-2">{{ moderate_count }}</div>
+          </div>
+        </div>
+        <p class="small mb-0" style="opacity:.9;">Requires a niche strategy</p>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="dss-rec-stat-card dss-rec-stat-locations">
+        <div class="d-flex align-items-center gap-3 mb-2">
+          <i class="bi bi-geo-alt-fill dss-rec-stat-icon"></i>
+          <div>
+            <div class="small" style="opacity:.9;">AI-Recommended Locations</div>
+            <div class="fs-2">{{ locations_count }}</div>
+          </div>
+        </div>
+        <p class="small mb-0" style="opacity:.9;">Of {{ total_scored }} barangays scored</p>
+      </div>
+    </div>
+  </div>
+
+  {% set footer_class = {
+    'High Opportunity': 'dss-rec-footer-high',
+    'Moderate Opportunity': 'dss-rec-footer-moderate',
+    'Low Opportunity': 'dss-rec-footer-moderate',
+    'High Saturation': 'dss-rec-footer-saturated',
+  } %}
+
+  {% for item in forecasts %}
+  {% set profile = item.profile %}
+  {% set f = item.forecast %}
+  {% set rec = item.rec %}
+  <div class="dss-card mb-4 p-0 overflow-hidden">
+    <div class="p-4">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+        <div>
+          <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+            <i class="bi bi-lightbulb-fill text-warning fs-4"></i>
+            <h5 class="mb-0">{{ profile.business_name }}</h5>
+            {% if rec.generated_by.startswith('llm:') %}
+              <span class="badge dss-rec-badge-ai"><i class="bi bi-stars"></i> AI-generated</span>
+            {% endif %}
+          </div>
+          <div class="d-flex gap-3 small text-muted flex-wrap">
+            <span><i class="bi bi-geo-alt"></i> {{ profile.location }}</span>
+            <span class="badge bg-primary-subtle text-primary-emphasis">{{ profile.industry_type }}</span>
+          </div>
+        </div>
+        <div class="text-end">
+          <div class="text-muted small">Viability Score</div>
+          <div class="fs-2 text-success">{{ f.viability_score }}<span class="fs-6 text-muted">/10</span></div>
+        </div>
+      </div>
+
+      {% if rec.headline %}<p class="fw-semibold mb-2">{{ rec.headline }}</p>{% endif %}
+      {% if rec.summary %}<p class="text-muted small mb-3">{{ rec.summary }}</p>{% endif %}
+
+      <!-- Key Metrics -- real, derived figures (no fabricated ranges):
+           your own capital & revenue estimate, this barangay's real
+           PSA population, and a competition level derived from the
+           actual (Places API or seeded) competitor count. -->
+      <div class="row row-cols-2 row-cols-md-4 g-3 mb-4 p-3 bg-light rounded">
+        <div>
+          <div class="text-muted small mb-1"><i class="bi bi-currency-exchange"></i> Startup Capital</div>
+          <div class="fw-bold">₱{{ "{:,.0f}".format(profile.startup_capital or 0) }}</div>
+        </div>
+        <div>
+          <div class="text-muted small mb-1"><i class="bi bi-graph-up-arrow"></i> ROI Timeframe</div>
+          <div class="fw-bold">{{ item.roi.label }}</div>
+        </div>
+        <div>
+          <div class="text-muted small mb-1"><i class="bi bi-people"></i> Population</div>
+          <div class="fw-bold">{{ "{:,}".format(item.population) if item.population else "Not available" }}</div>
+        </div>
+        <div>
+          <div class="text-muted small mb-1"><i class="bi bi-bullseye"></i> Competition Level</div>
+          <div class="fw-bold">{{ item.competition_level }}</div>
+        </div>
+      </div>
+
+      <!-- Why This Works / Considerations -->
+      <div class="row g-4">
+        <div class="col-md-6 dss-rec-why">
+          <h6 class="fw-bold d-flex align-items-center gap-2"><i class="bi bi-graph-up"></i> Why This Works</h6>
+          {% if rec.reasons %}
+          <ul class="list-unstyled small mb-0">
+            {% for reason in rec.reasons %}
+            <li class="d-flex align-items-start gap-2 mb-2"><span class="text-success">&check;</span><span>{{ reason }}</span></li>
+            {% endfor %}
+          </ul>
+          {% else %}<p class="text-muted small mb-0">No structured reasons available for this forecast yet.</p>{% endif %}
+        </div>
+        <div class="col-md-6 dss-rec-considerations">
+          <h6 class="fw-bold d-flex align-items-center gap-2">&#9888;&#65039; Considerations</h6>
+          {% if rec.risks %}
+          <ul class="list-unstyled small mb-0">
+            {% for risk in rec.risks %}
+            <li class="d-flex align-items-start gap-2 mb-2"><span class="text-warning">!</span><span>{{ risk }}</span></li>
+            {% endfor %}
+          </ul>
+          {% else %}<p class="text-muted small mb-0">No structured considerations available for this forecast yet.</p>{% endif %}
+        </div>
+      </div>
+
+      <div class="d-flex gap-2 border-top pt-3 mt-4">
+        <a class="btn btn-outline-primary flex-fill" href="{{ url_for('sme.saturation_map') }}?industry_type={{ profile.industry_type|urlencode }}">
+          <i class="bi bi-map"></i> View on Map
+        </a>
+        <form method="POST" action="{{ url_for('sme.save_recommendation', forecast_id=f.forecast_id) }}" class="flex-fill">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          {% if f.forecast_id in saved_ids %}
+            <button class="btn btn-success w-100" disabled><i class="bi bi-check2"></i> Saved to My Plans</button>
+          {% else %}
+            <button class="btn btn-outline-success w-100" type="submit"><i class="bi bi-bookmark-plus"></i> Save to My Plans</button>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+
+    <div class="dss-rec-footer {{ footer_class.get(rec.opportunity_type, 'dss-rec-footer-moderate') }}">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 small">
+        <span><strong>{{ rec.opportunity_type }}</strong> &middot; Recommended by AI Analysis</span>
+        <span>Updated: {{ f.forecast_date.strftime('%B %d, %Y') if f.forecast_date else "" }}</span>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <!-- ==============================================================
+       WHERE ELSE COULD I OPEN THIS? -- the storyboard's "15+ additional
+       opportunities". One card per barangay, ranked by the model's own
+       viability score for THIS plan's industry. Every figure and every
+       line of Why This Works / Considerations is computed from that
+       barangay's real Places API competitor count, real 2024 PSA
+       population/density and the model's saturation output, compared
+       against the city median for the same industry -- see
+       app/services/location_opportunity_service.py.
+       =============================================================== -->
+  {% if opportunities %}
+  <div class="dss-card mb-4">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+      <div>
+        <h5 class="mb-1"><i class="bi bi-compass"></i> Where else could you open this?</h5>
+        <p class="text-muted small mb-0">
+          The AI scored all {{ total_scored }} barangays of Tarlac City for
+          <strong>{{ opportunity_industry_label }}</strong> against your plan
+          <strong>{{ opportunity_plan.business_name }}</strong>, and recommends
+          <strong>{{ locations_count }}</strong> of them as somewhere you could open.
+          {% if not_recommended_count %}
+            The other {{ not_recommended_count }} are already too crowded for this industry, so they
+            aren't offered here &mdash; you can still inspect them on the Saturation Map.
+          {% endif %}
+        </p>
+      </div>
+      {% if profiles|length > 1 %}
+      <form method="GET" class="d-flex align-items-center gap-2">
+        <label class="small text-muted mb-0" for="oppPlanSelect">Score for plan</label>
+        <select class="form-select form-select-sm" style="width:auto" id="oppPlanSelect" name="sme_id"
+                onchange="this.form.submit()">
+          {% for p in profiles %}
+          <option value="{{ p.sme_id }}" {{ "selected" if p.sme_id == opportunity_plan.sme_id }}>
+            {{ p.business_name }} &middot; {{ p.industry_type }}
+          </option>
+          {% endfor %}
+        </select>
+      </form>
+      {% endif %}
+    </div>
+
+    <div class="small text-muted mt-3 pt-3 border-top">
+      City benchmarks used in the comparisons below (same industry, all
+      {{ opportunity_city.barangays_scored }} barangays):
+      median <strong>{{ opportunity_city.median_competitors }}</strong> competitors per barangay ·
+      median <strong>{{ "{:,}".format(opportunity_city.median_residents_per_business) }}</strong> residents
+      per existing business ·
+      median density <strong>{{ "{:,}".format(opportunity_city.median_density) }}</strong>/km&sup2;
+    </div>
+  </div>
+
+  {% for opp in opportunities %}
+  <div class="dss-card mb-3 p-0 overflow-hidden">
+    <div class="p-4">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+        <div>
+          <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+            <span class="badge bg-secondary-subtle text-secondary-emphasis">#{{ opp.rank }}</span>
+            <h6 class="mb-0">{{ opp.title }}</h6>
+            {% if opp.is_current_plan_location %}
+              <span class="badge bg-info-subtle text-info-emphasis">your plan's barangay</span>
+            {% endif %}
+            {% if opp.generated_by and opp.generated_by.startswith('llm:') %}
+              <span class="badge dss-rec-badge-ai" title="Write-up generated by {{ opp.generated_by }} from this barangay's real figures"><i class="bi bi-stars"></i> AI-written</span>
+            {% endif %}
+            {% if opp.competitor_is_live %}
+              <span class="badge bg-success-subtle text-success-emphasis" title="Competitor count came from a live Google Places API lookup">
+                <i class="bi bi-broadcast"></i> live data
+              </span>
+            {% else %}
+              <span class="badge bg-warning-subtle text-warning-emphasis" title="No live Google Places count on file for this barangay yet">
+                simulated estimate
+              </span>
+            {% endif %}
+          </div>
+          <div class="d-flex gap-3 small text-muted flex-wrap">
+            <span><i class="bi bi-geo-alt"></i> {{ opp.location }}</span>
+            <span><i class="bi bi-shop"></i> {{ opp.competitor_count }} competitor(s)</span>
+            <span><i class="bi bi-speedometer2"></i> {{ opp.saturation_index }}% saturation</span>
+          </div>
+        </div>
+        <div class="text-end">
+          <div class="text-muted small">Viability Score</div>
+          <div class="fs-3 text-success mb-0">{{ opp.viability_score }}<span class="fs-6 text-muted">/10</span></div>
+        </div>
+      </div>
+
+      <!-- Key metrics: real figures only. "Your Capital"/"Est.
+           Break-even" come from the SME's own plan inputs rather than a
+           made-up investment range. -->
+      <div class="row row-cols-2 row-cols-md-4 g-3 mb-3 p-3 bg-light rounded">
+        <div>
+          <div class="text-muted small mb-1"><i class="bi bi-currency-exchange"></i> Your Capital</div>
+          <div class="fw-bold">₱{{ "{:,.0f}".format(opportunity_plan.startup_capital or 0) }}</div>
+        </div>
+        <div>
+          <div class="text-muted small mb-1"><i class="bi bi-graph-up-arrow"></i> ROI Timeframe</div>
+          <div class="fw-bold">{{ opp.roi_timeframe }}</div>
+          <div class="text-muted" style="font-size:.68rem;">
+            {% if opp.roi_basis == 'plan' %}your capital &amp; revenue, adjusted by this barangay's AI saturation score
+            {% else %}from the AI viability score (add a revenue estimate to refine){% endif %}
+          </div>
+        </div>
+        <div>
+          <div class="text-muted small mb-1"><i class="bi bi-people"></i> Population</div>
+          <div class="fw-bold">{{ "{:,}".format(opp.population) if opp.population else "Not available" }}</div>
+        </div>
+        <div>
+          <div class="text-muted small mb-1"><i class="bi bi-bullseye"></i> Competition Level</div>
+          <div class="fw-bold">{{ opp.competition_level }}</div>
+        </div>
+      </div>
+
+      <div class="row g-4">
+        <div class="col-md-6 dss-rec-why">
+          <h6 class="fw-bold d-flex align-items-center gap-2"><i class="bi bi-graph-up"></i> Why This Works</h6>
+          <ul class="list-unstyled small mb-0">
+            {% for reason in opp.reasons %}
+            <li class="d-flex align-items-start gap-2 mb-2"><span class="text-success">&check;</span><span>{{ reason }}</span></li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div class="col-md-6 dss-rec-considerations">
+          <h6 class="fw-bold d-flex align-items-center gap-2">&#9888;&#65039; Considerations</h6>
+          <ul class="list-unstyled small mb-0">
+            {% for risk in opp.risks %}
+            <li class="d-flex align-items-start gap-2 mb-2"><span class="text-warning">!</span><span>{{ risk }}</span></li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+
+      <!-- Why it ranked here: the three real measures the ordering
+           blends, as this barangay's percentile among all scored. See
+           RANK_WEIGHTS in location_opportunity_service.py. -->
+      <div class="small text-muted mt-3 pt-3 border-top">
+        <i class="bi bi-bar-chart-steps"></i> Ranked on
+        viability <strong>{{ opp.percentiles.viability }}th pct</strong> (50%) ·
+        residents per business <strong>{{ opp.percentiles.residents_per_business }}th pct</strong> (30%) ·
+        population <strong>{{ opp.percentiles.population }}th pct</strong> (20%)
+      </div>
+
+      <div class="d-flex gap-2 pt-3 mt-1 flex-wrap">
+        <a class="btn btn-outline-primary btn-sm flex-fill"
+           href="{{ url_for('sme.saturation_map') }}?location={{ opp.location|urlencode }}&industry_type={{ opp.industry_type|urlencode }}">
+          <i class="bi bi-map"></i> View {{ opp.location }} on Map
+        </a>
+        <!-- Saving an AI recommendation CREATES the plan it describes:
+             a real SmeProfile for this industry+barangay, forecast with
+             the same parameters the card was scored against. -->
+        {% if (opp.industry_type, opp.location) in saved_locations %}
+          <button class="btn btn-success btn-sm flex-fill" disabled>
+            <i class="bi bi-check2"></i> Saved to My Plans
+          </button>
+        {% else %}
+          <form method="POST" action="{{ url_for('sme.save_recommended_location') }}" class="flex-fill">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="industry_type" value="{{ opp.industry_type }}">
+            <input type="hidden" name="location" value="{{ opp.location }}">
+            <input type="hidden" name="source_sme_id" value="{{ opportunity_plan.sme_id }}">
+            <button class="btn btn-outline-success btn-sm w-100" type="submit">
+              <i class="bi bi-bookmark-plus"></i> Save to My Plans
+            </button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="dss-rec-footer {{ footer_class.get(opp.opportunity_type, 'dss-rec-footer-moderate') }}">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 small">
+        <span><strong>{{ opp.opportunity_type }}</strong> &middot; ranked #{{ opp.rank }} of
+          {{ opportunity_city.barangays_scored }} barangays for {{ opportunity_industry_label }}</span>
+        <span>
+          {% if opp.residents_per_business %}
+            ≈{{ "{:,}".format(opp.residents_per_business) }} residents per existing business
+          {% endif %}
+        </span>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <!-- "Explore more recommendations". Nothing is hidden behind it that
+       the AI didn't already recommend: the page shows at least 5, and
+       this lifts the cap to every recommended location. It only appears
+       when there actually are more. -->
+  {% if has_more or show_all %}
+  <div class="dss-card text-center">
+    {% if show_all %}
+      <h6 class="mb-1">Showing all {{ showing_count }} recommended locations</h6>
+      <p class="text-muted small mb-3">
+        Every barangay the AI recommends for {{ opportunity_industry_label }}.
+      </p>
+      <a class="btn btn-outline-secondary"
+         href="{{ url_for('sme.recommendations') }}?sme_id={{ opportunity_plan.sme_id }}">
+        <i class="bi bi-chevron-up"></i> Show top recommendations only
+      </a>
+    {% else %}
+      <h6 class="mb-1">Looking for more options?</h6>
+      <p class="text-muted small mb-3">
+        The AI recommends <strong>{{ locations_count }}</strong> locations for
+        {{ opportunity_industry_label }} &mdash; you're seeing the top {{ showing_count }}.
+      </p>
+      <a class="btn btn-primary"
+         href="{{ url_for('sme.recommendations') }}?sme_id={{ opportunity_plan.sme_id }}&all=1">
+        <i class="bi bi-grid-3x3-gap"></i> Explore More Recommendations
+      </a>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+{% endif %}
+{% endblock %}

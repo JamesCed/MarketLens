@@ -1,0 +1,59 @@
+{#
+  shared/_brand.html
+  --------------------
+  The MarketLens logo lockup, in one place so the sidebar, the topbar and
+  the auth pages cannot drift apart.
+
+  Usage:
+      {% with variant='light', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+
+    variant  'dark'   (default) navy wordmark -- for light surfaces
+             'light'            white wordmark -- for the dark hero/nav
+             'auto'             BOTH files, with CSS revealing whichever
+                                matches the active theme
+    size     'sm' | 'md' | 'lg'
+    tagline  optional string rendered under the wordmark
+    icon_only  true to render just the mark
+
+  WHY TWO IMAGE FILES PER VARIANT rather than one recoloured in CSS: the
+  wordmark is two-tone -- navy "Market" plus cyan "Lens" -- and no filter
+  turns the navy white while leaving the cyan alone. invert() would flip
+  both.
+
+  WHY 'auto' SHIPS BOTH AND HIDES ONE: inside the app the surface flips
+  with the light/dark setting, and that setting can be "match system",
+  which is only resolved in the browser. The server therefore cannot know
+  which file to emit. Sending both and letting one CSS rule choose is
+  correct in every case including a mid-session OS theme change, at the
+  cost of one extra cached image. Getting this wrong is not subtle: the
+  navy wordmark on the dark sidebar is very nearly invisible.
+#}
+{% set _variant = variant | default('dark') %}
+{% set _size = size | default('md') %}
+{% set _auto = _variant == 'auto' %}
+{% set _icon = 'img/marketlens-icon-light.png' if _variant == 'light' else 'img/marketlens-icon.png' %}
+{% set _word = 'img/marketlens-wordmark-light.png' if _variant == 'light' else 'img/marketlens-wordmark.png' %}
+
+<span class="ml-brand ml-brand-{{ _size }} ml-brand-{{ _variant }}">
+  {% if _auto %}
+    <img class="ml-brand-icon ml-on-light" src="{{ url_for('static', filename='img/marketlens-icon.png') }}"
+         alt="{{ 'MarketLens' if icon_only else '' }}" {% if not icon_only %}aria-hidden="true"{% endif %}>
+    <img class="ml-brand-icon ml-on-dark" src="{{ url_for('static', filename='img/marketlens-icon-light.png') }}"
+         alt="" aria-hidden="true">
+  {% else %}
+    <img class="ml-brand-icon" src="{{ url_for('static', filename=_icon) }}"
+         alt="{{ 'MarketLens' if icon_only else '' }}" {% if not icon_only %}aria-hidden="true"{% endif %}>
+  {% endif %}
+
+  {% if not icon_only %}
+    <span class="ml-brand-text">
+      {% if _auto %}
+        <img class="ml-brand-word ml-on-light" src="{{ url_for('static', filename='img/marketlens-wordmark.png') }}" alt="MarketLens">
+        <img class="ml-brand-word ml-on-dark" src="{{ url_for('static', filename='img/marketlens-wordmark-light.png') }}" alt="" aria-hidden="true">
+      {% else %}
+        <img class="ml-brand-word" src="{{ url_for('static', filename=_word) }}" alt="MarketLens">
+      {% endif %}
+      {% if tagline %}<span class="ml-brand-tagline">{{ tagline }}</span>{% endif %}
+    </span>
+  {% endif %}
+</span>

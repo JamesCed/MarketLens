@@ -1,0 +1,310 @@
+{
+  "_note": "REAL barangay center-point coordinates for all 76 barangays of Tarlac City, sourced from PhilAtlas (philatlas.com), a Philippine geographic reference site that compiles official PSA/NAMRIA location data -- one page per barangay, each carrying that barangay's own surveyed lat/lng. These replaced an earlier version of this file that spread 76 points evenly across the city's bounding box as a purely synthetic placeholder (never real positions, and the root cause of barangays appearing in the wrong place on the Saturation Map, e.g. 'Laoang' rendering near 'Sapang Maragul'). This is now the PRIMARY coordinate source the app uses -- see app/services/geocoding_service.py's module docstring for the full explanation and for the (now much smaller) live-geocoding fallback kept only for a location name that isn't one of these 76.",
+  "source": "https://www.philatlas.com/luzon/r03/tarlac/tarlac-city.html (per-barangay pages)",
+  "barangays": {
+    "Aguso": {
+      "lat": 15.5264,
+      "lng": 120.5946
+    },
+    "Alvindia Segundo": {
+      "lat": 15.5494,
+      "lng": 120.607
+    },
+    "Amucao": {
+      "lat": 15.4659,
+      "lng": 120.6844
+    },
+    "Armenia": {
+      "lat": 15.4343,
+      "lng": 120.5617
+    },
+    "Asturias": {
+      "lat": 15.4479,
+      "lng": 120.667
+    },
+    "Atioc": {
+      "lat": 15.4309,
+      "lng": 120.5894
+    },
+    "Balanti": {
+      "lat": 15.4633,
+      "lng": 120.5514
+    },
+    "Balete": {
+      "lat": 15.4427,
+      "lng": 120.6282
+    },
+    "Balibago I": {
+      "lat": 15.5232,
+      "lng": 120.6216
+    },
+    "Balibago II": {
+      "lat": 15.5309,
+      "lng": 120.6359
+    },
+    "Balingcanaway": {
+      "lat": 15.4817,
+      "lng": 120.685
+    },
+    "Banaba": {
+      "lat": 15.5182,
+      "lng": 120.6285
+    },
+    "Bantog": {
+      "lat": 15.457,
+      "lng": 120.664
+    },
+    "Baras-baras": {
+      "lat": 15.5175,
+      "lng": 120.5656
+    },
+    "Batang-batang": {
+      "lat": 15.5197,
+      "lng": 120.659
+    },
+    "Binauganan": {
+      "lat": 15.4772,
+      "lng": 120.6046
+    },
+    "Bora": {
+      "lat": 15.5009,
+      "lng": 120.6354
+    },
+    "Buenavista": {
+      "lat": 15.4271,
+      "lng": 120.6158
+    },
+    "Buhilit": {
+      "lat": 15.5132,
+      "lng": 120.6145
+    },
+    "Burot": {
+      "lat": 15.4138,
+      "lng": 120.6012
+    },
+    "Calingcuan": {
+      "lat": 15.4884,
+      "lng": 120.6215
+    },
+    "Capehan": {
+      "lat": 15.4328,
+      "lng": 120.6028
+    },
+    "Carangian": {
+      "lat": 15.4822,
+      "lng": 120.5707
+    },
+    "Care": {
+      "lat": 15.4878,
+      "lng": 120.5374
+    },
+    "Central": {
+      "lat": 15.432,
+      "lng": 120.6478
+    },
+    "Culipat": {
+      "lat": 15.5027,
+      "lng": 120.614
+    },
+    "Cut-cut I": {
+      "lat": 15.4864,
+      "lng": 120.5862
+    },
+    "Cut-cut II": {
+      "lat": 15.4698,
+      "lng": 120.6591
+    },
+    "Dalayap": {
+      "lat": 15.53,
+      "lng": 120.6042
+    },
+    "Dela Paz": {
+      "lat": 15.426,
+      "lng": 120.5764
+    },
+    "Dolores": {
+      "lat": 15.5229,
+      "lng": 120.5785
+    },
+    "Laoang": {
+      "lat": 15.5465,
+      "lng": 120.5452
+    },
+    "Ligtasan": {
+      "lat": 15.4839,
+      "lng": 120.5958
+    },
+    "Lourdes": {
+      "lat": 15.4401,
+      "lng": 120.6473
+    },
+    "Mabini": {
+      "lat": 15.4901,
+      "lng": 120.5893
+    },
+    "Maligaya": {
+      "lat": 15.4401,
+      "lng": 120.5998
+    },
+    "Maliwalo": {
+      "lat": 15.4829,
+      "lng": 120.6187
+    },
+    "Mapalacsiao": {
+      "lat": 15.4276,
+      "lng": 120.6564
+    },
+    "Mapalad": {
+      "lat": 15.5368,
+      "lng": 120.5582
+    },
+    "Matadero": {
+      "lat": 15.4842,
+      "lng": 120.6022
+    },
+    "Matatalaib": {
+      "lat": 15.4948,
+      "lng": 120.6035
+    },
+    "Paraiso": {
+      "lat": 15.4433,
+      "lng": 120.5985
+    },
+    "Poblacion": {
+      "lat": 15.4899,
+      "lng": 120.5908
+    },
+    "Salapungan": {
+      "lat": 15.5077,
+      "lng": 120.5971
+    },
+    "San Carlos": {
+      "lat": 15.4088,
+      "lng": 120.578
+    },
+    "San Francisco": {
+      "lat": 15.4244,
+      "lng": 120.5963
+    },
+    "San Isidro": {
+      "lat": 15.4945,
+      "lng": 120.587
+    },
+    "San Jose": {
+      "lat": 15.4888,
+      "lng": 120.6476
+    },
+    "San Jose de Urquico": {
+      "lat": 15.4592,
+      "lng": 120.57
+    },
+    "San Juan de Mata": {
+      "lat": 15.5354,
+      "lng": 120.5286
+    },
+    "San Luis": {
+      "lat": 15.4703,
+      "lng": 120.5717
+    },
+    "San Manuel": {
+      "lat": 15.4908,
+      "lng": 120.6668
+    },
+    "San Miguel": {
+      "lat": 15.4323,
+      "lng": 120.5983
+    },
+    "San Nicolas": {
+      "lat": 15.4924,
+      "lng": 120.5952
+    },
+    "San Pablo": {
+      "lat": 15.4758,
+      "lng": 120.5742
+    },
+    "San Pascual": {
+      "lat": 15.5086,
+      "lng": 120.6677
+    },
+    "San Rafael": {
+      "lat": 15.4563,
+      "lng": 120.5898
+    },
+    "San Roque": {
+      "lat": 15.4826,
+      "lng": 120.5902
+    },
+    "San Sebastian": {
+      "lat": 15.4725,
+      "lng": 120.5992
+    },
+    "San Vicente": {
+      "lat": 15.476,
+      "lng": 120.5869
+    },
+    "Santa Cruz": {
+      "lat": 15.5371,
+      "lng": 120.5965
+    },
+    "Santa Maria": {
+      "lat": 15.5478,
+      "lng": 120.5806
+    },
+    "Santo Cristo": {
+      "lat": 15.4875,
+      "lng": 120.5948
+    },
+    "Santo Domingo": {
+      "lat": 15.5374,
+      "lng": 120.5114
+    },
+    "Santo Nino": {
+      "lat": 15.538,
+      "lng": 120.5764
+    },
+    "Sapang Maragul": {
+      "lat": 15.5051,
+      "lng": 120.5492
+    },
+    "Sapang Tagalog": {
+      "lat": 15.4222,
+      "lng": 120.5996
+    },
+    "Sepung Calzada": {
+      "lat": 15.5041,
+      "lng": 120.6011
+    },
+    "Sinait": {
+      "lat": 15.5361,
+      "lng": 120.5855
+    },
+    "Suizo": {
+      "lat": 15.4611,
+      "lng": 120.6029
+    },
+    "Tariji": {
+      "lat": 15.5186,
+      "lng": 120.6073
+    },
+    "Tibag": {
+      "lat": 15.4894,
+      "lng": 120.5685
+    },
+    "Tibagan": {
+      "lat": 15.4696,
+      "lng": 120.5394
+    },
+    "Trinidad": {
+      "lat": 15.5077,
+      "lng": 120.6346
+    },
+    "Ungot": {
+      "lat": 15.4604,
+      "lng": 120.6132
+    },
+    "Villa Bacolor": {
+      "lat": 15.5057,
+      "lng": 120.6813
+    }
+  }
+}

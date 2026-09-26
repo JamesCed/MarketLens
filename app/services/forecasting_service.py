@@ -1,0 +1,538 @@
+"""
+app/services/forecasting_service.py
+--------------------------------------
+This is "the AI" of the Decision Support System: it turns an industry
+type + free-text location (+ an SME's own years_in_operation, when
+tied to a real plan) into a Market Saturation Index, a viability
+score, a saturation cluster label, and a confidence level, using a
+trained RandomForestRegressor (app/ml/train_model.py).
+
+Two entry points, because forecast_result.sme_id/market_id/lgu_id are
+ALL NOT NULL in the real schema (see app/models/forecast_result.py
+docstring) -- there is no "anonymous"/aggregate forecast row:
+
+  - compute_scores(industry_type, location, years_in_operation=0)
+        Ephemeral -- makes NO forecast_result write. Used by the
+        Saturation Map and Trend Reports, which show scores for a
+        industry+location combination that isn't tied to one SME's
+        plan. It DOES reuse/create MarketData & LguData snapshot rows
+        (that's normal caching of "what does this area look like right
+        now", not a forecast).
+
+  - generate_forecast_for_profile(sme_profile)
+        Calls compute_scores() for that profile's own
+        industry_type/location, then persists a ForecastResult row and
+        fires an early-warning Notification when appropriate. Used by
+        the Home page / "Generate Forecast" action, which IS tied to a
+        specific SME's business plan.
+
+Pipeline (mirrors the paper's Technical Background / Analytical Model
+sections):
+  1. competitor_count      <- Google Places Text Search (or simulated)
+  2. MarketData snapshot    <- population_density, foot_traffic_index,
+                                average_rent, historical_success_rate
+  3. LguData snapshot        <- business_density (from a real LGU
+                                upload, or an auto-generated placeholder
+                                -- see find_or_create_lgu_data)
+  4. Market Saturation Index (0-100) <- trained RandomForestRegressor
+  5. Saturation cluster (Low/Moderate/High/Saturated) <- threshold cut
+     points discovered by K-Means during training
+  6. Confidence level (0-100) <- agreement between the Random Forest's
+     individual trees (low spread across estimators = high confidence)
+  7. Viability score (0-10, shown to users) <- derived from saturation
+"""
+
+import os
+from datetime import date
+
+import joblib
+import numpy as np
+from sqlalchemy import func
+
+from app.extensions import db
+from app.models import MarketData, LguData, ForecastResult, Notification, SystemSetting, User
+from app.ml.constants import BUSINESS_TYPE_ENCODING, OTHER_INDUSTRY_ENCODING, CLUSTER_THRESHOLDS, CLUSTER_LABELS_ORDERED
+from app.ml.seed_data import get_barangay_profile, get_real_population
+
+# Dedicated system account (created by seed.py) that owns auto-generated
+# placeholder LguData rows until a real LGU account uploads actual
+# government data for that barangay -- see find_or_create_lgu_data().
+SYSTEM_USER_EMAIL = "system@dss.local"
+
+_MODEL_CACHE = {"rf": None, "loaded": False}
+
+# How many SIMULATED market_data rows a single web request is allowed to
+# re-try against the live Google Places API (see
+# find_or_create_market_data). Pages like Trend Reports sweep 8
+# industries x 76 barangays = 608 combos in one go; without a budget,
+# the first load after adding an API key would sit there making 608
+# sequential HTTP calls. With it, each page load upgrades a handful of
+# rows to real Google data and stays responsive -- the database
+# converges on real data over a few visits instead of stalling once.
+# Rows that already hold real Google data are never re-fetched here.
+_MAX_LIVE_REFRESH_PER_REQUEST = 8
+
+
+def _places_recap_watermark():
+    """market_id at/below which a Google Places row was fetched under the
+    old 20-result cap -- see app/services/startup_migrations.py."""
+    try:
+        from app.services.startup_migrations import get_places_recap_watermark
+
+        return get_places_recap_watermark()
+    except Exception:  # noqa: BLE001 -- a missing settings row must not break scoring
+        return 0
+
+
+def set_places_refresh_budget(limit):
+    """Override this request's live-Places budget. `None` means
+    unlimited. Used by the explicit bulk-refresh endpoint
+    (app/services/market_refresh_service.py), which is the one place
+    that is SUPPOSED to make a long run of Google calls -- ordinary page
+    loads keep the small default so they stay responsive."""
+    try:
+        from flask import g, has_request_context
+
+        if has_request_context():
+            g._dss_places_budget = limit
+    except (ImportError, RuntimeError):
+        pass
+
+
+def _can_spend_live_refresh():
+    """True if this request still has budget to attempt a live Places
+    lookup. Outside a request context (CLI scripts, seeding, tests)
+    there is no budget and every lookup is allowed."""
+    try:
+        from flask import g, has_request_context
+
+        if not has_request_context():
+            return True
+        budget = getattr(g, "_dss_places_budget", _MAX_LIVE_REFRESH_PER_REQUEST)
+        if budget is None:
+            return True
+        used = getattr(g, "_dss_places_refreshes", 0)
+        if used >= budget:
+            return False
+        g._dss_places_refreshes = used + 1
+        return True
+    except (ImportError, RuntimeError):
+        return True
+
+
+def _model_dir():
+    from flask import current_app
+
+    return current_app.config["MODEL_DIR"]
+
+
+def _load_models():
+    """Lazily load the trained Random Forest into memory (once per
+    process)."""
+    if _MODEL_CACHE["loaded"]:
+        return
+    _MODEL_CACHE["loaded"] = True
+
+    rf_path = os.path.join(_model_dir(), "rf_model.pkl")
+    if os.path.exists(rf_path):
+        _MODEL_CACHE["rf"] = joblib.load(rf_path)
+
+
+def models_are_trained():
+    _load_models()
+    return _MODEL_CACHE["rf"] is not None
+
+
+def _cluster_label_for(saturation_index):
+    """Low / Moderate / High / Saturated from a 0-100 saturation_index,
+    using the cut points app/ml/train_model.py's K-Means run discovered
+    (see app/ml/constants.py CLUSTER_THRESHOLDS)."""
+    value = float(saturation_index or 0)
+    for threshold, label in zip(CLUSTER_THRESHOLDS, CLUSTER_LABELS_ORDERED):
+        if value <= threshold:
+            return label
+    return CLUSTER_LABELS_ORDERED[-1]
+
+
+def _industry_encoding(industry_type):
+    return BUSINESS_TYPE_ENCODING.get(industry_type, OTHER_INDUSTRY_ENCODING)
+
+
+def _average_or(column, default):
+    """Dataset-wide average for a MarketData/LguData numeric column, or
+    a neutral default when the table is still empty (brand-new DB,
+    before any Gov't Data Upload or Places lookup has ever run)."""
+    value = db.session.query(func.avg(column)).scalar()
+    return float(value) if value is not None else default
+
+
+def _get_system_user_id():
+    """Real user_id needed to satisfy lgu_data.uploaded_by NOT NULL when
+    this engine auto-creates a placeholder LguData row. Prefers the
+    dedicated system@dss.local account seed.py creates for exactly this
+    purpose; falls back to the first Admin, then to any user.
+
+    If the database has NO users at all, the account is created here
+    rather than returning None. Returning None used to produce a raw
+    `IntegrityError: NOT NULL constraint failed: lgu_data.uploaded_by`
+    the first time anything asked for a score on an unseeded database --
+    scoring a location is a read-shaped operation and should not explode
+    because seed.py hasn't been run. The account matches the one seed.py
+    makes: Admin role, and a random password nobody holds, since it
+    exists only to own placeholder rows and is never meant to be logged
+    into.
+    """
+    user = User.query.filter_by(email=SYSTEM_USER_EMAIL).first()
+    if user:
+        return user.user_id
+    admin = User.query.filter_by(role="Admin").order_by(User.user_id.asc()).first()
+    if admin:
+        return admin.user_id
+    any_user = User.query.order_by(User.user_id.asc()).first()
+    if any_user:
+        return any_user.user_id
+
+    import secrets
+
+    system_user = User(name="System (placeholder data)", email=SYSTEM_USER_EMAIL, role="Admin")
+    system_user.set_password(secrets.token_urlsafe(32))
+    db.session.add(system_user)
+    db.session.commit()
+    return system_user.user_id
+
+
+def find_or_create_market_data(industry_type, location, max_age_days=30):
+    """Returns the freshest MarketData row for this industry+location,
+    creating a new snapshot (via Google Places, or a clearly-flagged
+    estimate) when the newest one on file is missing or stale.
+
+    A cached row is also refreshed EARLY when it is a simulated one
+    (source != "Google Places API") and a real Places API key is now
+    configured. Without that rule, adding your API key to .env would
+    appear to do nothing for up to `max_age_days`: every page would
+    keep serving the simulated row it cached before the key existed,
+    so no live Google lookup would ever be attempted and the app would
+    look like the key was wrong. A row that already holds real Google
+    data is still cached normally for the full window.
+    """
+    from flask import current_app
+
+    from app.services.places_service import get_competitor_count
+
+    api_key = (current_app.config.get("GOOGLE_PLACES_API_KEY") or "").strip()
+
+    existing = (
+        MarketData.query.filter_by(industry_type=industry_type, location=location)
+        .order_by(MarketData.date_recorded.desc(), MarketData.market_id.desc())
+        .first()
+    )
+
+    # READ-ONLY DEPLOYMENT: serve whatever is on file, however old, and
+    # never replace it.
+    #
+    # This guard matters more than it looks. Without it, a deployment with
+    # live fetching switched off would still fall through below once a row
+    # passed `max_age_days`, call get_competitor_count() -- which with
+    # fetching off returns a SIMULATED number -- and write that as the new
+    # freshest snapshot. The effect would be a live site that looked
+    # correct for its first month and then quietly degraded, barangay by
+    # barangay, replacing real Google counts with estimates. An old real
+    # measurement beats a fresh invented one, so stale-by-age is simply
+    # not a reason to refetch when refetching is not an option.
+    from app.services.places_service import live_fetch_enabled
+
+    if existing and not live_fetch_enabled():
+        return existing
+
+    if existing and (date.today() - existing.date_recorded).days <= max_age_days:
+        is_simulated = existing.source != "Google Places API"
+        # A real Google row can ALSO be stale-by-content rather than
+        # stale-by-age: everything fetched before the result cap was
+        # lifted stopped at the first page of 20, so those rows
+        # understate every busy barangay. They sit at or below the
+        # watermark recorded at upgrade time and get one re-fetch each;
+        # the replacement row lands above the watermark and is then
+        # cached normally.
+        was_capped = (
+            not is_simulated
+            and existing.market_id is not None
+            and existing.market_id <= _places_recap_watermark()
+        )
+        needs_refetch = (is_simulated or was_capped) and api_key
+        if not (needs_refetch and _can_spend_live_refresh()):
+            return existing
+
+    max_results = int(SystemSetting.get_float("places_max_results", 0))  # 0 = unlimited
+    competitor_count, simulated = get_competitor_count(location, industry_type, api_key=api_key, max_results=max_results)
+
+    if (
+        simulated
+        and existing is not None
+        and existing.source != "Google Places API"
+        and (date.today() - existing.date_recorded).days <= max_age_days
+    ):
+        # We only re-tried because a key is configured and the cached row
+        # was simulated -- but the live call still didn't yield real data
+        # (quota, network, API not enabled, or genuinely no matches).
+        # Reuse the cached row rather than writing a second identical
+        # simulated snapshot: otherwise every page load would append one
+        # more row per (industry, barangay) forever.
+        return existing
+
+    profile = get_barangay_profile(location)
+    if profile:
+        population_density = profile["population_density"]
+        foot_traffic_index = profile["foot_traffic_index"]
+        average_rent = profile["average_rent"]
+        historical_success_rate = profile["historical_success_rate"]
+    else:
+        # No seed profile matches this exact location string -- fall
+        # back to the dataset's own running averages (or neutral
+        # midpoints on a brand-new DB) rather than inventing numbers.
+        population_density = _average_or(MarketData.population_density, 8000)
+        foot_traffic_index = _average_or(MarketData.foot_traffic_index, 45)
+        average_rent = _average_or(MarketData.average_rent, 15000)
+        historical_success_rate = _average_or(MarketData.historical_success_rate, 0.55)
+
+    row = MarketData(
+        industry_type=industry_type,
+        location=location,
+        competitor_count=competitor_count,
+        population_density=population_density,
+        historical_success_rate=historical_success_rate,
+        foot_traffic_index=foot_traffic_index,
+        average_rent=average_rent,
+        source="Manual" if simulated else "Google Places API",
+        date_recorded=date.today(),
+    )
+    db.session.add(row)
+    db.session.commit()
+    return row
+
+
+def find_or_create_lgu_data(location):
+    """Returns the most recent LguData row for this barangay. If an LGU
+    account hasn't uploaded real government data for it yet, this
+    auto-creates a clearly-labeled placeholder row (attributed to the
+    system account, see _get_system_user_id) from the reference
+    barangay profile in app/ml/seed_data.py, so the AI pipeline always
+    has SOME business_density figure to compute with. The moment a real
+    LGU upload happens for that barangay (data_import_service.py), that
+    real row becomes the "most recent" one and takes over."""
+    existing = (
+        LguData.query.filter_by(barangay=location)
+        .order_by(LguData.upload_date.desc(), LguData.lgu_id.desc())
+        .first()
+    )
+    if existing:
+        return existing
+
+    profile = get_barangay_profile(location)
+    business_density = profile["business_density"] if profile else _average_or(LguData.business_density, 3.0)
+
+    row = LguData(
+        source="Other",
+        zoning_info="Auto-generated placeholder -- no LGU upload on file yet for this location.",
+        closure_records=0,
+        barangay=location,
+        permit_count=0,
+        business_density=business_density,
+        effective_date=date.today(),
+        upload_date=date.today(),
+        uploaded_by=_get_system_user_id(),
+    )
+    db.session.add(row)
+    db.session.commit()
+    return row
+
+
+def build_feature_vector(market, lgu, years_in_operation, industry_type):
+    """Order MUST match app/ml/constants.py FEATURE_NAMES exactly -- this
+    is the single source of truth train_model.py and this file both use."""
+    return [
+        float(market.competitor_count or 0),
+        float(market.population_density or 0),
+        float(market.foot_traffic_index or 0),
+        float(market.average_rent or 0),
+        float(market.historical_success_rate or 0),
+        float(lgu.business_density or 0),
+        float(years_in_operation or 0),
+        float(_industry_encoding(industry_type)),
+    ]
+
+
+def _predict_saturation(feature_vector):
+    """Returns (saturation_index 0-100, confidence_level 0-100,
+    model_version). confidence_level comes from how much the Random
+    Forest's individual trees agree with each other -- a real
+    uncertainty signal (low std-dev across rf_model.estimators_'
+    predictions = high confidence), not a placeholder number."""
+    _load_models()
+    rf_model = _MODEL_CACHE["rf"]
+
+    if rf_model is None:
+        # Fallback so the app still works before `python -m
+        # app.ml.train_model` has ever been run: the same weighted
+        # formula the paper describes (competitor density / demand
+        # trend proxy / business density), just without the trained
+        # model's learned nonlinearity.
+        competitor_count, _pop, _foot, _rent, historical_success_rate, business_density, _years, _ind = feature_vector
+        w1 = SystemSetting.get_float("msi_weight_competitor_density", 0.45)
+        w2 = SystemSetting.get_float("msi_weight_demand_trend", 0.35)
+        w3 = SystemSetting.get_float("msi_weight_sociodemographic", 0.20)
+        formulaic = (
+            w1 * min(1.0, competitor_count / 30.0)
+            + w2 * (1 - historical_success_rate)
+            + w3 * min(1.0, business_density / 10.0)
+        )
+        return round(max(0.0, min(100.0, formulaic * 100)), 2), 50.0, "formula_v1"
+
+    X = np.array([feature_vector])
+    prediction = float(rf_model.predict(X)[0])
+    saturation_index = max(0.0, min(100.0, prediction))
+
+    tree_predictions = np.array([tree.predict(X)[0] for tree in rf_model.estimators_])
+    spread = float(np.std(tree_predictions))
+    # Map tree-disagreement spread -> 0-100 confidence: 0 spread = 100%
+    # confidence, decaying linearly to a floor of 40% once spread
+    # reaches ~25 saturation points (an empirically "the trees strongly
+    # disagree" spread on this dataset's 0-100 scale).
+    confidence_level = max(40.0, min(100.0, 100.0 - (spread / 25.0) * 60.0))
+    return round(saturation_index, 2), round(confidence_level, 2), "rf_v1"
+
+
+def compute_scores(industry_type, location, years_in_operation=0):
+    """Ephemeral entry point -- see module docstring. Returns a plain
+    dict, no forecast_result row is written."""
+    market = find_or_create_market_data(industry_type, location)
+    lgu = find_or_create_lgu_data(location)
+
+    feature_vector = build_feature_vector(market, lgu, years_in_operation, industry_type)
+    saturation_index, confidence_level, model_version = _predict_saturation(feature_vector)
+    viability_score = round(max(0.0, min(10.0, (100.0 - saturation_index) / 10.0)), 1)
+    cluster_label = _cluster_label_for(saturation_index)
+
+    return {
+        "industry_type": industry_type,
+        "location": location,
+        "market_id": market.market_id,
+        "lgu_id": lgu.lgu_id,
+        "competitor_count": market.competitor_count,
+        "saturation_index": saturation_index,
+        "viability_score": viability_score,
+        "confidence_level": confidence_level,
+        "cluster_label": cluster_label,
+        "model_version": model_version,
+    }
+
+
+def generate_forecast_for_profile(sme_profile):
+    """Persisting entry point -- see module docstring. Writes a
+    ForecastResult row tied to this SmeProfile's OWN
+    industry_type/location/years_in_operation, and fires an
+    early-warning Notification when the result crosses the
+    saturation_alert_threshold system setting.
+
+    The stored recommendation is generated from the SME's OWN input
+    business parameters (capital, employees, stage, revenue estimate)
+    compared against the real businesses already on file for this
+    industry+location (a market_data snapshot from find_or_create_market_data
+    above, and -- when that snapshot is real Google data, not a
+    simulated fallback -- a short sample of real competitor names) plus
+    this barangay's real PSA population. See
+    app/services/recommendation_service.py for how that comparison
+    turns into the "AI-Powered Recommendation" (rule-based by default,
+    or LLM-written when use_llm_recommendations is on)."""
+    scores = compute_scores(
+        industry_type=sme_profile.industry_type,
+        location=sme_profile.location,
+        years_in_operation=sme_profile.years_in_operation(),
+    )
+
+    from flask import current_app
+
+    from app.services.places_service import search_competitors
+    from app.services.recommendation_service import (
+        build_recommendation,
+        build_recommendation_context,
+        serialize_recommendation,
+    )
+
+    # A short, real sample of the businesses this plan would actually
+    # be competing with -- only fetched when the market_data snapshot
+    # backing this forecast is itself real Google data (not a
+    # simulated fallback), so we never hand the LLM/rule-based writer a
+    # mix of a real competitor_count and fabricated-looking names, and
+    # never spend an extra live API call when we already know the
+    # result would just be simulated placeholders.
+    market_row = MarketData.query.get(scores["market_id"])
+    competitor_simulated = not market_row or market_row.source != "Google Places API"
+    competitor_sample = []
+    if not competitor_simulated:
+        api_key = (current_app.config.get("GOOGLE_PLACES_API_KEY") or "").strip()
+        sample_results, _ = search_competitors(
+            sme_profile.location, sme_profile.industry_type, api_key=api_key, max_results=5
+        )
+        competitor_sample = [r["name"] for r in sample_results[:5] if r.get("name")]
+
+    context = build_recommendation_context(
+        sme_profile,
+        scores,
+        competitor_sample=competitor_sample,
+        competitor_simulated=competitor_simulated,
+        population=get_real_population(sme_profile.location) or 0,
+    )
+    recommendation_text = serialize_recommendation(build_recommendation(context))
+
+    forecast = ForecastResult(
+        sme_id=sme_profile.sme_id,
+        market_id=scores["market_id"],
+        lgu_id=scores["lgu_id"],
+        viability_score=scores["viability_score"],
+        input_industry_type=sme_profile.industry_type,
+        input_location=sme_profile.location,
+        saturation_index=scores["saturation_index"],
+        recommendation=recommendation_text,
+        confidence_level=scores["confidence_level"],
+        model_version=scores["model_version"],
+        forecast_date=date.today(),
+    )
+    db.session.add(forecast)
+    db.session.commit()
+
+    _maybe_fire_early_warning(forecast, sme_profile)
+
+    return forecast
+
+
+def _maybe_fire_early_warning(forecast, sme_profile):
+    threshold = SystemSetting.get_float("saturation_alert_threshold", 75.0)
+    if float(forecast.saturation_index or 0) <= threshold:
+        return
+
+    # Respect the account's own switch (Settings -> Notifications). The
+    # check is HERE rather than at display time on purpose: someone who
+    # turned these off should not accumulate a hidden backlog that all
+    # appears the moment they turn them back on.
+    #
+    # getattr, because a database created before the column existed (and
+    # not yet migrated by startup_migrations) would otherwise raise --
+    # and an early warning failing to send must never break the forecast
+    # that produced it. Absent means on, which matches the column default.
+    owner = getattr(sme_profile, "owner", None)
+    if owner is not None and not getattr(owner, "notify_early_warning", True):
+        return
+
+    message = (
+        f"Early warning: {forecast.input_industry_type} in {forecast.input_location} is now "
+        f"{forecast.saturation_percent}% saturated (cluster: {forecast.cluster_label}). "
+        "Consider an alternative location or a niche offering."
+    )
+    notification = Notification(
+        user_id=sme_profile.user_id,
+        forecast_result_id=forecast.forecast_id,
+        type="early_warning",
+        message=message,
+    )
+    db.session.add(notification)
+    db.session.commit()

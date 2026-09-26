@@ -1,0 +1,662 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{#
+  shared/settings.html
+  ----------------------
+  One Settings page with four panes: Profile, Notifications, Appearance,
+  Security. Replaces the old single-column "Profile Settings" page,
+  whose content is now the Profile pane.
+
+  The panes are shown and hidden client-side, not fetched -- every one of
+  them is a small form over data the page already has, so a round trip
+  per tab would be slower for no benefit. Each form still POSTs normally
+  and the server redirects back with ?section=, so the right pane is
+  open after a save even with JavaScript off (in which case all four
+  panes are simply visible at once, stacked, and everything still works).
+#}
+
+{#
+  BUSINESS PREFERENCES is SME-only, so the rail is built in two steps
+  rather than as one literal: an LGU or Admin account has no
+  sme_profile rows at all, and a tab that opens onto "you have no
+  plans, and never will" is worse than no tab.
+#}
+{% set sections = [
+  ('profile',       'Profile',       'bi-person-circle', 'Your name, photo and contact details'),
+] %}
+{% if current_user.is_sme() %}
+  {% set sections = sections + [
+    ('plans',       'Business Preferences', 'bi-briefcase', 'Your business plans and their details'),
+  ] %}
+{% endif %}
+{% set sections = sections + [
+  ('notifications', 'Notifications', 'bi-bell',          'Notification preferences and your inbox'),
+  ('appearance',    'Appearance',    'bi-palette',       'Switch between light and dark'),
+  ('security',      'Security',      'bi-shield-lock',   'Password and account status'),
+] %}
+
+{% block content %}
+<h4 class="mb-1">Settings</h4>
+<p class="text-muted small mb-4">Manage your account, alerts and how MarketLens looks.</p>
+
+<div class="dss-settings">
+  {# ------------------------------ rail ------------------------------ #}
+  <nav class="dss-settings-nav" id="settingsNav" aria-label="Settings sections">
+    {% for key, label, icon, blurb in sections %}
+      <button type="button" class="dss-settings-tab {{ 'active' if active_section == key }}"
+              data-section="{{ key }}" aria-controls="section-{{ key }}">
+        <i class="bi {{ icon }}"></i>
+        <span>
+          <strong>{{ label }}</strong>
+          <small>{{ blurb }}</small>
+        </span>
+        {% if key == 'notifications' and unread_count %}
+          <span class="badge rounded-pill bg-danger ms-auto">{{ unread_count }}</span>
+        {% endif %}
+      </button>
+    {% endfor %}
+  </nav>
+
+  <div class="dss-settings-body">
+
+  {# ============================= PROFILE ============================= #}
+  <section class="dss-settings-pane {{ 'active' if active_section == 'profile' }}"
+           id="section-profile" data-section="profile">
+    <div class="row g-4">
+      <div class="col-lg-5">
+        <div class="dss-card text-center">
+          {% if current_user.profile_picture %}
+            <img src="{{ current_user.profile_picture }}" alt="Profile picture" class="dss-avatar-img mx-auto mb-2">
+          {% else %}
+            <div class="dss-avatar mx-auto mb-2" style="width:72px;height:72px;font-size:1.5rem;">{{ current_user.initials() }}</div>
+          {% endif %}
+          <h5 class="mb-0">{{ current_user.name }}</h5>
+          <p class="text-muted small mb-3">{{ current_user.email }}</p>
+
+          <button type="button" class="btn btn-sm btn-outline-primary mb-3" data-bs-toggle="modal" data-bs-target="#editAvatarModal">
+            <i class="bi bi-pencil-square"></i> Edit profile picture
+          </button>
+
+          <div class="text-start small">
+            <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Role</span><strong>{{ current_user.role|upper }}</strong></div>
+            <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Contact Number</span><strong>{{ current_user.contact_number or '—' }}</strong></div>
+            {% if current_user.is_sme() %}
+            <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Saved Plans</span><strong>{{ saved_plans_count }}</strong></div>
+            <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Forecasts Run</span><strong>{{ reports_viewed_count }}</strong></div>
+            {% endif %}
+            <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Member Since</span><strong>{{ current_user.created_at.strftime('%b %Y') }}</strong></div>
+          </div>
+        </div>
+
+        {# The read-only plans list that used to sit here has moved into
+           the Business Preferences pane, which now owns both the list
+           and every control over it. Two places showing the same plans,
+           one of them uneditable, only invited the question of which
+           one was authoritative. #}
+      </div>
+
+      <div class="col-lg-7">
+        <form method="POST" action="{{ url_for('profile.settings') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="form_type" value="profile">
+
+          <div class="dss-card">
+            <h6 class="mb-3">Personal Information</h6>
+            <div class="mb-3">
+              <label class="form-label" for="set-name"><i class="bi bi-person"></i> Full Name</label>
+              <input type="text" id="set-name" name="name" class="form-control" value="{{ current_user.name }}">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="set-email"><i class="bi bi-envelope"></i> Email Address</label>
+              <input type="email" id="set-email" class="form-control" value="{{ current_user.email }}" disabled>
+              <div class="form-text">Email cannot be changed here (contact an administrator).</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="set-contact"><i class="bi bi-telephone"></i> Contact Number</label>
+              <input type="tel" id="set-contact" name="contact_number" class="form-control" value="{{ current_user.contact_number or '' }}">
+            </div>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  {# ====================== BUSINESS PREFERENCES ====================== #}
+  {#
+    What used to be the "My Plans" popup in the top bar. Same data, same
+    endpoints, same inline Edit/Delete -- but as a pane on a page
+    instead of a modal, because a modal that has to be reachable from
+    everywhere forced the whole thing (markup, ~130 lines of script,
+    and a fetch of your plans) onto EVERY authenticated page, for every
+    role, whether or not anyone opened it.
+
+    The rows are rendered by the server here, so the list is correct
+    before any JavaScript runs and works with scripting off. Editing and
+    deleting still go over fetch() to the same JSON endpoints the popup
+    used (/home/plans/<id>/update and /delete), so nothing about how a
+    plan is saved has changed -- including the re-forecast that update
+    triggers.
+  #}
+  {% if current_user.is_sme() %}
+  <section class="dss-settings-pane {{ 'active' if active_section == 'plans' }}"
+           id="section-plans" data-section="plans">
+    <div class="dss-card" style="max-width:940px;">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <div>
+          <h6 class="mb-1"><i class="bi bi-briefcase"></i> Your business plans</h6>
+          <p class="text-muted small mb-0">
+            The business parameters every forecast is scored against. Editing one
+            re-runs the AI engine for it straight away.
+          </p>
+        </div>
+        <a href="{{ url_for('sme.home') }}?new_plan=1" class="btn btn-sm btn-primary flex-shrink-0">
+          <i class="bi bi-plus-lg"></i> New plan
+        </a>
+      </div>
+
+      <div id="myPlansAlert"></div>
+
+      {% if sme_profiles %}
+        <div id="myPlansList">
+          {% for p in sme_profiles %}
+          <div class="dss-plan-row border rounded p-3 mb-2" data-sme-id="{{ p.sme_id }}">
+            <div class="dss-plan-view d-flex justify-content-between align-items-start flex-wrap gap-2">
+              <div class="min-w-0">
+                <div class="fw-bold" data-field="business_name">{{ p.business_name }}</div>
+                <div class="text-muted small" data-field="summary">
+                  {{ p.industry_type }} &middot; {{ p.location }} &middot; {{ p.business_stage|capitalize }}
+                </div>
+                <div class="text-muted small" data-field="figures">
+                  Capital: &#8369;{{ '{:,.0f}'.format(p.startup_capital or 0) }}
+                  &middot; Employees: {{ p.employee_count if p.employee_count is not none else '—' }}
+                  &middot; Est. Revenue: &#8369;{{ '{:,.0f}'.format(p.monthly_revenue_est or 0) }}
+                </div>
+              </div>
+              <div class="d-flex gap-2 flex-shrink-0">
+                <button type="button" class="btn btn-sm btn-outline-primary dss-plan-edit-btn"><i class="bi bi-pencil"></i> Edit</button>
+                <button type="button" class="btn btn-sm btn-outline-danger dss-plan-delete-btn"><i class="bi bi-trash"></i> Delete</button>
+              </div>
+            </div>
+
+            <form class="dss-plan-edit-form mt-2" method="POST"
+                  action="{{ url_for('sme.update_plan', sme_id=p.sme_id) }}" hidden>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <label class="form-label small mb-1" for="plan-name-{{ p.sme_id }}">Business name</label>
+                  <input type="text" id="plan-name-{{ p.sme_id }}" class="form-control form-control-sm"
+                         name="business_name" value="{{ p.business_name }}" required>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small mb-1" for="plan-industry-{{ p.sme_id }}">Industry</label>
+                  <select class="form-select form-select-sm" id="plan-industry-{{ p.sme_id }}" name="industry_type">
+                    {#
+                      A plan saved under an industry name the current
+                      list no longer contains (the taxonomy has been
+                      migrated once already -- see
+                      app/services/industry_migration.py) keeps its own
+                      value as the selected option. Without this the
+                      select would quietly fall back to the FIRST
+                      industry, and merely opening Edit and pressing
+                      Save would reclassify the business.
+                    #}
+                    {% if p.industry_type and p.industry_type not in (ALL_BUSINESS_TYPES or []) %}
+                      <option value="{{ p.industry_type }}" selected>{{ p.industry_type }} (current)</option>
+                    {% endif %}
+                    {% for bt in (ALL_BUSINESS_TYPES or []) %}
+                      <option value="{{ bt }}" {{ 'selected' if bt == p.industry_type else '' }}>{{ bt }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small mb-1" for="plan-location-{{ p.sme_id }}">Location</label>
+                  <input type="text" id="plan-location-{{ p.sme_id }}" class="form-control form-control-sm"
+                         name="location" value="{{ p.location }}" required>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small mb-1" for="plan-stage-{{ p.sme_id }}">Stage</label>
+                  <select class="form-select form-select-sm" id="plan-stage-{{ p.sme_id }}" name="business_stage">
+                    <option value="startup" {{ 'selected' if p.business_stage == 'startup' else '' }}>Startup</option>
+                    <option value="existing" {{ 'selected' if p.business_stage == 'existing' else '' }}>Existing</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small mb-1" for="plan-capital-{{ p.sme_id }}">Startup capital (&#8369;)</label>
+                  <input type="number" min="0" step="1000" id="plan-capital-{{ p.sme_id }}"
+                         class="form-control form-control-sm" name="startup_capital"
+                         value="{{ p.startup_capital if p.startup_capital is not none else '' }}">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small mb-1" for="plan-employees-{{ p.sme_id }}">Employees</label>
+                  <input type="number" min="0" step="1" id="plan-employees-{{ p.sme_id }}"
+                         class="form-control form-control-sm" name="employee_count"
+                         value="{{ p.employee_count if p.employee_count is not none else '' }}">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small mb-1" for="plan-revenue-{{ p.sme_id }}">Est. monthly revenue (&#8369;)</label>
+                  <input type="number" min="0" step="1000" id="plan-revenue-{{ p.sme_id }}"
+                         class="form-control form-control-sm" name="monthly_revenue_est"
+                         value="{{ p.monthly_revenue_est if p.monthly_revenue_est is not none else '' }}">
+                </div>
+              </div>
+              <div class="mt-2 d-flex gap-2">
+                <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check-lg"></i> Save plan</button>
+                <button type="button" class="btn btn-sm btn-light dss-plan-cancel-btn">Cancel</button>
+              </div>
+            </form>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div id="myPlansList">
+          <p class="text-muted small mb-0" id="myPlansEmpty">
+            You haven't created a business plan yet &mdash; use <strong>New plan</strong> above.
+          </p>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  {# ========================== NOTIFICATIONS ========================== #}
+  <section class="dss-settings-pane {{ 'active' if active_section == 'notifications' }}"
+           id="section-notifications" data-section="notifications">
+    <div class="row g-4">
+      <div class="col-lg-5">
+        <form method="POST" action="{{ url_for('profile.settings') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="form_type" value="notifications">
+
+          <div class="dss-card">
+            <h6 class="mb-1">Notification Preferences</h6>
+            <p class="text-muted small mb-3">Choose what MarketLens tells you about.</p>
+
+            {% for field, label, blurb, wired in notification_prefs %}
+              <div class="dss-pref">
+                <div class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" role="switch"
+                         id="pref-{{ field }}" name="{{ field }}"
+                         {{ 'checked' if current_user[field] else '' }}>
+                  <label class="form-check-label" for="pref-{{ field }}">
+                    <span class="dss-pref-label">
+                      {{ label }}
+                      {% if not wired %}
+                        {# Saved, but nothing sends it yet. Saying so
+                           beats a switch that quietly does nothing. #}
+                        <span class="badge dss-pref-soon" title="Your choice is saved and will be honoured once sending is built">not sending yet</span>
+                      {% endif %}
+                    </span>
+                    <span class="dss-pref-blurb">{{ blurb }}</span>
+                  </label>
+                </div>
+              </div>
+            {% endfor %}
+
+            <div class="d-flex justify-content-between align-items-center border-top pt-3 mt-3 small">
+              <span class="text-muted">Saturation alert fires above</span>
+              <strong>{{ alert_threshold|round(0)|int }}%</strong>
+            </div>
+            <p class="text-muted mb-3" style="font-size:.75rem;">
+              One city-wide threshold, set by an administrator under
+              <em>System Settings</em> &mdash; not per account, so it is read-only here.
+            </p>
+
+            <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save preferences</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="col-lg-7">
+        <div class="dss-card">
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <h6 class="mb-0">
+              Your notifications
+              <span class="text-muted fw-normal small">
+                &middot; {{ unread_count }} unread of {{ notifications|length }} shown
+              </span>
+            </h6>
+            <div class="d-flex gap-2">
+              <form method="POST" action="{{ url_for('profile.settings') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="form_type" value="mark_all_read">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" {{ 'disabled' if not unread_count }}>
+                  <i class="bi bi-check2-all"></i> Mark all read
+                </button>
+              </form>
+              <form method="POST" action="{{ url_for('profile.settings') }}"
+                    onsubmit="return confirm('Delete every notification you have already read?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="form_type" value="clear_read">
+                <button type="submit" class="btn btn-sm btn-outline-danger" {{ 'disabled' if not read_count }}>
+                  <i class="bi bi-trash"></i> Clear read ({{ read_count }})
+                </button>
+              </form>
+            </div>
+          </div>
+
+          {% if notifications %}
+            <ul class="list-group list-group-flush dss-notif-list">
+              {% for n in notifications %}
+                <li class="list-group-item px-0 {{ 'dss-notif-unread' if not n.is_read }}">
+                  <div class="d-flex gap-2">
+                    <i class="bi {{ 'bi-exclamation-triangle-fill text-warning' if n.type == 'early_warning' else 'bi-info-circle text-primary' }} mt-1"></i>
+                    <div class="flex-grow-1 min-w-0">
+                      <div class="small">{{ n.message }}</div>
+                      <div class="text-muted" style="font-size:.72rem;">
+                        {{ n.created_at.strftime('%d %b %Y, %H:%M') if n.created_at else '' }}
+                        &middot; {{ n.type.replace('_', ' ') }}
+                        {% if not n.is_read %}&middot; <span class="text-danger">unread</span>{% endif %}
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              {% endfor %}
+            </ul>
+            <p class="text-muted small mt-2 mb-0">Showing the 20 most recent.</p>
+          {% else %}
+            <p class="text-muted small mb-0">
+              No notifications yet. Early warnings appear here when a forecast comes back
+              above {{ alert_threshold|round(0)|int }}% saturation.
+            </p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {# ============================ APPEARANCE ============================ #}
+  <section class="dss-settings-pane {{ 'active' if active_section == 'appearance' }}"
+           id="section-appearance" data-section="appearance">
+    <form method="POST" action="{{ url_for('profile.settings') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="form_type" value="appearance">
+
+      <div class="dss-card" style="max-width:720px;">
+        <h6 class="mb-1">Theme</h6>
+        <p class="text-muted small mb-3">
+          Applies to every page. The preview updates as you choose; saving keeps it
+          for this account on any device you sign in from.
+        </p>
+
+        <div class="dss-theme-picker">
+          {% for value, label, blurb in [
+              ('light', 'Light', 'Bright surfaces. Best in a lit room or on a projector.'),
+              ('dark',  'Dark',  'Low-glare navy. Easier at night and on long sessions.')
+          ] %}
+            <input type="radio" class="btn-check" name="theme" id="theme-{{ value }}" value="{{ value }}"
+                   {{ 'checked' if current_user.resolved_theme == value else '' }}>
+            <label for="theme-{{ value }}">
+              <span class="dss-theme-swatch dss-theme-swatch-{{ value }}" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </span>
+              <strong>{{ label }}</strong>
+              <small>{{ blurb }}</small>
+            </label>
+          {% endfor %}
+        </div>
+
+        <p class="text-muted small mt-3 mb-3">
+          <i class="bi bi-info-circle"></i>
+          The saturation map keeps its light tiles in either theme &mdash; the colour
+          scale that encodes saturation has to stay readable, and re-tinting the map
+          would change what those colours mean.
+        </p>
+
+        <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save theme</button>
+      </div>
+    </form>
+  </section>
+
+  {# ============================= SECURITY ============================= #}
+  <section class="dss-settings-pane {{ 'active' if active_section == 'security' }}"
+           id="section-security" data-section="security">
+    <div class="row g-4">
+      <div class="col-lg-7">
+        <form method="POST" action="{{ url_for('profile.settings') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="form_type" value="password">
+
+          <div class="dss-card">
+            <h6 class="mb-3">Change Password</h6>
+            <div class="mb-3">
+              <label class="form-label" for="set-cur-pw">Current Password</label>
+              <input type="password" id="set-cur-pw" name="current_password" class="form-control" required
+                     autocomplete="current-password">
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-sm-6">
+                <label class="form-label" for="set-new-pw">New Password</label>
+                <input type="password" id="set-new-pw" name="new_password" class="form-control" required
+                       minlength="6" autocomplete="new-password">
+                <div class="form-text">At least 6 characters.</div>
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label" for="set-new-pw2">Confirm New Password</label>
+                <input type="password" id="set-new-pw2" name="confirm_password" class="form-control" required
+                       minlength="6" autocomplete="new-password">
+              </div>
+            </div>
+            <button type="submit" class="btn btn-outline-primary"><i class="bi bi-key"></i> Update Password</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="col-lg-5">
+        <div class="dss-card">
+          <h6 class="mb-3">This account</h6>
+          <div class="small">
+            <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Email</span><strong class="text-truncate ms-2">{{ current_user.email }}</strong></div>
+            <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Role</span><strong>{{ current_user.role|upper }}</strong></div>
+            <div class="d-flex justify-content-between border-top py-2">
+              <span class="text-muted">Status</span>
+              <strong class="{{ 'text-success' if current_user.is_active else 'text-danger' }}">{{ current_user.status|capitalize }}</strong>
+            </div>
+            <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Member since</span><strong>{{ current_user.created_at.strftime('%d %b %Y') }}</strong></div>
+          </div>
+          <p class="text-muted small mt-3 mb-0">
+            Your role decides what you can see. Only an administrator can change it,
+            deactivate an account, or change an email address.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  </div>
+</div>
+
+<!-- "Edit profile picture" modal -- lives outside the panes so Bootstrap
+     can move it to the end of <body> without taking a pane with it. -->
+<div class="modal fade" id="editAvatarModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-person-circle"></i> Edit profile picture</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body text-center">
+        {% if current_user.profile_picture %}
+          <img src="{{ current_user.profile_picture }}" alt="Profile picture" class="dss-avatar-img mx-auto mb-3">
+        {% else %}
+          <div class="dss-avatar mx-auto mb-3" style="width:72px;height:72px;font-size:1.5rem;">{{ current_user.initials() }}</div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('profile.settings') }}" enctype="multipart/form-data" class="mb-2 text-start">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="form_type" value="avatar">
+          <label class="form-label small">{{ 'Choose a new photo to replace your current one' if current_user.profile_picture else 'Choose a photo to upload' }}</label>
+          <input type="file" name="profile_picture" accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"
+                 class="form-control form-control-sm mb-2" required>
+          <button type="submit" class="btn btn-sm btn-primary w-100">
+            <i class="bi bi-upload"></i> {{ 'Upload & Replace' if current_user.profile_picture else 'Upload Photo' }}
+          </button>
+        </form>
+        <p class="text-muted mb-0" style="font-size:.7rem;">PNG, JPG, GIF, or WEBP &middot; up to 2 MB</p>
+      </div>
+      {% if current_user.profile_picture %}
+      <div class="modal-footer justify-content-center">
+        <form method="POST" action="{{ url_for('profile.settings') }}"
+              onsubmit="return confirm('Remove your profile picture?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="form_type" value="remove_avatar">
+          <button type="submit" class="btn btn-sm btn-link text-danger">Remove current photo</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  const nav   = document.getElementById("settingsNav");
+  const panes = [...document.querySelectorAll(".dss-settings-pane")];
+  if (!nav || !panes.length) return;
+
+  // Panes are plain sections until this runs. With JavaScript off they
+  // all stay visible and stacked, which is a worse layout but a working
+  // page -- so the switching is added here rather than assumed in the CSS.
+  document.querySelector(".dss-settings")?.classList.add("is-tabbed");
+
+  function open(section, push) {
+    panes.forEach(p => p.classList.toggle("active", p.dataset.section === section));
+    nav.querySelectorAll(".dss-settings-tab").forEach(t => {
+      const on = t.dataset.section === section;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    if (push) {
+      // ?section= in the address bar, so a refresh or a shared link
+      // reopens the same pane -- and so the server can send you back to
+      // it after a save.
+      const url = new URL(location.href);
+      url.searchParams.set("section", section);
+      history.replaceState({}, "", url);
+    }
+  }
+
+  nav.addEventListener("click", (e) => {
+    const tab = e.target.closest(".dss-settings-tab");
+    if (tab) open(tab.dataset.section, true);
+  });
+
+{% if current_user.is_sme() %}
+  // ---- Business plans: inline edit / delete -------------------------
+  // The rows are already on the page (server-rendered), so this only
+  // adds the in-place editing the old top-bar popup had. With scripting
+  // off the Edit form is simply always hidden and the page still shows
+  // every plan; the Save button is a real submit to a real route, so it
+  // is only the STAY-ON-THE-PAGE part that needs JS.
+  //
+  // Guarded by the role, not just by "is the element there": an LGU or
+  // Admin account can never have a plan, so this should not be in their
+  // page at all. Shipping it to them is the exact cost the move was
+  // meant to stop paying.
+  (function wirePlans() {
+    const listBox = document.getElementById("myPlansList");
+    if (!listBox) return;
+    const alertBox = document.getElementById("myPlansAlert");
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    const csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
+    const peso = (n) => "₱" + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    const STAGE = { startup: "Startup", existing: "Existing" };
+
+    function showAlert(message, kind) {
+      if (!alertBox) return;
+      alertBox.innerHTML =
+        '<div class="alert alert-' + (kind || "danger") +
+        ' alert-dismissible fade show py-2 small" role="alert">' + message +
+        '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>';
+    }
+
+    // Only the three summary lines change after a save, so they are
+    // rewritten in place rather than re-rendering the row from a
+    // duplicate JS template -- one copy of this markup, in the HTML
+    // above, is the whole point.
+    function paintRow(row, plan) {
+      const set = (field, text) => {
+        const el = row.querySelector('[data-field="' + field + '"]');
+        if (el) el.textContent = text;
+      };
+      set("business_name", plan.business_name);
+      set("summary", plan.industry_type + " · " + plan.location + " · " +
+                     (STAGE[plan.business_stage] || plan.business_stage));
+      set("figures", "Capital: " + peso(plan.startup_capital) +
+                     " · Employees: " + (plan.employee_count ?? "—") +
+                     " · Est. Revenue: " + peso(plan.monthly_revenue_est));
+    }
+
+    listBox.querySelectorAll(".dss-plan-row").forEach((row) => {
+      const view = row.querySelector(".dss-plan-view");
+      const form = row.querySelector(".dss-plan-edit-form");
+      if (!view || !form) return;
+
+      row.querySelector(".dss-plan-edit-btn")?.addEventListener("click", () => {
+        view.hidden = true;
+        form.hidden = false;
+        form.querySelector("input, select")?.focus();
+      });
+      row.querySelector(".dss-plan-cancel-btn")?.addEventListener("click", () => {
+        form.hidden = true;
+        view.hidden = false;
+      });
+
+      row.querySelector(".dss-plan-delete-btn")?.addEventListener("click", () => {
+        if (!window.confirm("Delete this business plan? This also removes its saved forecasts. This cannot be undone.")) return;
+        fetch("/home/plans/" + row.dataset.smeId + "/delete", {
+          method: "POST",
+          headers: { "X-CSRFToken": csrfToken },
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (!data.success) return showAlert(data.error || "Could not delete this plan.");
+            row.remove();
+            showAlert("Plan deleted.", "success");
+            if (!listBox.querySelector(".dss-plan-row")) {
+              listBox.innerHTML =
+                '<p class="text-muted small mb-0">You haven\'t created a business plan yet ' +
+                '&mdash; use <strong>New plan</strong> above.</p>';
+            }
+          })
+          .catch(() => showAlert("Could not delete this plan right now."));
+      });
+
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        fetch(form.action, {
+          method: "POST",
+          headers: { "X-CSRFToken": csrfToken },
+          body: new FormData(form),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (!data.success) return showAlert(data.error || "Could not update this plan.");
+            paintRow(row, data.plan);
+            form.hidden = true;
+            view.hidden = false;
+            showAlert("Plan updated — its forecast has been re-run.", "success");
+          })
+          .catch(() => showAlert("Could not update this plan right now."));
+      });
+    });
+  })();
+{% endif %}
+
+  // ---- Live theme preview -------------------------------------------
+  // Choosing a theme applies it immediately, before saving, so the
+  // choice can be judged rather than guessed at. If the visitor leaves
+  // without saving, the next page load reverts to the stored value --
+  // nothing is persisted here.
+  const applyTheme = window.dssApplyTheme;
+  document.querySelectorAll('input[name="theme"]').forEach(radio => {
+    radio.addEventListener("change", () => {
+      if (typeof applyTheme === "function") applyTheme(radio.value);
+    });
+  });
+})();
+</script>
+{% endblock %}

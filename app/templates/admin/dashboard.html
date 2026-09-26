@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard{% endblock %}
+
+{% block content %}
+<h4 class="mb-1"><i class="bi bi-shield-check"></i> Admin Dashboard</h4>
+<p class="text-muted small mb-4">System-wide monitoring and quick links to every Admin Module function.</p>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Users</div><div class="fs-3">{{ stats.total_users }}</div></div></div>
+  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">SME Accounts</div><div class="fs-3">{{ stats.sme_users }}</div></div></div>
+  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">LGU Accounts</div><div class="fs-3">{{ stats.lgu_users }}</div></div></div>
+  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Forecasts Run</div><div class="fs-3">{{ stats.total_forecasts }}</div></div></div>
+  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">LGU Data Rows</div><div class="fs-3">{{ stats.total_lgu_data }}</div></div></div>
+  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Market Data Rows</div><div class="fs-3">{{ stats.total_market_data }}</div></div></div>
+  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Notifications</div><div class="fs-3">{{ stats.total_notifications }}</div></div></div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><a href="{{ url_for('admin.users') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-people d-block fs-3 mb-1"></i> Manage Users</a></div>
+  <div class="col-md-3"><a href="{{ url_for('admin.audit_log') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-journal-text d-block fs-3 mb-1"></i> Audit Trail</a></div>
+  <div class="col-md-3"><a href="{{ url_for('admin.datasets') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-hdd-stack d-block fs-3 mb-1"></i> Datasets</a></div>
+  <div class="col-md-3"><a href="{{ url_for('admin.settings') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-gear d-block fs-3 mb-1"></i> System Settings</a></div>
+</div>
+
+<div class="dss-card">
+  <h6 class="mb-3">Recent Activity (Audit Trail)</h6>
+  {% if recent_activity %}
+  <div class="table-responsive">
+    <table class="table table-sm">
+      <thead><tr><th>When</th><th>User</th><th>Action</th><th>Details</th></tr></thead>
+      <tbody>
+        {% for log in recent_activity %}
+        <tr>
+          <td class="text-muted small">{{ log.created_at.strftime('%b %d, %Y %I:%M %p') }}</td>
+          <td>{{ log.user.email if log.user else 'system' }}</td>
+          <td><span class="badge bg-light text-dark">{{ log.action }}</span></td>
+          <td class="small text-muted">{{ log.details or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <a href="{{ url_for('admin.audit_log') }}" class="small">View full audit trail &raquo;</a>
+  {% else %}
+  <p class="text-muted">No activity recorded yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

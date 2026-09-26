@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Saturation Map{% endblock %}
+
+{% block extra_head %}
+<!-- Leaflet's stylesheet MUST load before the map is built, and it must
+     be in <head>, not next to the script at the end of <body>.
+
+     NOTE: no `integrity` attribute on purpose. An SRI hash that does not
+     match exactly what the CDN serves makes the browser silently BLOCK
+     the file -- and a blocked leaflet.css is catastrophic rather than
+     cosmetic: without it the tiles lose `position:absolute` and scatter
+     across the page, and the map container loses `overflow:hidden`, so
+     the choropleth polygons spill over the whole layout. That is exactly
+     the bug this attribute caused here. If you want SRI back, copy the
+     current hashes from https://cdnjs.com/libraries/leaflet -- do not
+     type them from memory. -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
+      crossorigin="anonymous" referrerpolicy="no-referrer">
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <h4 class="mb-0">Interactive Saturation Map</h4>
+    <p class="text-muted small mb-0">Choropleth view of Tarlac City: every barangay shaded by its real, AI-scored saturation tier (or real population density). Click any barangay to focus on just that one.</p>
+  </div>
+  <!-- The search bar + industry filter, grouped in the card header area
+       requested in the reference screenshot. -->
+  <div class="d-flex flex-wrap gap-2 align-items-center">
+    <form id="mapSearchForm" class="d-flex" role="search">
+      <input id="mapSearchInput" class="form-control form-control-sm" type="search"
+             list="allLocationsList" placeholder="Search a barangay in Tarlac City..." style="min-width:220px;">
+      <datalist id="allLocationsList">
+        {% for loc in locations %}<option value="{{ loc }}">{% endfor %}
+      </datalist>
+      <button class="btn btn-outline-primary btn-sm ms-1" type="submit"><i class="bi bi-search"></i></button>
+    </form>
+    <select id="businessTypeSelect" class="form-select form-select-sm" style="max-width:220px;">
+      {% for bt in business_types %}<option value="{{ bt }}">{{ bt }}</option>{% endfor %}
+    </select>
+    <select id="mapOverlaySelect" class="form-select form-select-sm" style="max-width:220px;" title="What the shaded zones represent">
+      <option value="saturation">Overlay: Market Saturation</option>
+      <option value="population">Overlay: Population Density</option>
+    </select>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="dss-card p-2">
+      <div id="mapIsolationBanner"></div>
+      <div class="d-flex justify-content-end mb-2">
+        <button type="button" id="hideSaturationToggle" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-eye-slash"></i> Hide Saturation
+        </button>
+      </div>
+      <!-- OpenStreetMap via Leaflet: no API key, so unlike the old
+           Google basemap there is no "key missing" placeholder state. -->
+      <div id="dss-map"></div>
+      <!-- The legend IS the filter: click a tier to show/hide those
+           zones on the map. Counts update with the selected industry. -->
+      <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+        <span class="text-muted small">Click a tier to show/hide it on the map</span>
+        <div class="btn-group btn-group-sm">
+          <button type="button" class="btn btn-outline-secondary" id="tierShowAll">Show All</button>
+          <button type="button" class="btn btn-outline-secondary" id="tierHideAll">Hide All</button>
+        </div>
+      </div>
+      <div class="d-flex justify-content-around small mt-2 flex-wrap gap-2" id="saturationLegend">
+        <button type="button" class="dss-tier-toggle" data-tier-filter="Saturated" aria-pressed="true">
+          <span class="dss-legend-swatch" style="background:#b91c1c"></span>High Saturation
+          <span class="badge bg-light text-dark ms-1" data-tier-count="Saturated">0</span>
+        </button>
+        <button type="button" class="dss-tier-toggle" data-tier-filter="High" aria-pressed="true">
+          <span class="dss-legend-swatch" style="background:#f97316"></span>Moderate
+          <span class="badge bg-light text-dark ms-1" data-tier-count="High">0</span>
+        </button>
+        <button type="button" class="dss-tier-toggle" data-tier-filter="Moderate" aria-pressed="true">
+          <span class="dss-legend-swatch" style="background:#fde047"></span>Low-Moderate
+          <span class="badge bg-light text-dark ms-1" data-tier-count="Moderate">0</span>
+        </button>
+        <button type="button" class="dss-tier-toggle" data-tier-filter="Low" aria-pressed="true">
+          <span class="dss-legend-swatch" style="background:#22c55e"></span>High Opportunity
+          <span class="badge bg-light text-dark ms-1" data-tier-count="Low">0</span>
+        </button>
+      </div>
+      <div class="d-flex justify-content-center small mt-2 flex-wrap gap-3" id="densityLegend" hidden>
+        <span><span class="dss-legend-swatch" style="background:#c7d2fe"></span>Low density</span>
+        <span><span class="dss-legend-swatch" style="background:#818cf8"></span>Moderate density</span>
+        <span><span class="dss-legend-swatch" style="background:#6366f1"></span>High density</span>
+        <span><span class="dss-legend-swatch" style="background:#3730a3"></span>Very high density</span>
+        <span class="text-muted">(real 2024 PSA people/km&sup2; -- see barangay detail panel for the exact figure)</span>
+      </div>
+      <div class="small text-center mt-2" id="coordStatus"></div>
+      <p class="text-muted small text-center mt-2 mb-1">Click a barangay to isolate it (map, search, or the list on the right); double-click it again -- or click "Show All" -- to bring back every barangay.</p>
+      <p class="text-muted small text-center mt-0 mb-0">The bold blue outline is Tarlac City's REAL administrative border. Each shaded zone inside it is the area closer to that barangay's own real, surveyed coordinate than to any other barangay's -- there's no publicly available per-barangay BOUNDARY dataset for Tarlac City (only point coordinates -- see <code>app/services/choropleth_service.py</code>), so a cell's exact INTERNAL edge (between two barangays) is a computed approximation rather than a traced administrative line, while its OUTER edge always stops exactly at the real city border. Precise per-barangay figures are always shown in the detail panel and location list. Household income has no publicly available per-barangay figure in the Philippines (see <code>Reference/DATASETS.md</code>), so it isn't shown as an overlay here -- population density is the real sociodemographic figure this map can back with sourced data.</p>
+      <p class="text-muted small text-center mt-1 mb-0">City border data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, ODbL.</p>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="dss-card mb-3" id="detailPanel">
+      <div class="text-muted text-center py-4">Select a barangay to see details.</div>
+    </div>
+    <div class="dss-card">
+      <h6 class="mb-3">All Barangays</h6>
+      <div id="locationList" class="list-group list-group-flush" style="max-height:360px; overflow-y:auto;"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+  window.DSS_LOCATIONS_FORECAST_URL = "{{ url_for('api.locations_forecast') }}";
+  window.DSS_FORECAST_URL = "{{ url_for('api.forecast') }}";
+  window.DSS_PLACES_URL = "{{ url_for('api.places_nearby') }}";
+  window.DSS_BARANGAY_DETAIL_URL = "{{ url_for('api.barangay_detail') }}";
+  // REAL, PhilAtlas-sourced coordinates for all 76 Tarlac City barangays
+  // (app/services/geocoding_service.py + app/static/data/barangay_coords.json).
+  window.DSS_BARANGAY_COORDS_URL = "{{ url_for('api.barangay_coords') }}";
+  // Choropleth polygon cells computed from those same real coordinates,
+  // clipped to Tarlac City's REAL boundary (app/services/choropleth_service.py)
+  // -- see map.js's module docstring.
+  window.DSS_BARANGAY_CHOROPLETH_URL = "{{ url_for('api.barangay_choropleth') }}";
+  // Tarlac City's own real outline (OpenStreetMap, ODbL -- see the
+  // attribution note under the map), drawn as its own bold overlay.
+  window.DSS_TARLAC_CITY_BOUNDARY_URL = "{{ url_for('api.tarlac_city_boundary') }}";
+  window.DSS_CSRF_TOKEN = "{{ csrf_token() }}";
+  // Real PSA FIES (2023) household spending-category figures -- the
+  // SAME for every barangay (no barangay-level breakdown is published
+  // anywhere), computed once server-side and set here as a page-level
+  // constant rather than re-fetched per barangay. See
+  // app/services/socio_demographic_service.py for exactly what's real
+  // vs. estimated.
+  window.DSS_DEMAND_SUMMARY = {{ demand_summary|tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/map.js') }}"></script>
+
+{% endblock %}

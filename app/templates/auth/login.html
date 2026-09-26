@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+
+{#
+  auth/login.html
+  -----------------
+  The public front door: a full landing page that introduces MarketLens
+  and carries the sign-in form, rather than a lone card on a gradient.
+
+  It scrolls. The previous version pinned a 920px shell to the middle of
+  the viewport with `min-height:100vh; align-items:center`, which left no
+  room to say what the system actually does -- a visitor, or a panel
+  member opening the URL cold, saw a login box and nothing else. The form
+  now sits in the hero, immediately reachable without scrolling, and
+  everything below it explains the product for anyone who wants it.
+
+  "Get Started" goes to sign-up, not to the form below it: a visitor who
+  has read this page and wants in needs an ACCOUNT, and the sign-in card
+  is already on screen for anyone who has one. The nav button and the
+  closing "Sign in instead" still jump to the card.
+#}
+
+{% block auth_content %}
+<div class="ml-landing">
+
+  {# ---------------------------------------------------------------
+     Animated backdrop. Decorative only -- aria-hidden, and
+     pointer-events:none in the CSS so it can never swallow a click
+     meant for the form. Every layer is pure CSS: no canvas, no
+     requestAnimationFrame loop, nothing that can throw, and it all
+     stops under prefers-reduced-motion.
+     --------------------------------------------------------------- #}
+  <div class="ml-bg" aria-hidden="true">
+    <span class="ml-bg-grid"></span>
+    <span class="ml-orb ml-orb-1"></span>
+    <span class="ml-orb ml-orb-2"></span>
+    <span class="ml-orb ml-orb-3"></span>
+    <span class="ml-radar"><i></i><i></i><i></i></span>
+  </div>
+
+  {# ---------------------------- top nav ---------------------------- #}
+  <header class="ml-nav" id="top">
+    <a class="ml-nav-brand" href="#top" aria-label="MarketLens home">
+      {% with variant='light', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+    </a>
+    <nav class="ml-nav-links">
+      <a href="#what">What it does</a>
+      <a href="#how">How it works</a>
+      <a href="#who">Who it's for</a>
+    </nav>
+    <a class="ml-btn ml-btn-ghost ml-nav-cta" href="#signin">Sign in</a>
+  </header>
+
+  {# ------------------------------ hero ----------------------------- #}
+  <section class="ml-hero">
+    <div class="ml-hero-copy">
+      <span class="ml-eyebrow"><i class="bi bi-geo-alt-fill"></i> Tarlac City &middot; AI Decision Support</span>
+      <h1>See the market<br><em>before</em> you enter it.</h1>
+      <p class="ml-lede">
+        MarketLens forecasts how crowded a market already is, barangay by barangay,
+        so an entrepreneur knows whether a location can carry one more business &mdash;
+        and an LGU can see where the city is thin and where it is saturated.
+      </p>
+
+      <div class="ml-hero-cta">
+        <a class="ml-btn ml-btn-primary ml-btn-lg" href="{{ url_for('auth.register') }}">
+          Get Started <i class="bi bi-arrow-right"></i>
+        </a>
+        <a class="ml-btn ml-btn-outline ml-btn-lg" href="#what">See how it works</a>
+      </div>
+
+      <dl class="ml-hero-stats">
+        <div><dt>76</dt><dd>barangays mapped</dd></div>
+        <div><dt>20</dt><dd>PSIC industry sections</dd></div>
+        <div><dt>2020&ndash;26</dt><dd>of market history</dd></div>
+      </dl>
+    </div>
+
+    {# The form. id="signin" is what Get Started scrolls to. #}
+    <div class="ml-hero-form" id="signin">
+      <div class="ml-card ml-auth-card">
+        <div class="ml-auth-head">
+          <h2>Welcome back</h2>
+          <p>Sign in to your MarketLens account.</p>
+        </div>
+
+        <form method="POST" action="{{ url_for('auth.login') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="mb-3">
+            <label class="form-label" for="ml-email">Email address</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+              <input type="email" id="ml-email" name="email" class="form-control"
+                     value="{{ email }}" required autofocus autocomplete="email">
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="ml-password">Password</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-lock"></i></span>
+              <input type="password" id="ml-password" name="password" class="form-control"
+                     required autocomplete="current-password">
+              {# Reveal costs nothing in security -- the value is already
+                 in the DOM -- and saves a retype on a long password. #}
+              <button class="btn btn-outline-secondary ml-reveal" type="button"
+                      data-target="ml-password" aria-label="Show password">
+                <i class="bi bi-eye"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="remember" id="remember">
+            <label class="form-check-label" for="remember">Keep me signed in</label>
+          </div>
+
+          <button type="submit" class="ml-btn ml-btn-primary w-100">Sign In</button>
+        </form>
+
+        <p class="ml-auth-alt">
+          New here? <a href="{{ url_for('auth.register') }}">Create an account</a>
+        </p>
+      </div>
+
+      <p class="ml-hero-form-note">
+        <i class="bi bi-shield-check"></i>
+        Open to entrepreneurs and LGU officials. Administrator accounts are
+        created by an existing administrator.
+      </p>
+    </div>
+  </section>
+
+  {# ----------------------------- what ------------------------------ #}
+  <section class="ml-section" id="what">
+    <div class="ml-section-head">
+      <span class="ml-kicker">What it does</span>
+      <h2>Four questions, answered from real data</h2>
+      <p>
+        Every figure comes from competitor counts collected for Tarlac City, the 2024 PSA
+        population of each barangay, and a Random Forest trained on them &mdash; not from
+        a survey and not from a guess.
+      </p>
+    </div>
+
+    <div class="ml-grid ml-grid-4">
+      <article class="ml-card ml-feature">
+        <span class="ml-feature-icon ml-i-blue"><i class="bi bi-speedometer2"></i></span>
+        <h3>How crowded is it?</h3>
+        <p>A saturation index for your industry in your barangay, with the viability score
+           and the confidence the model actually produced.</p>
+      </article>
+      <article class="ml-card ml-feature">
+        <span class="ml-feature-icon ml-i-cyan"><i class="bi bi-map"></i></span>
+        <h3>Where exactly?</h3>
+        <p>A choropleth of all 76 barangays, clipped to the city's real boundary and shaded
+           from high opportunity through to saturated.</p>
+      </article>
+      <article class="ml-card ml-feature">
+        <span class="ml-feature-icon ml-i-green"><i class="bi bi-lightbulb"></i></span>
+        <h3>Where else could I go?</h3>
+        <p>Locations you could realistically enter, ranked, each with an AI-estimated ROI
+           timeframe and the reasoning behind it.</p>
+      </article>
+      <article class="ml-card ml-feature">
+        <span class="ml-feature-icon ml-i-amber"><i class="bi bi-graph-up-arrow"></i></span>
+        <h3>Which way is it moving?</h3>
+        <p>Monthly and quarterly trends from 2020 to today, including the pandemic
+           contraction and the recovery after it.</p>
+      </article>
+    </div>
+  </section>
+
+  {# ------------------------------ how ------------------------------ #}
+  <section class="ml-section ml-section-alt" id="how">
+    <div class="ml-section-head">
+      <span class="ml-kicker">How it works</span>
+      <h2>From a business idea to a decision you can defend</h2>
+    </div>
+
+    <ol class="ml-steps">
+      <li>
+        <span class="ml-step-n">1</span>
+        <h3>Describe the plan</h3>
+        <p>Industry, target barangay, starting capital, stage. That is the whole input.</p>
+      </li>
+      <li>
+        <span class="ml-step-n">2</span>
+        <h3>The engine scores it</h3>
+        <p>Competitor density, demand and socio-demographic weight combine into a market
+           saturation index, and K-Means places the result in one of four tiers.</p>
+      </li>
+      <li>
+        <span class="ml-step-n">3</span>
+        <h3>Act on the reasoning</h3>
+        <p>You get the score, the map, alternative locations and a plain-language account
+           of what drove it &mdash; not a number on its own.</p>
+      </li>
+    </ol>
+  </section>
+
+  {# ------------------------------ who ------------------------------ #}
+  <section class="ml-section" id="who">
+    <div class="ml-section-head">
+      <span class="ml-kicker">Who it's for</span>
+      <h2>Two roles, one picture of the city</h2>
+    </div>
+
+    <div class="ml-grid ml-grid-2">
+      <article class="ml-card ml-audience">
+        <span class="ml-audience-icon ml-i-blue"><i class="bi bi-shop"></i></span>
+        <div>
+          <h3>Entrepreneurs &amp; SMEs</h3>
+          <p>Test a location before signing a lease. Compare barangays for the same
+             industry, see who you would be competing with, and find the places that are
+             still open.</p>
+          <ul>
+            <li><i class="bi bi-check2"></i> Viability forecast for each plan</li>
+            <li><i class="bi bi-check2"></i> Ranked alternative locations</li>
+            <li><i class="bi bi-check2"></i> Save plans and revisit them</li>
+          </ul>
+        </div>
+      </article>
+      <article class="ml-card ml-audience">
+        <span class="ml-audience-icon ml-i-navy"><i class="bi bi-bank"></i></span>
+        <div>
+          <h3>LGU officials</h3>
+          <p>See where enterprise is concentrating and where it is not, so permits,
+             programmes and investment can be targeted with evidence behind the choice.</p>
+          <ul>
+            <li><i class="bi bi-check2"></i> City-wide saturation dashboard</li>
+            <li><i class="bi bi-check2"></i> Upload official datasets</li>
+            <li><i class="bi bi-check2"></i> Quarterly growth reporting</li>
+          </ul>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  {# ------------------------------ cta ------------------------------ #}
+  <section class="ml-cta-band">
+    <div>
+      <h2>Ready to look before you leap?</h2>
+      <p>Create an account, add your first business plan, and get a forecast in a minute.</p>
+    </div>
+    <div class="ml-cta-actions">
+      <a class="ml-btn ml-btn-primary ml-btn-lg" href="{{ url_for('auth.register') }}">Create an account</a>
+      <a class="ml-btn ml-btn-outline ml-btn-lg" href="#signin">Sign in instead</a>
+    </div>
+  </section>
+
+  <footer class="ml-footer">
+    <div class="ml-footer-brand">
+      {% with variant='light', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+      <p>Decision Support System for SME Business Planning and Market Entry &mdash; Tarlac City.</p>
+    </div>
+    <p class="ml-footer-note">
+      An undergraduate capstone project. Forecasts are decision support, not financial advice.
+    </p>
+  </footer>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Show/hide password. Delegated, so the same handler serves this page and
+// the registration form without either knowing about the other.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".ml-reveal");
+  if (!btn) return;
+  const field = document.getElementById(btn.dataset.target);
+  if (!field) return;
+  const show = field.type === "password";
+  field.type = show ? "text" : "password";
+  btn.querySelector("i").className = show ? "bi bi-eye-slash" : "bi bi-eye";
+  btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+});
+
+// Give the nav a solid background once the hero has scrolled past it,
+// so the links stay readable over the page content.
+(function () {
+  const nav = document.querySelector(".ml-nav");
+  if (!nav) return;
+  const onScroll = () => nav.classList.toggle("is-stuck", window.scrollY > 24);
+  addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,90 @@
+<!--
+  shared/_sidebar.html
+  ----------------------
+  Left navigation, matching Reference/Figma_Storyboard/src/app/components/layout.tsx.
+  The "Gov't Data Upload" link ONLY renders for LGU/Admin accounts --
+  this is the UI half of the LGU-only requirement (the route itself is
+  also protected server-side, see app/controllers/lgu_controller.py).
+-->
+<aside class="dss-sidebar">
+  <div class="dss-sidebar-header">
+    {#
+      The MarketLens lockup, on every authenticated page. SME, LGU and
+      Admin all render this same sidebar, so branding them separately
+      would only be three ways to fall out of sync.
+
+      The full academic title stays underneath: the product has a name
+      now, but the system still has to be identifiable as the one the
+      paper describes.
+    #}
+    <a class="dss-sidebar-brand-link"
+       href="{{ url_for('sme.home') if current_user.is_sme() else url_for('lgu.dashboard') }}">
+      {% with variant='auto', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+      <span class="dss-sidebar-sub">SME Market Entry<br>Decision Support System</span>
+    </a>
+  </div>
+
+  <nav class="dss-nav">
+    {% if current_user.is_sme() %}
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.home' }}" href="{{ url_for('sme.home') }}">
+        <i class="bi bi-house-door"></i> Home
+      </a>
+    {% endif %}
+
+    {% if current_user.is_lgu() or current_user.is_admin() %}
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.dashboard' }}" href="{{ url_for('lgu.dashboard') }}">
+        <i class="bi bi-speedometer2"></i> LGU Dashboard
+      </a>
+    {% endif %}
+
+    <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.saturation_map' }}" href="{{ url_for('sme.saturation_map') }}">
+      <i class="bi bi-map"></i> Saturation Map
+    </a>
+
+    <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.trend_reports' }}" href="{{ url_for('sme.trend_reports') }}">
+      <i class="bi bi-graph-up-arrow"></i> Trend Reports
+    </a>
+
+    {% if current_user.is_sme() %}
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.recommendations' }}" href="{{ url_for('sme.recommendations') }}">
+        <i class="bi bi-lightbulb"></i> Recommendations
+      </a>
+    {% endif %}
+
+    {% if current_user.is_lgu() or current_user.is_admin() %}
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.government_upload' }}" href="{{ url_for('lgu.government_upload') }}">
+        <i class="bi bi-database-add"></i> Gov't Data Upload
+      </a>
+    {% endif %}
+
+    {% if current_user.is_admin() %}
+      <div class="dss-nav-section">ADMIN</div>
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.dashboard' }}" href="{{ url_for('admin.dashboard') }}">
+        <i class="bi bi-shield-check"></i> Admin Dashboard
+      </a>
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.users' }}" href="{{ url_for('admin.users') }}">
+        <i class="bi bi-people"></i> Manage Users
+      </a>
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.audit_log' }}" href="{{ url_for('admin.audit_log') }}">
+        <i class="bi bi-journal-text"></i> Audit Trail
+      </a>
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.datasets' }}" href="{{ url_for('admin.datasets') }}">
+        <i class="bi bi-hdd-stack"></i> Datasets
+      </a>
+      {# bi-sliders, not a second bi-gear: personal "Settings" sits a few
+         rows below, and the same icon twice in one list reads as the
+         same destination. #}
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.settings' }}" href="{{ url_for('admin.settings') }}">
+        <i class="bi bi-sliders"></i> System Settings
+      </a>
+    {% endif %}
+
+    <a class="dss-nav-link {{ 'active' if request.endpoint == 'profile.settings' }}" href="{{ url_for('profile.settings') }}">
+      <i class="bi bi-gear"></i> Settings
+    </a>
+  </nav>
+
+  <div class="dss-sidebar-footer">
+    TARLAC CITY LGU DEMO
+  </div>
+</aside>

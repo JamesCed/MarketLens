@@ -1,0 +1,429 @@
+{% extends "base.html" %}
+{% block title %}Create an account{% endblock %}
+
+{#
+  auth/register.html
+  --------------------
+  Sign-up as three steps: account type, then the first business plan,
+  then the account credentials -- business parameters BEFORE email and
+  password, which is the order the system actually needs them in.
+
+  ONE FORM, NOT THREE PAGES. Every field lives in a single <form> and is
+  posted in one request; the steps are shown and hidden client-side.
+  That matters for correctness, not just simplicity: a multi-page wizard
+  would have to park half-finished registrations in the session, and a
+  visitor who dropped out mid-way would leave a partial account behind.
+  Here nothing exists until the whole form validates.
+
+  Because the steps are cosmetic, the server re-validates the lot --
+  see auth_controller._collect_business_params(). Turning off JavaScript
+  reveals all three steps at once and the form still submits correctly.
+
+  LGU accounts skip step 2 entirely. An LGU official plans for the city
+  and has no SmeProfile, so asking them for a startup capital would be
+  asking for a number that has nowhere to go.
+#}
+
+{% set f = form or {} %}
+{% set chosen_role = f.get('role', 'sme') %}
+
+{% block auth_content %}
+<div class="ml-landing">
+
+  <div class="ml-bg" aria-hidden="true">
+    <span class="ml-bg-grid"></span>
+    <span class="ml-orb ml-orb-1"></span>
+    <span class="ml-orb ml-orb-2"></span>
+    <span class="ml-orb ml-orb-3"></span>
+    <span class="ml-radar"><i></i><i></i><i></i></span>
+  </div>
+
+  <header class="ml-nav" id="top">
+    <a class="ml-nav-brand" href="{{ url_for('auth.login') }}" aria-label="MarketLens home">
+      {% with variant='light', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+    </a>
+    <a class="ml-btn ml-btn-ghost ml-nav-cta ms-auto" href="{{ url_for('auth.login') }}">Sign in</a>
+  </header>
+
+  <section class="ml-hero ml-hero-compact">
+    <div class="ml-hero-copy">
+      <span class="ml-eyebrow"><i class="bi bi-person-plus-fill"></i> Free to join</span>
+      <h1>Start reading<br>the market.</h1>
+      <p class="ml-lede">
+        Tell us what you are planning and we will have a saturation forecast
+        waiting the moment you sign in.
+      </p>
+
+      <ul class="ml-assure">
+        <li><i class="bi bi-clipboard-data"></i>
+          <span><strong>Your plan is saved as you register.</strong> It lands in
+            <em>Business Preferences</em> and on your Home page, ready to forecast.</span></li>
+        <li><i class="bi bi-shield-check"></i>
+          <span><strong>Your email is verified first.</strong> A six-digit code is sent
+            before the account is created.</span></li>
+        <li><i class="bi bi-cpu"></i>
+          <span><strong>Real data behind every score.</strong> Competitor counts and
+            2024 PSA population, not estimates.</span></li>
+      </ul>
+    </div>
+
+    <div class="ml-hero-form ml-hero-form-wide">
+      <div class="ml-card ml-auth-card">
+
+        {# Progress rail. aria-current marks the live step for a screen
+           reader; the JS keeps it in step with what is visible. #}
+        <ol class="ml-steps-rail" id="mlRail">
+          <li data-step="1" class="is-active"><span>1</span> Account type</li>
+          <li data-step="2"><span>2</span> Your business</li>
+          <li data-step="3"><span>3</span> Sign-in details</li>
+        </ol>
+
+        <form method="POST" action="{{ url_for('auth.register') }}" id="mlSignupForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          {# ------------------------- step 1 ------------------------- #}
+          <div class="ml-step" data-step="1">
+            <div class="ml-auth-head">
+              <h2>What brings you here?</h2>
+              <p>This decides what MarketLens shows you once you are in.</p>
+            </div>
+
+            <div class="ml-role-picker">
+              <input type="radio" class="btn-check" name="role" id="role_sme" value="sme"
+                     {{ 'checked' if chosen_role == 'sme' else '' }}>
+              <label for="role_sme">
+                <i class="bi bi-shop"></i>
+                <span class="ml-role-title">Entrepreneur / SME</span>
+                <span class="ml-role-sub">I am planning or growing a business</span>
+              </label>
+
+              <input type="radio" class="btn-check" name="role" id="role_lgu" value="lgu"
+                     {{ 'checked' if chosen_role == 'lgu' else '' }}>
+              <label for="role_lgu">
+                <i class="bi bi-bank"></i>
+                <span class="ml-role-title">LGU Official</span>
+                <span class="ml-role-sub">I am planning for the city</span>
+              </label>
+            </div>
+
+            <p class="ml-step-note" id="mlRoleNote"></p>
+
+            <div class="ml-step-actions">
+              <button type="button" class="ml-btn ml-btn-primary w-100" data-go="next">
+                Continue <i class="bi bi-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+
+          {# ------------------- step 2 (SME only) -------------------- #}
+          <div class="ml-step" data-step="2" hidden>
+            <div class="ml-auth-head">
+              <h2>Your business</h2>
+              <p>This becomes your first plan. You can edit it, or add more, any time.</p>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="ml-biz-name">Business name</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-shop-window"></i></span>
+                <input type="text" id="ml-biz-name" name="business_name" class="form-control"
+                       value="{{ f.get('business_name','') }}" placeholder="e.g. Kape Tarlac">
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="ml-industry">Industry type</label>
+              <select id="ml-industry" name="industry_type" class="form-select">
+                <option value="">Choose an industry&hellip;</option>
+                {% for bt in business_types %}
+                  <option value="{{ bt }}" {{ 'selected' if f.get('industry_type') == bt else '' }}>{{ bt }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="ml-location">Location / barangay</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-geo-alt"></i></span>
+                <input type="text" id="ml-location" name="location" class="form-control"
+                       list="mlLocationOptions" placeholder="e.g. Poblacion"
+                       value="{{ f.get('location','') }}">
+              </div>
+              <datalist id="mlLocationOptions">
+                {% for loc in locations %}<option value="{{ loc }}">{% endfor %}
+              </datalist>
+              <div class="form-text">Any of Tarlac City's 76 barangays &mdash; start typing to search.</div>
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-sm-6">
+                <label class="form-label" for="ml-stage">Business stage</label>
+                <select id="ml-stage" name="business_stage" class="form-select">
+                  {% for stage in business_stages %}
+                    <option value="{{ stage }}" {{ 'selected' if f.get('business_stage') == stage else '' }}>{{ stage|capitalize }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-sm-6" id="mlRegDateField" hidden>
+                <label class="form-label" for="ml-regdate">Registered since</label>
+                <input type="date" id="ml-regdate" name="registration_date" class="form-control"
+                       max="{{ today }}" value="{{ f.get('registration_date','') }}">
+              </div>
+            </div>
+
+            <div class="row g-3">
+              <div class="col-sm-4">
+                <label class="form-label" for="ml-capital">Startup capital</label>
+                <div class="input-group">
+                  <span class="input-group-text">&#8369;</span>
+                  <input type="number" id="ml-capital" name="startup_capital" class="form-control"
+                         min="0" step="1000" placeholder="500000" value="{{ f.get('startup_capital','') }}">
+                </div>
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label" for="ml-employees">Employees</label>
+                <input type="number" id="ml-employees" name="employee_count" class="form-control"
+                       min="0" step="1" placeholder="3" value="{{ f.get('employee_count','') }}">
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label" for="ml-revenue">Monthly revenue</label>
+                <div class="input-group">
+                  <span class="input-group-text">&#8369;</span>
+                  <input type="number" id="ml-revenue" name="monthly_revenue_est" class="form-control"
+                         min="0" step="1000" placeholder="50000" value="{{ f.get('monthly_revenue_est','') }}">
+                </div>
+              </div>
+            </div>
+            <p class="ml-step-note">
+              <i class="bi bi-info-circle"></i>
+              These last three are optional, but they sharpen the ROI estimate.
+            </p>
+
+            <div class="ml-step-actions">
+              <button type="button" class="ml-btn ml-btn-outline-dark" data-go="prev">
+                <i class="bi bi-arrow-left"></i> Back
+              </button>
+              <button type="button" class="ml-btn ml-btn-primary" data-go="next">
+                Continue <i class="bi bi-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+
+          {# ------------------------- step 3 ------------------------- #}
+          <div class="ml-step" data-step="3" hidden>
+            <div class="ml-auth-head">
+              <h2>Sign-in details</h2>
+              <p>Last step. Administrator accounts are created by an existing administrator, not here.</p>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="ml-name">Full name</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-person"></i></span>
+                <input type="text" id="ml-name" name="full_name" class="form-control"
+                       value="{{ f.get('full_name','') }}" autocomplete="name">
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="ml-reg-email">Email address</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                <input type="email" id="ml-reg-email" name="email" class="form-control"
+                       value="{{ f.get('email','') }}" autocomplete="email">
+              </div>
+              <div class="form-text"><i class="bi bi-shield-check"></i> We'll send a 6-digit code here to confirm it's really you.</div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="ml-contact">Contact number <span class="text-muted">(optional)</span></label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-telephone"></i></span>
+                <input type="text" id="ml-contact" name="contact_number" class="form-control"
+                       value="{{ f.get('contact_number','') }}" placeholder="09XXXXXXXXX" autocomplete="tel">
+              </div>
+            </div>
+
+            <div class="row g-3">
+              <div class="col-sm-6">
+                <label class="form-label" for="ml-pw">Password</label>
+                <div class="input-group">
+                  <input type="password" id="ml-pw" name="password" class="form-control"
+                         minlength="6" autocomplete="new-password">
+                  <button class="btn btn-outline-secondary ml-reveal" type="button"
+                          data-target="ml-pw" aria-label="Show password"><i class="bi bi-eye"></i></button>
+                </div>
+                <div class="form-text">At least 6 characters.</div>
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label" for="ml-pw2">Confirm password</label>
+                <input type="password" id="ml-pw2" name="confirm_password" class="form-control"
+                       minlength="6" autocomplete="new-password">
+              </div>
+            </div>
+
+            <div class="ml-step-actions">
+              <button type="button" class="ml-btn ml-btn-outline-dark" data-go="prev">
+                <i class="bi bi-arrow-left"></i> Back
+              </button>
+              <button type="submit" class="ml-btn ml-btn-primary">Create Account</button>
+            </div>
+          </div>
+        </form>
+
+        <p class="ml-auth-alt">
+          Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="ml-footer">
+    <div class="ml-footer-brand">
+      {% with variant='light', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+      <p>Decision Support System for SME Business Planning and Market Entry &mdash; Tarlac City.</p>
+    </div>
+    <p class="ml-footer-note">
+      An undergraduate capstone project. Forecasts are decision support, not financial advice.
+    </p>
+  </footer>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".ml-reveal");
+  if (!btn) return;
+  const field = document.getElementById(btn.dataset.target);
+  if (!field) return;
+  const show = field.type === "password";
+  field.type = show ? "text" : "password";
+  btn.querySelector("i").className = show ? "bi bi-eye-slash" : "bi bi-eye";
+  btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+});
+
+(function () {
+  const nav = document.querySelector(".ml-nav");
+  if (nav) {
+    const onScroll = () => nav.classList.toggle("is-stuck", window.scrollY > 24);
+    addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+  }
+
+  const form  = document.getElementById("mlSignupForm");
+  if (!form) return;
+  const steps = [...form.querySelectorAll(".ml-step")];
+  const rail  = document.getElementById("mlRail");
+  const roleNote = document.getElementById("mlRoleNote");
+  const regDateField = document.getElementById("mlRegDateField");
+  const stageSelect  = document.getElementById("ml-stage");
+
+  // Required-ness is applied in JS, not in the markup. With `required`
+  // baked into hidden step-2 fields, an LGU submitting the form would
+  // trip Chrome's "An invalid form control with name='business_name' is
+  // not focusable" -- the browser refuses to submit but cannot show the
+  // message, so the button appears simply dead. Instead the attribute is
+  // put on only the fields that are currently visible and relevant.
+  const REQUIRED = {
+    2: ["business_name", "industry_type", "location"],
+    3: ["full_name", "email", "password", "confirm_password"],
+  };
+
+  const isSme = () => form.querySelector('input[name="role"]:checked')?.value === "sme";
+  // LGU accounts have no business plan, so step 2 does not apply to them.
+  const visibleSteps = () => (isSme() ? [1, 2, 3] : [1, 3]);
+
+  let current = 1;
+
+  function syncRequired() {
+    form.querySelectorAll("[data-step] [name]").forEach(el => el.required = false);
+    for (const [step, names] of Object.entries(REQUIRED)) {
+      if (!visibleSteps().includes(Number(step))) continue;
+      names.forEach(n => {
+        const el = form.querySelector(`[data-step="${step}"] [name="${n}"]`);
+        if (el) el.required = true;
+      });
+    }
+  }
+
+  function show(step) {
+    current = step;
+    steps.forEach(s => { s.hidden = Number(s.dataset.step) !== step; });
+
+    const order = visibleSteps();
+    rail.querySelectorAll("li").forEach(li => {
+      const n = Number(li.dataset.step);
+      li.hidden = !order.includes(n);
+      li.classList.toggle("is-active", n === step);
+      li.classList.toggle("is-done", order.indexOf(n) < order.indexOf(step));
+      if (n === step) li.setAttribute("aria-current", "step");
+      else li.removeAttribute("aria-current");
+    });
+
+    syncRequired();
+    // Keep the card in view when the step above was taller than this one.
+    form.closest(".ml-auth-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const focusable = steps.find(s => Number(s.dataset.step) === step)
+      ?.querySelector("input:not([type=radio]):not([type=hidden]), select");
+    if (focusable && step !== 1) focusable.focus({ preventScroll: true });
+  }
+
+  function step(delta) {
+    const order = visibleSteps();
+    const at = order.indexOf(current);
+    const next = order[at + delta];
+    if (!next) return;
+
+    // Going forward, let the browser check just this step -- reportValidity
+    // on the whole form would complain about fields the visitor has not
+    // reached yet.
+    if (delta > 0) {
+      const fields = [...steps[at].querySelectorAll("input, select")].filter(el => !el.disabled);
+      for (const el of fields) {
+        if (!el.checkValidity()) { el.reportValidity(); return; }
+      }
+    }
+    show(next);
+  }
+
+  form.addEventListener("click", (e) => {
+    const go = e.target.closest("[data-go]");
+    if (go) step(go.dataset.go === "next" ? 1 : -1);
+  });
+
+  // Enter should advance a step rather than submit from step 1 or 2.
+  form.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    if (e.target.tagName === "TEXTAREA") return;
+    const order = visibleSteps();
+    if (order.indexOf(current) < order.length - 1) { e.preventDefault(); step(1); }
+  });
+
+  function syncRoleNote() {
+    roleNote.textContent = isSme()
+      ? "Next, tell us about the business you are planning."
+      : "LGU accounts go straight to sign-in details — no business plan needed.";
+  }
+  form.querySelectorAll('input[name="role"]').forEach(r => r.addEventListener("change", () => {
+    syncRoleNote();
+    // Redraw the rail so step 2 appears or disappears with the choice.
+    show(current);
+  }));
+
+  function syncStage() {
+    if (!stageSelect || !regDateField) return;
+    regDateField.hidden = stageSelect.value !== "existing";
+  }
+  if (stageSelect) stageSelect.addEventListener("change", syncStage);
+  syncStage();
+
+  // If the server bounced the form back with errors, open on the last
+  // step -- the fields are all re-filled from `form`, and the flash
+  // messages above say what was wrong, so making the visitor click
+  // forward through two completed steps again would be pointless.
+  syncRoleNote();
+  show(document.querySelector(".alert-danger") ? visibleSteps().at(-1) : 1);
+})();
+</script>
+{% endblock %}

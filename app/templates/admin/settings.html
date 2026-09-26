@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}System Settings{% endblock %}
+
+{% block content %}
+<h4 class="mb-1"><i class="bi bi-gear"></i> System Configuration</h4>
+<p class="text-muted small mb-4">Tune the AI forecasting engine without touching code. See app/models/system_setting.py for defaults.</p>
+
+<form method="POST" action="{{ url_for('admin.settings') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="dss-card mb-4">
+    <h6 class="mb-3">Clustering &amp; MSI Weights</h6>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">K-Means clusters (saturation zones)</label>
+        <input type="number" min="2" max="8" name="kmeans_n_clusters" class="form-control"
+               value="{{ settings['kmeans_n_clusters'].setting_value if 'kmeans_n_clusters' in settings else 4 }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Early-warning threshold (Saturation Index, 0-100)</label>
+        <input type="number" step="1" min="0" max="100" name="saturation_alert_threshold" class="form-control"
+               value="{{ settings['saturation_alert_threshold'].setting_value if 'saturation_alert_threshold' in settings else 75 }}">
+        <div class="form-text">Cluster cut points (Low/Moderate/High/Saturated) are fixed at {{ cluster_thresholds }} -- see app/ml/constants.py.</div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">w1 — Competitor Density weight</label>
+        <input type="number" step="0.01" min="0" max="1" name="msi_weight_competitor_density" class="form-control"
+               value="{{ settings['msi_weight_competitor_density'].setting_value if 'msi_weight_competitor_density' in settings else 0.45 }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">w2 — Demand Trend weight</label>
+        <input type="number" step="0.01" min="0" max="1" name="msi_weight_demand_trend" class="form-control"
+               value="{{ settings['msi_weight_demand_trend'].setting_value if 'msi_weight_demand_trend' in settings else 0.35 }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">w3 — Socio-Demographic weight</label>
+        <input type="number" step="0.01" min="0" max="1" name="msi_weight_sociodemographic" class="form-control"
+               value="{{ settings['msi_weight_sociodemographic'].setting_value if 'msi_weight_sociodemographic' in settings else 0.20 }}">
+      </div>
+      <div class="col-12 text-muted small">w1 + w2 + w3 should add up to 1.0 (paper default: 0.45 / 0.35 / 0.20).</div>
+    </div>
+  </div>
+
+  <div class="dss-card mb-4">
+    <h6 class="mb-3">Google Places API</h6>
+    <label class="form-label">Max competitor results per Text Search lookup</label>
+    <input type="number" min="0" max="60" name="places_max_results" class="form-control"
+           value="{{ settings['places_max_results'].setting_value if 'places_max_results' in settings else 0 }}">
+    <div class="form-text">
+      <strong>0 = unlimited</strong> (recommended) &mdash; the app keeps paging until Google runs out of results, so a
+      barangay's business count reflects what is really there instead of stopping at the first page.
+      Note that Google itself caps Text Search at <strong>60 results per query</strong> (20 per page, 3 pages),
+      so a count sitting at exactly 60 means "60 or more".
+      API keys themselves are set in the .env file, not here (see README).
+    </div>
+  </div>
+
+  <div class="dss-card mb-4">
+    <h6 class="mb-3">AI-Generated Recommendation Text</h6>
+    <div class="form-check form-switch">
+      <input class="form-check-input" type="checkbox" name="use_llm_recommendations" id="llmToggle"
+             {{ 'checked' if settings.get('use_llm_recommendations') and settings['use_llm_recommendations'].setting_value == 'true' }}>
+      <label class="form-check-label" for="llmToggle">Use an LLM (GPT or Claude) to write recommendation text</label>
+    </div>
+    <div class="form-text">
+      When off (default), the built-in rule-based text generator is used — no API key needed. When on, the
+      provider set by <code>LLM_PROVIDER</code> in .env (<code>openai</code> by default, or <code>anthropic</code>)
+      writes the text using <code>OPENAI_API_KEY</code> or <code>ANTHROPIC_API_KEY</code> respectively — set in
+      the .env file, not here (see README). If that key is missing, the other provider's key is tried
+      automatically; if neither is set, this falls back to the rule-based text with no error.
+    </div>
+  </div>
+
+  <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Settings</button>
+</form>
+{% endblock %}

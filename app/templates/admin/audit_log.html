@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Audit Trail{% endblock %}
+
+{% block content %}
+<h4 class="mb-3"><i class="bi bi-journal-text"></i> Audit Trail</h4>
+
+<div class="dss-card">
+  <div class="table-responsive">
+    <table class="table table-sm">
+      <thead><tr><th>When</th><th>User</th><th>Action</th><th>Details</th><th>IP</th></tr></thead>
+      <tbody>
+        {% for log in pagination.items %}
+        <tr>
+          <td class="text-muted small">{{ log.created_at.strftime('%b %d, %Y %I:%M %p') }}</td>
+          <td>{{ log.user.email if log.user else 'system' }}</td>
+          <td><span class="badge bg-light text-dark">{{ log.action }}</span></td>
+          <td class="small text-muted">{{ log.details or '' }}</td>
+          <td class="small text-muted">{{ log.ip_address or '' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-4">No audit records yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if pagination.pages > 1 %}
+  <nav>
+    <ul class="pagination pagination-sm justify-content-center mb-0">
+      {% for p in range(1, pagination.pages + 1) %}
+      <li class="page-item {{ 'active' if p == pagination.page }}">
+        <a class="page-link" href="{{ url_for('admin.audit_log', page=p) }}">{{ p }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}
