@@ -233,3 +233,47 @@ def settings():
     SystemSetting.ensure_defaults()
     all_settings = {row.setting_key: row for row in SystemSetting.query.all()}
     return render_template("admin/settings.html", settings=all_settings, cluster_thresholds=CLUSTER_THRESHOLDS)
+
+
+# --------------------------------------------------------- LLM status
+@admin_bp.route("/llm-status", methods=["GET"])
+@admin_bp.route("/llm-status/probe", methods=["GET", "POST"], endpoint="llm_probe")
+@role_required("Admin")
+def llm_status():
+    """Answers "why is the page still showing rule-based text?" in one
+    place, as JSON.
+
+    This exists because that question had no answer from outside the
+    process. Every failure in llm_service was caught and discarded, so
+    a wrong API key, a model name the endpoint does not recognise, a
+    spent quota and a malformed response all produced the same
+    thing -- rule-based wording, no log line, no clue. On a hosted
+    deployment the only way to tell them apart was to add print
+    statements and redeploy.
+
+    /admin/llm-status reports the configuration and the most recent
+    failure. /admin/llm-status/probe additionally makes a real
+    one-sentence call and reports the provider's own answer, or the
+    provider's own error.
+
+    NO SECRET IS RETURNED. See llm_service.llm_status(): the key is
+    reported as set/not-set, its length, and its first four
+    characters, which is enough to tell an AI Studio key ("AIza") from
+    an OpenRouter key ("sk-o") from an OAuth access token ("AQ.",
+    "ya29") -- the mistake that actually happens -- and useless to
+    anyone else. Admin-only on top of that.
+    """
+    from flask import jsonify
+
+    from app.services import llm_service
+
+    payload = {"status": llm_service.llm_status()}
+    if request.path.endswith("/probe"):
+        log_action("admin_llm_probe")
+        payload["probe"] = llm_service.probe()
+        # The status is re-read AFTER the probe so last_failure
+        # reflects this attempt rather than whatever failed before it.
+        payload["status"] = llm_service.llm_status()
+    else:
+        payload["hint"] = "Open /admin/llm-status/probe to make a real test call."
+    return jsonify(payload)

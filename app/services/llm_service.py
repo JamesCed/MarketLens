@@ -41,8 +41,130 @@ because of this.
 
 import json
 import re
+from datetime import datetime
 
 _client_cache = {}
+
+
+# ---------------------------------------------------------------------
+# WHY A FAILURE RECORD EXISTS AT ALL
+# ---------------------------------------------------------------------
+# Every call below is wrapped so a flaky LLM can never break the page,
+# and that is right: a recommendation must still render when the API is
+# down. But the original wrapping was `except Exception: return None`,
+# which made four completely different situations look identical from
+# the outside:
+#
+#   * no API key configured
+#   * a key that is the wrong KIND (an OAuth token where an AI Studio
+#     API key was expected -- both are long opaque strings, and only
+#     one of them authenticates)
+#   * a model name the endpoint does not recognise (pointing
+#     OPENAI_BASE_URL at Gemini while OPENAI_MODEL is still the default
+#     gpt-4o-mini gives a 404, not an error anyone can see)
+#   * the model answering with something that is not the JSON asked for
+#
+# In all four the page quietly showed rule-based text and nothing was
+# logged, so "the AI isn't working" was unanswerable without adding
+# print statements to a live deployment. So failures are now LOGGED and
+# the most recent one is kept in memory for the diagnostics endpoint
+# (admin > LLM status). The page's behaviour is unchanged: it still
+# falls back, still never raises.
+_LAST_FAILURE = {}
+
+
+def _redact(text):
+    """The configured API key must never reach a log line or a
+    diagnostics page. Provider SDKs sometimes echo request details into
+    exception messages, so anything that looks like the key we hold is
+    replaced before the message is stored."""
+    message = str(text or "")
+    try:
+        from flask import current_app
+
+        for config_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+            secret = (current_app.config.get(config_key) or "").strip()
+            if len(secret) >= 8:
+                message = message.replace(secret, "***redacted***")
+    except Exception:  # pragma: no cover - no app context
+        pass
+    return message[:500]
+
+
+def _begin_attempt():
+    """Start a fresh attempt, forgetting the previous one's failure.
+
+    Called at the top of each public entry point rather than inside
+    _record_failure, and that placement is the whole point -- see
+    below.
+    """
+    _LAST_FAILURE.clear()
+
+
+def _record_failure(provider, stage, detail):
+    """Remember and log why a call did not produce usable text.
+    `stage` is one of "no_client", "api_call", "parse".
+
+    THE FIRST FAILURE OF AN ATTEMPT IS THE ONE KEPT, not the last.
+
+    When the configured provider fails, the callers fall through and
+    try the others -- which is good behaviour, since a deployment with
+    only one key set should work whichever slot the key is in. But
+    those fallbacks fail too, almost always with a dull "no API key
+    set", and if each overwrote the last the operator would be shown
+    the least informative message of the three.
+
+    Concretely: Gemini answers 401 with Google's own explanation, then
+    OpenAI is tried and reports "no key", then Anthropic reports "no
+    key". The 401 is the one worth reading. So a failure is recorded
+    only when the slot is empty, and the slot is emptied at the START
+    of an attempt by _begin_attempt().
+    """
+    if _LAST_FAILURE:
+        return
+    _LAST_FAILURE.update({
+        "provider": provider,
+        "stage": stage,
+        "detail": _redact(detail),
+        "at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    })
+    try:
+        from flask import current_app
+
+        # "No key configured" is a STATE, not an incident: it is the
+        # default install, and the rule-based generator handles it by
+        # design. Logging that at warning level on every page view
+        # would bury the failures that do matter -- a 401, a 404 on the
+        # model name, a spent quota -- under noise from a deployment
+        # that is working exactly as intended. It is still recorded
+        # above, so /admin/llm-status can report it on request.
+        log = current_app.logger.info if stage == "no_client" else current_app.logger.warning
+        log(
+            "LLM recommendation unavailable (provider=%s stage=%s): %s",
+            provider, stage, _LAST_FAILURE["detail"],
+        )
+    except Exception:  # pragma: no cover - no app context
+        pass
+
+
+def last_failure():
+    """The most recent failure record, or {} if nothing has failed in
+    this process. Read by the diagnostics endpoint."""
+    return dict(_LAST_FAILURE)
+
+
+def reset_client_cache():
+    """Forget the cached provider clients.
+
+    The clients are built once per process from config read at that
+    moment, so a key corrected in the Render dashboard would otherwise
+    not take effect until the worker restarted -- and the symptom of
+    that is "I fixed the key and it still says rule-based", which is a
+    miserable thing to debug. The diagnostics probe calls this first so
+    it always tests the CURRENT configuration.
+    """
+    _client_cache.clear()
+    _LAST_FAILURE.clear()
 
 # The exact shape every caller can rely on getting back from a
 # successful LLM call -- validated in _coerce_llm_payload() below so a
@@ -101,20 +223,39 @@ def _prompt_for(context):
     )
 
 
+# Each of these reports WHICH of the three preconditions failed --
+# package, key, construction -- rather than collapsing them into one
+# message. "no key configured, or the package is missing" is exactly
+# the kind of unfalsifiable diagnostic this whole change exists to get
+# rid of: it is no help at all to someone staring at a key they can
+# see is set.
+
 def _get_openai_client():
     if "openai" in _client_cache:
         return _client_cache["openai"]
-    client = None
-    try:
-        from flask import current_app
-        from openai import OpenAI
 
-        api_key = current_app.config.get("OPENAI_API_KEY", "")
-        base_url = current_app.config.get("OPENAI_BASE_URL", "") or None
-        if api_key:
-            client = OpenAI(api_key=api_key, base_url=base_url)
-    except Exception:
-        client = None
+    from flask import current_app
+
+    client = None
+    api_key = (current_app.config.get("OPENAI_API_KEY") or "").strip()
+    base_url = (current_app.config.get("OPENAI_BASE_URL") or "").strip() or None
+
+    if not api_key:
+        _record_failure("openai", "no_client", "OPENAI_API_KEY is not set")
+    else:
+        try:
+            from openai import OpenAI
+        except Exception as exc:  # noqa: BLE001
+            _record_failure("openai", "no_client",
+                            f"the `openai` package could not be imported: {exc}")
+        else:
+            try:
+                client = OpenAI(api_key=api_key, base_url=base_url)
+            except Exception as exc:  # noqa: BLE001
+                _record_failure("openai", "no_client",
+                                f"OpenAI client could not be built (base_url={base_url!r}): "
+                                f"{type(exc).__name__}: {exc}")
+
     _client_cache["openai"] = client
     return client
 
@@ -122,16 +263,27 @@ def _get_openai_client():
 def _get_anthropic_client():
     if "anthropic" in _client_cache:
         return _client_cache["anthropic"]
-    client = None
-    try:
-        from flask import current_app
-        import anthropic
 
-        api_key = current_app.config.get("ANTHROPIC_API_KEY", "")
-        if api_key:
-            client = anthropic.Anthropic(api_key=api_key)
-    except Exception:
-        client = None
+    from flask import current_app
+
+    client = None
+    api_key = (current_app.config.get("ANTHROPIC_API_KEY") or "").strip()
+
+    if not api_key:
+        _record_failure("anthropic", "no_client", "ANTHROPIC_API_KEY is not set")
+    else:
+        try:
+            import anthropic
+        except Exception as exc:  # noqa: BLE001
+            _record_failure("anthropic", "no_client",
+                            f"the `anthropic` package could not be imported: {exc}")
+        else:
+            try:
+                client = anthropic.Anthropic(api_key=api_key)
+            except Exception as exc:  # noqa: BLE001
+                _record_failure("anthropic", "no_client",
+                                f"Anthropic client could not be built: {type(exc).__name__}: {exc}")
+
     _client_cache["anthropic"] = client
     return client
 
@@ -141,9 +293,9 @@ def _generate_with_openai(prompt):
 
     client = _get_openai_client()
     if client is None:
-        return None
+        return None  # _get_openai_client recorded which precondition failed
+    model = current_app.config.get("OPENAI_MODEL", "gpt-4o-mini")
     try:
-        model = current_app.config.get("OPENAI_MODEL", "gpt-4o-mini")
         response = client.chat.completions.create(
             model=model,
             max_tokens=500,
@@ -152,8 +304,16 @@ def _generate_with_openai(prompt):
             messages=[{"role": "user", "content": prompt}],
         )
         text = (response.choices[0].message.content or "").strip()
-        return text or None
-    except Exception:
+        if not text:
+            _record_failure("openai", "api_call", f"model {model} returned an empty message")
+            return None
+        return text
+    except Exception as exc:  # noqa: BLE001 -- a flaky API must not break the page
+        # The model name is included deliberately: pointing
+        # OPENAI_BASE_URL at a non-OpenAI provider while leaving
+        # OPENAI_MODEL on its default is the single most common way to
+        # get a 404 here, and the message is useless without it.
+        _record_failure("openai", "api_call", f"model={model}: {type(exc).__name__}: {exc}")
         return None
 
 
@@ -162,9 +322,9 @@ def _generate_with_anthropic(prompt):
 
     client = _get_anthropic_client()
     if client is None:
-        return None
+        return None  # _get_anthropic_client recorded which precondition failed
+    model = current_app.config.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
     try:
-        model = current_app.config.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
         response = client.messages.create(
             model=model,
             max_tokens=500,
@@ -172,12 +332,107 @@ def _generate_with_anthropic(prompt):
         )
         text_blocks = [block.text for block in response.content if getattr(block, "type", "") == "text"]
         text = " ".join(text_blocks).strip()
-        return text or None
-    except Exception:
+        if not text:
+            _record_failure("anthropic", "api_call", f"model {model} returned no text block")
+            return None
+        return text
+    except Exception as exc:  # noqa: BLE001
+        _record_failure("anthropic", "api_call", f"model={model}: {type(exc).__name__}: {exc}")
         return None
 
 
-_GENERATORS = {"openai": _generate_with_openai, "anthropic": _generate_with_anthropic}
+def _generate_with_gemini(prompt):
+    """Google Gemini over its NATIVE endpoint.
+
+    Deliberately not the OpenAI SDK pointed at Gemini's compatibility
+    layer, and deliberately not httpx either -- see the note on
+    GEMINI_API_KEY in app/config.py for why the compatibility route
+    stopped working for keys issued after 28 May 2026. In short: an
+    AQ.-format auth key sent as `Authorization: Bearer` is refused,
+    and the same key sent as `x-goog-api-key` to the native endpoint
+    is accepted.
+
+    `requests` is already a dependency of this project (the Places
+    API uses it), so this path pulls in nothing new and is unaffected
+    by the openai/httpx version pairing that broke the other one.
+
+    responseMimeType=application/json makes the API itself guarantee
+    JSON, rather than the prompt asking for it and the parser hoping.
+    The code-fence stripping downstream stays anyway: it costs
+    nothing and still covers the other two providers.
+    """
+    from flask import current_app
+
+    import requests
+
+    api_key = (current_app.config.get("GEMINI_API_KEY") or "").strip()
+    if not api_key:
+        _record_failure("gemini", "no_client", "GEMINI_API_KEY is not set")
+        return None
+
+    model = (current_app.config.get("GEMINI_MODEL") or "gemini-3-flash").strip()
+    base_url = (current_app.config.get("GEMINI_BASE_URL")
+                or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+    url = f"{base_url}/models/{model}:generateContent"
+
+    try:
+        response = requests.post(
+            url,
+            # The key goes in a HEADER, never in the query string: a URL
+            # ends up in access logs and error reports, and ?key= is how
+            # credentials leak.
+            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.4,
+                    "maxOutputTokens": 2048,
+                    "responseMimeType": "application/json",
+                },
+            },
+            timeout=30,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _record_failure("gemini", "api_call", f"model={model}: {type(exc).__name__}: {exc}")
+        return None
+
+    if response.status_code != 200:
+        # Google's own message is the most useful thing there is here --
+        # it distinguishes a bad key from an unknown model from a spent
+        # quota, which is exactly what was impossible to tell before.
+        _record_failure("gemini", "api_call",
+                        f"model={model}: HTTP {response.status_code}: {response.text[:300]}")
+        return None
+
+    try:
+        payload = response.json()
+        parts = payload["candidates"][0]["content"]["parts"]
+        text = "".join(part.get("text", "") for part in parts).strip()
+    except Exception as exc:  # noqa: BLE001
+        _record_failure("gemini", "parse",
+                        f"unexpected response shape ({exc}): {response.text[:200]}")
+        return None
+
+    if not text:
+        # A response with no text is usually a safety block or a
+        # finishReason worth seeing, so report the reason rather than
+        # just "empty".
+        reason = ""
+        try:
+            reason = payload["candidates"][0].get("finishReason", "")
+        except Exception:  # pragma: no cover
+            pass
+        _record_failure("gemini", "api_call",
+                        f"model {model} returned no text (finishReason={reason!r})")
+        return None
+    return text
+
+
+_GENERATORS = {
+    "openai": _generate_with_openai,
+    "anthropic": _generate_with_anthropic,
+    "gemini": _generate_with_gemini,
+}
 
 
 def _strip_code_fence(raw_text):
@@ -290,6 +545,7 @@ def generate_opportunity_cards_json(industry_type, city, cards):
     if not cards:
         return {}
 
+    _begin_attempt()
     prompt = _opportunity_batch_prompt(industry_type, city, cards)
     provider = current_app.config.get("LLM_PROVIDER", "openai")
     order = [provider] + [p for p in _GENERATORS if p != provider]
@@ -300,13 +556,16 @@ def generate_opportunity_cards_json(industry_type, city, cards):
             continue
         raw_text = generate(prompt)
         if not raw_text:
-            continue
+            continue  # the generator already recorded why
         try:
             payload = json.loads(_strip_code_fence(raw_text))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            _record_failure(name, "parse", f"response was not JSON ({exc}): {raw_text[:160]}")
             continue
         entries = payload.get("cards") if isinstance(payload, dict) else None
         if not isinstance(entries, list):
+            _record_failure(name, "parse",
+                            f'JSON had no "cards" list: {str(payload)[:160]}')
             continue
 
         out = {}
@@ -335,6 +594,8 @@ def generate_opportunity_cards_json(industry_type, city, cards):
                 out[str(location)] = card
         if out:
             return out
+        _record_failure(name, "parse",
+                        "no card in the response had both a location and usable reasons/risks")
     return {}
 
 
@@ -346,6 +607,7 @@ def generate_recommendation_json(context):
     Never raises."""
     from flask import current_app
 
+    _begin_attempt()
     prompt = _prompt_for(context)
 
     provider = current_app.config.get("LLM_PROVIDER", "openai")
@@ -356,8 +618,120 @@ def generate_recommendation_json(context):
         if generate is None:
             continue
         raw_text = generate(prompt)
+        if not raw_text:
+            continue  # the generator already recorded why
         payload = _coerce_llm_payload(raw_text)
         if payload:
             payload["generated_by"] = f"llm:{name}"
             return payload
+        _record_failure(name, "parse",
+                        f"response did not contain the required keys: {raw_text[:160]}")
     return None
+
+
+# ---------------------------------------------------------------------
+# DIAGNOSTICS
+# ---------------------------------------------------------------------
+
+def llm_status():
+    """Everything needed to answer "why am I still seeing rule-based
+    text?" WITHOUT exposing a secret.
+
+    The API key is never returned -- only whether one is set, its
+    length, and its first four characters. Those four are the single
+    most useful diagnostic there is, because the common mistakes are
+    mistakes of KIND rather than typos: a Google AI Studio key begins
+    "AIza", an OpenRouter key "sk-o", an OpenAI key "sk-p"/"sk-s", and
+    an OAuth access token "AQ." or "ya29." -- an OAuth token pasted
+    where an API key belongs looks perfectly plausible and fails with a
+    bare 401. Four characters identify which of those you have and are
+    useless to anyone who steals them.
+    """
+    from flask import current_app
+
+    from app.services.recommendation_service import llm_recommendations_enabled
+
+    def describe(config_key):
+        secret = (current_app.config.get(config_key) or "").strip()
+        if not secret:
+            return {"set": False}
+        return {"set": True, "length": len(secret), "starts_with": secret[:4]}
+
+    base_url = (current_app.config.get("OPENAI_BASE_URL") or "").strip()
+    provider = current_app.config.get("LLM_PROVIDER", "openai")
+    status = {
+        "enabled": llm_recommendations_enabled(),
+        "provider": provider,
+        "gemini_model": current_app.config.get("GEMINI_MODEL", "gemini-3-flash"),
+        "gemini_key": describe("GEMINI_API_KEY"),
+        "openai_model": current_app.config.get("OPENAI_MODEL", "gpt-4o-mini"),
+        "openai_base_url": base_url or "(default: api.openai.com)",
+        "openai_key": describe("OPENAI_API_KEY"),
+        "anthropic_model": current_app.config.get("ANTHROPIC_MODEL", "claude-haiku-4-5"),
+        "anthropic_key": describe("ANTHROPIC_API_KEY"),
+        "last_failure": last_failure() or None,
+    }
+
+    # The one misconfiguration that produces a 401 reading like a bad
+    # key when the key is in fact perfectly good. Worth saying out loud
+    # rather than leaving someone to rediscover it.
+    if provider == "openai" and "generativelanguage.googleapis.com" in base_url:
+        key_prefix = (current_app.config.get("OPENAI_API_KEY") or "").strip()[:3]
+        if key_prefix in ("AQ.", "ya2"):
+            status["warning"] = (
+                "This is an AQ.-format Google auth key being sent to Gemini's "
+                "OpenAI-compatible endpoint, which authenticates with "
+                "`Authorization: Bearer` and rejects auth keys (400 'Multiple "
+                "authentication credentials received', or a 401 that looks like "
+                "a bad key). Set LLM_PROVIDER=gemini to use the native endpoint "
+                "instead; the same key works there."
+            )
+    return status
+
+
+def probe():
+    """Make the smallest possible real call and report exactly what
+    came back.
+
+    This exists because every other signal is ambiguous. Rule-based
+    text on the page means "the LLM did not answer" and nothing more
+    specific, and a key can be wrong in several ways that all look the
+    same from the outside. A probe turns that into one sentence: it
+    either returns the model's own words, or the provider's own error.
+
+    The cached client is dropped first, so this tests the configuration
+    as it stands RIGHT NOW rather than whatever was read when the
+    worker started -- otherwise a key corrected in the dashboard would
+    keep reporting the old failure until the next restart.
+    """
+    from flask import current_app
+
+    reset_client_cache()
+
+    provider = current_app.config.get("LLM_PROVIDER", "openai")
+    generate = _GENERATORS.get(provider)
+    if generate is None:
+        return {"ok": False, "provider": provider, "error": f"unknown LLM_PROVIDER {provider!r}"}
+
+    prompt = (
+        'Reply with ONLY this JSON object and nothing else: '
+        '{"ok": true, "note": "connection verified"}'
+    )
+    raw_text = generate(prompt)
+    if not raw_text:
+        return {"ok": False, "provider": provider, "error": last_failure() or "no response"}
+
+    parsed = None
+    try:
+        parsed = json.loads(_strip_code_fence(raw_text))
+    except (ValueError, TypeError):
+        pass
+    model_key = {"openai": "OPENAI_MODEL", "anthropic": "ANTHROPIC_MODEL",
+                 "gemini": "GEMINI_MODEL"}.get(provider)
+    return {
+        "ok": True,
+        "provider": provider,
+        "model": current_app.config.get(model_key) if model_key else None,
+        "raw": raw_text[:300],
+        "parsed_as_json": parsed is not None,
+    }

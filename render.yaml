@@ -97,12 +97,55 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
 
-      # Optional. Only needed if you want the AI-written recommendation
-      # paragraphs instead of the built-in rule-based text. Leave unset
-      # and the app falls back automatically -- nothing breaks.
+      # ---- AI-WRITTEN RECOMMENDATION TEXT (optional) ----
+      # Off by default: leave it and the built-in rule-based generator
+      # writes the "Why This Works" / "Considerations" text. Nothing
+      # breaks either way, and the rule-based version is reproducible,
+      # which is worth something in a defence.
+      #
+      # WHAT THE LLM DOES AND DOES NOT DO. It rewrites the WORDING
+      # only. Every number on a card -- saturation index, viability
+      # score, competitor count, population, the ranking, the ROI
+      # window -- is computed by the Random Forest and the real
+      # PSA/Places data BEFORE the model is called, and the parser
+      # discards any figure the model sends back (except an ROI window
+      # that validates as a sane month range). Turning this on does not
+      # make the analysis AI-generated; it makes the prose AI-written.
+      #
+      # ALL OF THESE MUST BE RIGHT or you silently get rule-based text.
+      # Signed in as an admin, /admin/llm-status says which one is
+      # wrong and /admin/llm-status/probe makes a real test call.
+      # Neither ever prints the key.
+      #
+      # With Google's free Gemini tier (no credit card; key from
+      # https://aistudio.google.com/apikey):
+      #
+      #   USE_LLM_RECOMMENDATIONS = true
+      #   LLM_PROVIDER            = openai
+      #        Yes, "openai": Gemini exposes an OpenAI-compatible
+      #        endpoint, so the same client library reaches it with no
+      #        code change.
+      #   OPENAI_API_KEY          = <the AI Studio key>
+      #        If yours starts "AQ." or "ya29." it is an OAuth access
+      #        token, NOT an API key, and every call will 401.
+      #   OPENAI_BASE_URL         = https://generativelanguage.googleapis.com/v1beta/openai/
+      #   OPENAI_MODEL            = gemini-3-flash
+      #        REQUIRED. Without it the code uses its default,
+      #        gpt-4o-mini, which Google's endpoint has never heard of
+      #        -- a 404 on every call.
+      #
+      # The free tier is roughly 10 requests/minute, so the write-up is
+      # cached per (industry, barangay set, state of market_data): a
+      # reload costs nothing and only a real data change regenerates.
       - key: USE_LLM_RECOMMENDATIONS
         value: "false"
+      - key: LLM_PROVIDER
+        value: "openai"
       - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        sync: false
+      - key: OPENAI_MODEL
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false

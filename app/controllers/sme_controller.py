@@ -35,7 +35,7 @@ from app.ml.constants import (
 from app.ml.seed_data import BARANGAY_NAMES, get_real_population
 from app.utils.decorators import role_required
 from app.utils.audit import log_action
-from app.services.forecasting_service import compute_scores, generate_forecast_for_profile
+from app.services.forecasting_service import compute_scores_batch, generate_forecast_for_profile
 from app.services.trend_analytics_service import (
     project_quarterly_outlook,
     resolve_as_of_month,
@@ -57,16 +57,26 @@ def _market_meta_for(industry_type):
     """{location: {"is_live": bool, "date_recorded": date}} for one
     industry -- lets the opportunity cards state whether each barangay's
     competitor count is a live Google Places figure or a simulated
-    estimate, without re-querying once per card."""
-    from app.services.trend_analytics_service import latest_market_data_by_key
+    estimate, without re-querying once per card.
+
+    SCOPED TO THE ONE INDUSTRY ASKED FOR. This used to call
+    latest_market_data_by_key(), which resolves the freshest row for
+    EVERY combo -- 20 industries x 76 barangays -- and then threw
+    nineteen twentieths of it away in the comprehension below. Loading
+    1,520 ORM objects to read 76 of them is a real cost on a 512 MB
+    instance, because ORM instances are the expensive kind of row.
+    _latest_market_rows() is the same greatest-n-per-group query with
+    the industry list narrowed to one.
+    """
+    from app.ml.seed_data import BARANGAY_NAMES
+    from app.services.forecasting_service import _latest_market_rows
 
     return {
         loc: {
             "is_live": row.source == "Google Places API",
             "date_recorded": row.date_recorded,
         }
-        for (industry, loc), row in latest_market_data_by_key().items()
-        if industry == industry_type
+        for (_industry, loc), row in _latest_market_rows([industry_type], BARANGAY_NAMES).items()
     }
 
 sme_bp = Blueprint("sme", __name__)
@@ -89,9 +99,15 @@ def home():
     # expanded BUSINESS_TYPES list) so this page stays fast -- every
     # industry is still fully selectable in the "+ New Business Plan"
     # modal and the search bar below.
+    # Scored in ONE batch, not one call per card. Same reasoning as the
+    # Recommendations page: a loop of compute_scores() is two SELECTs
+    # and a separate forest dispatch per industry, and this is the first
+    # page an SME lands on after signing in.
     industry_cards = []
-    for industry_type in FEATURED_BUSINESS_TYPES:
-        scores = compute_scores(industry_type, default_location)
+    card_scores = compute_scores_batch(
+        [(industry_type, default_location) for industry_type in FEATURED_BUSINESS_TYPES]
+    )
+    for industry_type, scores in zip(FEATURED_BUSINESS_TYPES, card_scores):
         trend = "up" if scores["viability_score"] >= 6.5 else ("down" if scores["viability_score"] < 5 else "neutral")
         display = INDUSTRY_DISPLAY.get(industry_type, DEFAULT_INDUSTRY_DISPLAY)
         industry_cards.append({
@@ -326,13 +342,29 @@ def recommendations():
     profiles = current_user.sme_profiles.order_by(SmeProfile.sme_id.desc()).all()
     forecasts = []
 
-    for profile in profiles:
-        latest = profile.latest_forecast()
+    # One query for every plan's market row instead of one per plan.
+    # This loop used to run MarketData.query.get() per profile, so an
+    # SME with a dozen saved plans paid a dozen round trips to fetch a
+    # dozen rows by primary key -- the textbook N+1, and each round trip
+    # crosses a data centre in production.
+    latest_by_profile = [(profile, profile.latest_forecast()) for profile in profiles]
+    market_ids = {
+        latest.market_id for _profile, latest in latest_by_profile
+        if latest is not None and latest.market_id is not None
+    }
+    market_by_id = {}
+    if market_ids:
+        market_by_id = {
+            row.market_id: row
+            for row in MarketData.query.filter(MarketData.market_id.in_(market_ids)).all()
+        }
+
+    for profile, latest in latest_by_profile:
         if not latest:
             continue
 
         rec = parse_recommendation(latest.recommendation)
-        market_row = MarketData.query.get(latest.market_id)
+        market_row = market_by_id.get(latest.market_id)
         competitor_count = market_row.competitor_count if market_row else 0
 
         forecasts.append({

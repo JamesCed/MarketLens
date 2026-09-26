@@ -55,11 +55,12 @@ API calls. Barangays whose rows are already cached answer from the
 database.
 """
 
+import hashlib
 from statistics import median
 
 from app.ml.constants import short_industry_label
 from app.ml.seed_data import get_real_population, get_barangay_profile
-from app.services.forecasting_service import compute_scores
+from app.services.forecasting_service import compute_scores_batch
 from app.services.recommendation_service import competition_level_label
 
 # How many recommendation cards to show before the "Explore more"
@@ -270,12 +271,37 @@ def _opportunity_type_for(cluster_label):
 
 
 def _score_every_barangay(industry_type, locations):
-    """One compute_scores() per barangay, plus that barangay's real
+    """Every barangay scored for one industry, plus that barangay's real
     population/density. Returns the raw rows -- ranking, medians and
-    prose all happen afterwards, from these."""
+    prose all happen afterwards, from these.
+
+    ONE BATCHED CALL, NOT 76 SEPARATE ONES. This used to loop
+    compute_scores() over the barangay list, which is the same mistake
+    the Trend Reports page made and for the same two reasons:
+
+      QUERIES. compute_scores() resolves its own market_data and
+      lgu_data row per call, so 76 barangays meant ~152 SELECTs for one
+      page -- 152 network round trips to Aiven in production. The batch
+      resolves every market row in one GROUP BY and every lgu row in
+      one more.
+
+      PREDICTION. Each call ran rf_model.predict() on a single row and
+      then walked all 100 trees for that same single row. Profiling
+      this page showed 2.0 of its 4.0 seconds inside time.sleep() --
+      joblib's worker handshake, pure dispatch overhead with no
+      arithmetic in it. Batched, the whole city is one predict() over a
+      76-row matrix and one pass over the forest.
+
+    compute_scores_batch() returns the identical dicts in the identical
+    order, and falls back to the per-pair path for any combo whose rows
+    do not exist yet, so a cold database still behaves exactly as it
+    did before.
+    """
+    locations = list(locations)
+    scored = compute_scores_batch([(industry_type, location) for location in locations])
+
     rows = []
-    for location in locations:
-        scores = compute_scores(industry_type, location)
+    for location, scores in zip(locations, scored):
         profile = get_barangay_profile(location) or {}
         population = get_real_population(location) or 0
         competitor_count = int(scores.get("competitor_count") or 0)
@@ -296,6 +322,49 @@ def _score_every_barangay(industry_type, locations):
             }
         )
     return rows
+
+
+def _scored_and_ranked(industry_type, locations):
+    """`_score_every_barangay` + the opportunity ranking, memoised on
+    the market_data fingerprint.
+
+    WHY THIS IS THE RIGHT CACHE BOUNDARY. Everything up to and
+    including the ranking depends only on (industry, barangay list,
+    state of market_data) -- not on who is signed in. Two SMEs looking
+    at the same industry get the same city-wide scores, and so does the
+    same SME reloading the page, switching plans and back, or hitting
+    "Explore more recommendations" (which re-scores the identical city
+    just to show more of it). Everything user-specific -- the ROI
+    window built from their own capital, "this is your current plan's
+    barangay", the prose -- is computed AFTER this, per request, from
+    these rows.
+
+    Keyed on the market_data fingerprint rather than a timeout, for the
+    same reason as the trend caches: import rows or run a Places
+    refresh and the next request must recompute, not wait out a timer
+    while showing figures the database no longer agrees with. Reusing
+    the trend module's _cached/_data_fingerprint keeps that one
+    mechanism instead of a second one that could drift from it.
+
+    THE ROWS ARE HANDED OUT BY REFERENCE, not copied, which is only
+    safe because nothing downstream writes to them -- the caller reads
+    these rows to BUILD the card dicts and never mutates one. There is
+    a test pinning that (test_recommendations_performance.py).
+    """
+    from app.services.trend_analytics_service import _SWEEP_CACHE, _cached
+
+    # The barangay list is part of the key, not just its length: a test
+    # or a future caller passing a different subset of the same size
+    # must not be served another subset's scores.
+    locations_token = hashlib.sha1(
+        "|".join(str(location) for location in locations).encode("utf-8")
+    ).hexdigest()[:12]
+    cache_key = f"opportunity_rows:{industry_type}:{locations_token}"
+
+    def build():
+        return _apply_opportunity_ranking(_score_every_barangay(industry_type, locations))
+
+    return _cached(_SWEEP_CACHE, cache_key, build)
 
 
 def _city_context(rows):
@@ -434,6 +503,57 @@ def _risks_for(row, city, market_meta, industry_label):
     return risks
 
 
+def _written_cards(industry_type, city, opportunities):
+    """The LLM's write-up for this exact set of cards, memoised on the
+    market_data fingerprint.
+
+    WHY THE LLM CALL IS CACHED AT ALL. The prose is a pure function of
+    (industry, these barangays, this state of the data) -- the same
+    request an hour later, or from a different SME, produces the same
+    sentences about the same numbers. Without a cache every page view,
+    every reload and every back-button press spends an API call.
+
+    That is not an abstract concern on the free tiers this project is
+    meant to run on: Google AI Studio's free Gemini tier allows about
+    10 requests a MINUTE, and a defence demo with someone clicking
+    between plans will exceed that in under a minute. Then the calls
+    start failing, the page silently reverts to rule-based wording,
+    and it does so precisely while being demonstrated.
+
+    Cached on the data rather than a clock for the same reason as
+    everything else here: re-import the market data and the write-up
+    must be regenerated, because it quotes figures that just changed.
+    """
+    from app.services.llm_service import generate_opportunity_cards_json
+    from app.services.trend_analytics_service import _SNAPSHOT_CACHE, _cached
+
+    locations_token = hashlib.sha1(
+        "|".join(card["location"] for card in opportunities).encode("utf-8")
+    ).hexdigest()[:12]
+    cache_key = f"llm_cards:{industry_type}:{locations_token}"
+
+    def build():
+        return generate_opportunity_cards_json(industry_type, city, opportunities)
+
+    written = _cached(_SNAPSHOT_CACHE, cache_key, build)
+    # An empty result means the call failed or was refused. Do not let
+    # that sit in the cache: the next request should try again rather
+    # than serve rule-based wording for the full cache lifetime because
+    # of one rate-limit blip.
+    if not written:
+        _SNAPSHOT_CACHE.pop((cache_key, _data_fingerprint_or_none()), None)
+    return written or {}
+
+
+def _data_fingerprint_or_none():
+    from app.services.trend_analytics_service import _data_fingerprint
+
+    try:
+        return _data_fingerprint()
+    except Exception:  # pragma: no cover - no app context / no engine
+        return None
+
+
 def rank_location_opportunities(industry_type, locations, sme_profile=None, limit=DEFAULT_LIMIT,
                                 market_meta_by_location=None, use_llm=True):
     """Score every barangay in `locations` for ONE industry and return
@@ -451,14 +571,17 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
     and why ranking on viability alone gives a misleading answer.
     """
     market_meta_by_location = market_meta_by_location or {}
-    rows = _score_every_barangay(industry_type, locations)
+    # Scored AND ranked in one memoised step -- both are city-wide and
+    # user-independent, so the same reload, the same industry viewed by
+    # another SME, and "Explore more" (which asks for the identical city
+    # and only shows more of it) all answer from one sweep. See
+    # _scored_and_ranked: these rows are read, never written.
+    rows = _scored_and_ranked(industry_type, locations)
     if not rows:
         return {"opportunities": [], "city": _city_context([]), "industry_type": industry_type}
 
     city = _city_context(rows)
     industry_label = short_industry_label(industry_type)
-
-    _apply_opportunity_ranking(rows)
 
     capital = getattr(sme_profile, "startup_capital", None) if sme_profile is not None else None
     revenue = getattr(sme_profile, "monthly_revenue_est", None) if sme_profile is not None else None
@@ -524,11 +647,10 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
     # data-derived reasons/risks it already has.
     if use_llm and opportunities:
         try:
-            from app.models import SystemSetting
-            from app.services.llm_service import generate_opportunity_cards_json
+            from app.services.recommendation_service import llm_recommendations_enabled
 
-            if SystemSetting.get_bool("use_llm_recommendations", False):
-                written = generate_opportunity_cards_json(industry_type, city, opportunities)
+            if llm_recommendations_enabled():
+                written = _written_cards(industry_type, city, opportunities)
                 for card in opportunities:
                     entry = written.get(card["location"])
                     if entry:
@@ -541,8 +663,18 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
                         if entry.get("roi_timeframe"):
                             card["roi_timeframe"] = entry["roi_timeframe"]
                             card["roi_basis"] = "llm"
-        except Exception:  # noqa: BLE001 -- a flaky LLM must never break the page
-            pass
+        except Exception as exc:  # noqa: BLE001 -- a flaky LLM must never break the page
+            # Still swallowed, because a page that 500s when an API is
+            # down is worse than a page with rule-based wording. But it
+            # is no longer swallowed SILENTLY: `pass` here is what made
+            # "the AI isn't working" impossible to diagnose on a live
+            # deployment.
+            from flask import current_app
+
+            current_app.logger.warning(
+                "LLM write-up skipped for %s: %s: %s",
+                industry_type, type(exc).__name__, exc, exc_info=True,
+            )
 
     # The page's three summary cards count EVERY barangay the AI scored
     # across Tarlac City -- not just the ones currently displayed, and not

@@ -200,6 +200,41 @@ class Config:
     ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
     ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
 
+    # ---- Google Gemini, spoken natively rather than through the
+    #      OpenAI-compatible shim ----
+    #
+    # WHY A THIRD PROVIDER RATHER THAN JUST OPENAI_BASE_URL. Gemini does
+    # expose an OpenAI-compatible endpoint, and pointing OPENAI_BASE_URL
+    # at it used to be the whole trick. That stopped working for new
+    # accounts: Google AI Studio changed key issuance on 28 May 2026 and
+    # keys are now "auth keys" in the AQ.Ab... format, bound to a Cloud
+    # service account. An auth key sent the way the OpenAI SDK sends
+    # one -- `Authorization: Bearer <key>` -- is rejected by that
+    # compatibility layer, either with 400 "Multiple authentication
+    # credentials received" or, more confusingly, a 401 that reads like
+    # a bad key. The same key works against the NATIVE endpoint, which
+    # takes it as `x-goog-api-key`.
+    #
+    # The older AIza Standard keys, which did work over Bearer, are
+    # being retired -- unrestricted ones started being refused on
+    # 19 June 2026 -- so "use an AIza key instead" is not a fix, it is a
+    # shorter runway.
+    #
+    # Hence llm_service._generate_with_gemini(), which posts directly to
+    # models/<model>:generateContent using `requests` (already a
+    # dependency, so this path does not touch the openai SDK at all) and
+    # asks for responseMimeType=application/json -- a real JSON
+    # guarantee from the API rather than a polite request in the prompt.
+    #
+    # GEMINI_API_KEY falls back to OPENAI_API_KEY so a deployment that
+    # already has the key in the OpenAI slot keeps working after
+    # changing nothing but LLM_PROVIDER.
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+    GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash")
+    GEMINI_BASE_URL = os.environ.get(
+        "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
+    ).strip().rstrip("/")
+
     # ---------------- Optional: email verification code (SME/LGU self-registration) ----------------
     # Sent via Gmail SMTP using an "App Password" (see README "Getting a
     # Gmail App Password"). If GMAIL_ADDRESS/GMAIL_APP_PASSWORD are left

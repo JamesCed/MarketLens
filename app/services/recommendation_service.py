@@ -158,6 +158,39 @@ def _rule_based_recommendation(context):
     }
 
 
+def llm_recommendations_enabled():
+    """The ONE place that decides whether the LLM is asked to write.
+
+    There used to be two answers to this question and only one of them
+    was ever consulted. USE_LLM_RECOMMENDATIONS is documented in .env,
+    in DEPLOYMENT.md and in render.yaml as the switch -- and it was
+    read into Config and then never looked at. The real switch was a
+    row in the system_settings table, reachable only through Admin >
+    System Settings. Setting the environment variable on a host and
+    watching nothing change is a genuinely baffling half hour, so:
+
+      * If USE_LLM_RECOMMENDATIONS is set in the environment, it wins.
+        An operator who has written the variable down in a deployment
+        panel means it, and they may have no way to reach the admin UI
+        on a fresh instance.
+      * Otherwise the database setting decides, so the admin toggle
+        keeps working exactly as before for anyone not setting the
+        variable.
+
+    Being explicit matters here: an UNSET variable must fall through to
+    the database, while USE_LLM_RECOMMENDATIONS=false must actually
+    turn the feature off rather than being indistinguishable from
+    absent.
+    """
+    import os
+
+    raw = os.environ.get("USE_LLM_RECOMMENDATIONS")
+    if raw is not None and str(raw).strip() != "":
+        return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+    return SystemSetting.get_bool("use_llm_recommendations", False)
+
+
 def build_recommendation(context):
     """Returns a structured recommendation dict -- {headline,
     opportunity_type, summary, reasons, risks, generated_by} -- ready
@@ -172,8 +205,7 @@ def build_recommendation(context):
     because of this."""
     recommendation = _rule_based_recommendation(context)
 
-    use_llm = SystemSetting.get_bool("use_llm_recommendations", False)
-    if use_llm:
+    if llm_recommendations_enabled():
         from app.services.llm_service import generate_recommendation_json
 
         llm_payload = generate_recommendation_json(context)

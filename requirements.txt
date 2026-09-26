@@ -92,6 +92,37 @@ requests==2.32.3
 openai==1.51.2
 anthropic==0.34.2
 
+# PINNED BELOW 0.28 ON PURPOSE -- THIS IS WHAT STOPPED THE AI TEXT
+# FROM EVER APPEARING.
+#
+# Neither line above depends on a specific httpx, so pip is free to
+# take the newest one. That is fine until you look at what openai
+# 1.51.2 does with it: _base_client.py builds its HTTP client with
+#
+#     SyncHttpxClientWrapper(..., proxies=proxies, ...)
+#
+# passing `proxies` UNCONDITIONALLY, even when the value is None.
+# httpx deprecated that argument in 0.26 and REMOVED it in 0.28.0
+# (28 November 2024), so on any fresh install -- which is every
+# `pip install -r requirements.txt` on Render -- building the client
+# raises
+#
+#     TypeError: Client.__init__() got an unexpected keyword
+#                argument 'proxies'
+#
+# ...at the first attempt to write a recommendation. It is not a
+# transient hiccup and no API key fixes it: the client cannot be
+# constructed at all, so USE_LLM_RECOMMENDATIONS, the key and the
+# model name are all beside the point and the page falls back to
+# rule-based wording permanently. It stayed invisible because
+# llm_service caught everything in a bare `except` -- see the note at
+# the top of that file, now fixed.
+#
+# 0.27.x is the last line that still accepts `proxies`, so this holds
+# httpx there. If you later move openai to a release that stopped
+# passing it, drop this pin at the same time.
+httpx>=0.27,<0.28
+
 # --- Production WSGI server (deployment only) ---
 # app.py uses Flask's built-in development server, which handles one
 # request at a time and prints a warning telling you not to serve it

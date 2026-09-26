@@ -135,7 +135,59 @@ def _load_models():
 
     rf_path = os.path.join(_model_dir(), "rf_model.pkl")
     if os.path.exists(rf_path):
-        _MODEL_CACHE["rf"] = joblib.load(rf_path)
+        model = joblib.load(rf_path)
+        _pin_to_one_thread(model)
+        _MODEL_CACHE["rf"] = model
+
+
+def _pin_to_one_thread(rf_model):
+    """Predict on one thread, not one per core.
+
+    The forest is trained with n_jobs=-1, which is right for TRAINING
+    -- it is a one-off batch job on a developer machine with cores to
+    spare. It is wrong for serving, here, for three separate reasons,
+    and the third one is not about speed at all.
+
+    1. IT IS SLOWER ON THIS WORKLOAD. n_jobs=-1 makes every predict()
+       hand its trees to a joblib worker pool. For a 76-row city sweep
+       there is not enough arithmetic to pay for the handshake:
+       measured over 20 sweeps, 42.4 ms with the pool against 15.4 ms
+       without it. Before the sweep was batched it was far worse --
+       profiling the Recommendations page found 2.0 of its 4.0 seconds
+       inside time.sleep() in joblib's worker handshake.
+
+    2. THE DEPLOYMENT HAS NO CORES TO GIVE. A free Render instance is
+       roughly a tenth of a CPU, and gunicorn there runs --threads 4.
+       Four request threads each spawning a pool of os.cpu_count()
+       workers (which in a container reports the HOST's cores, not the
+       share this instance actually gets) is a thread pile-up
+       competing for one fractional core.
+
+    3. IT MAKES THE MODEL NON-REPRODUCIBLE. This is the one that
+       decided it. With n_jobs=-1, sklearn accumulates each tree's
+       contribution into a shared array as the workers finish, so the
+       summation ORDER varies run to run and so does the last bit of
+       the float. Measured on this model: 40 out of 40 repeat
+       predict() calls on identical input returned a different answer
+       (worst 2.1e-14). With n_jobs=1, 0 out of 40 differed.
+
+       2e-14 changes no decision on its own -- but a saturation index
+       sitting exactly on one of the CLUSTER_THRESHOLDS boundaries can
+       land either side of it, so the same plan could come back
+       "Moderate" on one refresh and "High" on the next with nothing
+       having changed. For a decision-support tool whose defence is
+       "here is exactly why the system said this", an answer that
+       will not sit still is worse than a slow one.
+
+    Arithmetic is otherwise untouched: same trees, same thresholds,
+    same feature vector. n_jobs controls dispatch, not the model.
+    """
+    from flask import current_app
+
+    try:
+        rf_model.n_jobs = 1
+    except Exception:  # pragma: no cover - a model that refuses is still usable
+        current_app.logger.warning("could not pin the forest to one thread", exc_info=True)
 
 
 def models_are_trained():

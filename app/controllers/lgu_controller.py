@@ -59,7 +59,7 @@ def dashboard():
     from app.extensions import db
     from app.ml.constants import BUSINESS_TYPES, FEATURED_BUSINESS_TYPES, INDUSTRY_DISPLAY, DEFAULT_INDUSTRY_DISPLAY
     from app.ml.seed_data import BARANGAY_NAMES, get_real_population
-    from app.services.forecasting_service import compute_scores
+    from app.services.forecasting_service import compute_scores_batch
     from app.services.trend_analytics_service import (
         get_barangay_business_table,
         latest_market_data_by_key,
@@ -94,9 +94,21 @@ def dashboard():
             row.competitor_count or 0
         )
 
+    # Every industry x sample-barangay combination in ONE batch. This
+    # was a nested loop calling compute_scores() per cell: 8 featured
+    # industries x 6 barangays is 48 calls, ~96 SELECTs and 48 separate
+    # trips through the forest to fill eight cards on the page an LGU
+    # officer lands on. Same fix as SME Home and Recommendations.
+    pairs = [(industry_type, barangay)
+             for industry_type in FEATURED_BUSINESS_TYPES
+             for barangay in sample_barangays]
+    scores_by_industry = {}
+    for (industry_type, _barangay), score in zip(pairs, compute_scores_batch(pairs)):
+        scores_by_industry.setdefault(industry_type, []).append(score)
+
     industry_cards = []
     for industry_type in FEATURED_BUSINESS_TYPES:
-        scores = [compute_scores(industry_type, b) for b in sample_barangays]
+        scores = scores_by_industry.get(industry_type, [])
         avg_viability = round(sum(s["viability_score"] for s in scores) / len(scores), 1) if scores else 0.0
         avg_saturation = round(sum(s["saturation_index"] for s in scores) / len(scores), 1) if scores else 0.0
         display = INDUSTRY_DISPLAY.get(industry_type, DEFAULT_INDUSTRY_DISPLAY)
