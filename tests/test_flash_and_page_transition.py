@@ -1,12 +1,15 @@
 """
 tests/test_flash_and_page_transition.py
 ------------------------------------------
-The top-centre flash toasts and the page-entry animation.
+The top-centre flash toasts, and the absence of any page transition.
 
 WHY THIS FILE EXISTS AT ALL
 
-Adding the page-entry animation broke two unrelated things, twice, for
-the same reason, and both were invisible in the CSS itself:
+There was briefly a rise-and-fade played on the page containers --
+.dss-main and the landing shell -- on every navigation. It has been
+removed at the user's request, and these tests keep it removed, because
+it broke three unrelated things for one reason that is invisible in the
+CSS itself:
 
   An element with a `transform` becomes the CONTAINING BLOCK for its
   `position: fixed` descendants. They stop measuring themselves against
@@ -17,23 +20,27 @@ animation, and the toast -- `position: fixed; top: 0; left: 50%` --
 landed 1190px across and 272px down instead of centred at the top.
 
 Then the landing backdrop, .ml-bg, which is fixed and full-screen and
-lives inside .ml-landing. Animating .ml-landing stretched it to the full
-2,681px scroll height of the page and made it scroll away with the
+lives inside .ml-landing. Animating .ml-landing stretched it to the
+page's full 2,681px scroll height and made it scroll away with the
 content.
 
-And it would have been the modals next: `both` as a fill mode leaves
-`transform: translateY(0)` applied forever, and translateY(0) is still a
-transform -- only `none` is not. The avatar picker in Settings and
-Create Account in admin/users are authored inside {% block content %},
-so they render inside .dss-main.
+And the modals were next, though that one never shipped: `both` as a
+fill mode leaves `transform: translateY(0)` applied forever, and
+translateY(0) is still a transform -- only `none` is not. The avatar
+picker in Settings and Create Account in admin/users are authored
+inside {% block content %}, so they render inside .dss-main.
 
-These tests read the stylesheet and the templates as text. That cannot
+So the rule these tests enforce is narrow and specific: the toast may
+animate, because it is a fixed element in its own right with nothing
+fixed inside it, but page CONTAINERS may not. Animate a thing, not a
+container.
+
+These tests read the stylesheet and the templates as text, which cannot
 measure a layout -- the real proof was a browser, where .ml-bg comes
-back as [0,0,1280,800] before and after scrolling 1,500px, and
+back as [0,0,1280,800] both at rest and after scrolling 1,500px, and
 .dss-main's computed transform comes back `none`. What text CAN do is
-guard the three specific decisions that keep it that way, so the next
-person to touch this animation finds out from a test rather than from a
-screenshot of a toast in the wrong corner.
+fail the moment someone reintroduces the shape of the bug, so they find
+out here rather than from a screenshot of a toast in the wrong corner.
 """
 
 import os
@@ -56,18 +63,6 @@ def _read(*parts):
 
 def _strip_comments(css):
     return re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
-
-
-def _rule_declaring(css, animation_name):
-    """The selector list and declaration block of the rule that starts
-    `animation_name`, with comments removed so a mention in prose cannot
-    be mistaken for a declaration."""
-    body = _strip_comments(css)
-    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", body):
-        selectors, declarations = match.group(1), match.group(2)
-        if re.search(rf"animation\s*:[^;]*\b{animation_name}\b", declarations):
-            return selectors.strip(), declarations.strip()
-    return None, None
 
 
 @pytest.fixture
@@ -119,46 +114,74 @@ def test_the_toast_wrapper_is_pinned_to_the_top_centre_with_no_offset():
 
 
 # ---------------------------------------------------------------------
-# 2. The page animation leaves no transform behind
+# 2. Nothing animates the page containers
 # ---------------------------------------------------------------------
 
-def test_the_page_transition_does_not_keep_a_transform_after_it_plays():
-    """`both` or `forwards` would hold translateY(0) on .dss-main for the
-    life of the page, and translateY(0) is still a transform. Every
-    modal authored inside {% block content %} would then be sized and
-    centred against .dss-main instead of the screen."""
-    css = _read("app", "static", "css", "style.css")
-    selectors, declarations = _rule_declaring(css, "dss-page-in")
+# The two shells every page is built out of: .dss-main wraps
+# {% block content %} for a signed-in user, .ml-landing is the whole
+# public page. Both hold fixed descendants.
+PAGE_CONTAINERS = (".dss-main", ".ml-landing")
 
-    assert declarations, "the dss-page-in animation declaration is gone"
-    assert not re.search(r"\b(both|forwards)\b", declarations), (
-        f"page-in declares a persisting fill mode ({declarations!r}); the "
-        f"transform then outlives the animation and becomes the containing "
-        f"block for every fixed element inside it"
+
+def _rules_mentioning(css, needles):
+    """(selectors, declarations) for every rule whose selector list
+    mentions one of `needles`. Comments are stripped first so the long
+    note explaining why this is forbidden is not itself read as code."""
+    body = _strip_comments(css)
+    found = []
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", body):
+        selectors, declarations = match.group(1).strip(), match.group(2)
+        if any(needle in selectors for needle in needles):
+            found.append((selectors, " ".join(declarations.split())))
+    return found
+
+
+def test_no_page_container_is_animated_or_transformed():
+    """The page transition is gone and stays gone.
+
+    Deliberately broad: it catches the container itself
+    (`.dss-main { animation: ... }`), which broke the toast, AND the
+    children workaround (`.ml-landing > :not(.ml-bg)`), which was only
+    ever a way to keep an animation the user has since asked to remove.
+    A transform counts as much as an animation -- a static
+    `transform: translateZ(0)` for "GPU acceleration" creates exactly
+    the same containing block, silently, with nothing moving to hint at
+    it.
+    """
+    css = _read("app", "static", "css", "style.css")
+
+    offenders = [
+        (selectors, declarations)
+        for selectors, declarations in _rules_mentioning(css, PAGE_CONTAINERS)
+        if re.search(r"(^|[;{\s])(animation|transform)\s*:", declarations)
+    ]
+
+    assert not offenders, (
+        "a page container is being animated or transformed again:\n  "
+        + "\n  ".join(f"{s} {{ {d} }}" for s, d in offenders)
+        + "\n\nA transform on either of these makes it the containing block "
+        "for every position:fixed element inside it -- the flash toast, the "
+        "landing backdrop, and the modals authored in {% block content %}."
     )
 
 
-def test_the_landing_backdrop_is_left_out_of_the_animated_box():
-    """.ml-bg is fixed and full-screen and lives inside .ml-landing.
-    Animating the parent stretched it to the page's full scroll height
-    and made it scroll away."""
-    css = _read("app", "static", "css", "style.css")
-    selectors, _ = _rule_declaring(css, "dss-page-in")
-
-    assert selectors, "the dss-page-in animation declaration is gone"
-    assert re.search(r"\.ml-landing\s*>", selectors), (
-        f"the landing animates itself again ({selectors!r}); animate its "
-        f"children instead so .ml-bg keeps the viewport as its containing block"
-    )
-    assert "ml-bg" in selectors, (
-        f".ml-bg is no longer excluded from the page animation ({selectors!r})"
+def test_no_page_entry_keyframes_are_left_lying_around():
+    """Not pedantry: dead @keyframes are exactly what someone reaches
+    for when re-adding the effect, and a rule that merely LOOKS unused
+    is the easiest thing in a 63 KB stylesheet to wire back up by
+    accident."""
+    css = _strip_comments(_read("app", "static", "css", "style.css"))
+    assert "dss-page-in" not in css, (
+        "the page-entry keyframes are back in the stylesheet"
     )
 
 
 def test_the_fixed_landing_backdrop_is_still_a_child_of_the_landing():
-    """The test above is only meaningful while this is true. If .ml-bg is
-    ever moved out to <body>, the exclusion becomes dead weight and this
-    says so rather than letting it rot."""
+    """Why .ml-landing must stay transform-free, stated as a test. The
+    backdrop is fixed and full-screen and lives inside the landing
+    shell; if it is ever lifted out to <body>, the constraint above
+    stops applying to .ml-landing and this test is the place that
+    should fail and say so."""
     for template in ("login.html", "register.html", "verify_email.html"):
         markup = _read("app", "templates", "auth", template)
         # verify_email carries `class="ml-landing ml-landing-short"`, so
@@ -168,9 +191,24 @@ def test_the_fixed_landing_backdrop_is_still_a_child_of_the_landing():
         assert shell, f"{template} no longer opens with the landing shell"
         assert backdrop, f"{template} lost its backdrop"
         assert shell.start() < backdrop.start(), (
-            f"{template} moved .ml-bg out of .ml-landing; the exclusion in the "
-            f"page-in selector is now doing nothing"
+            f"{template} moved .ml-bg out of .ml-landing"
         )
+
+
+def test_the_toast_itself_still_animates():
+    """The point of removing the page transition was the page, not the
+    toast. The toast is a fixed element in its own right with nothing
+    fixed inside it, so its entry animation cannot do what the page
+    animation did -- and the user asked to keep it."""
+    css = _strip_comments(_read("app", "static", "css", "style.css"))
+
+    rule = re.search(r"\.dss-flash\s*\{([^}]*)\}", css)
+    assert rule, ".dss-flash rule is gone"
+    assert re.search(r"animation\s*:[^;]*dss-flash-in", rule.group(1)), (
+        "the toast lost its entry animation along with the page transition"
+    )
+    for name in ("dss-flash-in", "dss-flash-out", "dss-flash-drain"):
+        assert re.search(rf"@keyframes\s+{name}\b", css), f"@keyframes {name} is gone"
 
 
 # ---------------------------------------------------------------------

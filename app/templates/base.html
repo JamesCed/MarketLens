@@ -55,14 +55,16 @@
   This is load-bearing, not tidying. The toasts are position: fixed,
   and a fixed element is positioned against the VIEWPORT only while no
   ancestor has a transform, filter or perspective -- any of those make
-  that ancestor the containing block instead. .dss-main carries the
-  page-entry animation, which uses translateY, so a toast rendered
-  inside it was positioned against .dss-main and landed wherever that
-  box happened to be (measured: 1190px across, 272px down) rather than
-  centred at the top of the screen.
+  that ancestor the containing block instead. When .dss-main briefly
+  carried a page-entry animation, a toast rendered inside it was
+  positioned against .dss-main and landed wherever that box happened to
+  be (measured: 1190px across, 272px down) rather than centred at the
+  top of the screen.
 
-  Keeping it out here means no animation added to page content can
-  move the toasts again. One include serves both layouts, too.
+  That animation has since been taken out (see the note in style.css),
+  but the toast stays here regardless: out at this level, no transform,
+  filter or blur added to page content later can move it again. One
+  include serves both layouts, too.
 #}
 {% include "shared/_flash.html" %}
 

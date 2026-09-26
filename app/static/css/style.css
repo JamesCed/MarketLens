@@ -1325,54 +1325,39 @@ body.dss-body {
 .dss-flash.is-leaving { animation: dss-flash-out .3s ease-in forwards; }
 
 /* =====================================================================
-   PAGE TRANSITION
+   NO PAGE TRANSITION  -- deliberately, and this note is why
    =====================================================================
-   Content rises and fades in on every navigation, so moving between
-   Home, the map and the reports feels continuous instead of each page
-   snapping into place.
+   There was briefly a rise-and-fade on .dss-main and on the landing,
+   played on every navigation. It is gone. Nothing here animates page
+   CONTAINERS on load, and nothing should be added that does.
 
-   Deliberately NOT a fade-OUT on click: intercepting navigation to play
-   an exit animation delays the browser and leaves a blank page if the
-   next request is slow. This costs nothing and cannot strand anyone.
+   It is recorded rather than simply deleted because the reason is not
+   taste. An element with a `transform` becomes the containing block for
+   its `position: fixed` descendants: they stop measuring themselves
+   against the viewport and start measuring themselves against it. A
+   rise is a translateY, so animating a container silently broke every
+   fixed thing inside it.
 
-   TWO THINGS HERE ARE LOAD-BEARING, both for the same reason.
+   Three things were hit, and the third had not shipped yet:
 
-   An element with a transform becomes the containing block for its
-   `position: fixed` descendants -- they stop being positioned against
-   the viewport and start being positioned against it. The rise below is
-   a translateY, so anything this animation touches must not have a
-   fixed descendant. Hence:
+     - The flash toast, rendered inside .dss-main at the time, landed
+       1190px across and 272px down instead of centred at the top.
+     - .ml-bg, the fixed full-screen backdrop behind the landing, was
+       stretched to the page's full 2,681px scroll height and scrolled
+       away with the content instead of staying put.
+     - The modals authored inside {% block content %} -- the avatar
+       picker in Settings, Create Account in admin/users -- would have
+       been sized and centred against .dss-main rather than the screen,
+       because `animation-fill-mode: both` leaves translateY(0) applied
+       for the life of the page, and translateY(0) is still a transform.
+       `none` is the only value that is not.
 
-   1. NO FILL MODE. This deliberately does not say `both`. `forwards`
-      would leave `transform: translateY(0)` applied for the life of the
-      page, and translateY(0) is still a transform -- `none` is the only
-      value that is not. .dss-main holds the modals authored inside
-      {% block content %} (the avatar picker in Settings, Create Account
-      in admin/users), and a modal opened an hour later would have been
-      sized and centred against .dss-main rather than the screen: off to
-      the right of the sidebar, scrolling with the page behind it. With
-      no fill mode the transform exists only for the .34s the animation
-      runs, which is over long before anyone can click anything.
-
-   2. THE LANDING ANIMATES ITS CHILDREN, NOT ITSELF. .ml-landing
-      contains .ml-bg, the fixed full-screen backdrop with the grid and
-      the drifting orbs. Transforming .ml-landing stretched that
-      backdrop to the full scroll height of the page and made it scroll
-      away with the content instead of staying put. Excluding it and
-      animating the siblings looks identical -- they all rise together
-      with no delay between them -- and leaves .ml-bg measuring itself
-      against the viewport, which is the whole point of it. */
-.dss-main,
-.ml-landing > :not(.ml-bg) {
-  animation: dss-page-in .34s cubic-bezier(.16, 1, .3, 1);
-}
-@keyframes dss-page-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+   The toast keeps its own entry animation: it is a fixed element in its
+   own right, a direct child of <body>, and contains nothing fixed. That
+   is the difference. Animate a thing, not a container. */
 
 @media (prefers-reduced-motion: reduce) {
-  .dss-flash, .dss-main, .ml-landing > :not(.ml-bg) { animation: none; }
+  .dss-flash { animation: none; }
   .dss-flash::after { display: none; }
   /* The countdown bar still drains: it conveys the remaining time,
      which is information rather than decoration. */
