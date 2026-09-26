@@ -186,6 +186,60 @@ def _cache_key(coords):
     return tuple(sorted((name, round(pt["lat"], 6), round(pt["lng"], 6)) for name, pt in coords.items()))
 
 
+# A PRECOMPUTED ANSWER, COMMITTED TO THE REPO.
+#
+# These cells are a pure function of the 76 barangay coordinates, and
+# those coordinates are a static, committed file -- so the result is a
+# CONSTANT. Computing it per deployment was work with no possible
+# variation in the output.
+#
+# That mattered: the computation rasterizes a 900x720 grid, and on a
+# 512 MB instance it is the single largest thing the app ever does.
+# When it fails there, the front end has no way to say so -- the map
+# simply draws the city outline with nothing inside it. Reading a file
+# cannot fail that way.
+#
+# The file carries the fingerprint of the coordinate set it was built
+# from. If the app's coordinates ever differ from it -- an LGU upload
+# introduces a barangay, or someone edits barangay_coords.json -- the
+# fingerprint will not match and the full computation runs as before.
+# So this is a fast path, never a substitute for the real thing.
+#
+# Rebuild it with:  python scripts/precompute_choropleth.py
+PRECOMPUTED_CELLS_NAME = "barangay_cells.json"
+_precomputed_cache = {"loaded": False, "fingerprint": None, "value": None}
+
+
+def _fingerprint(coords):
+    """A short, stable digest of a coordinate set, for deciding whether
+    the committed cells still describe it."""
+    import hashlib
+
+    parts = ["{}|{:.6f}|{:.6f}".format(n, la, ln) for n, la, ln in _cache_key(coords)]
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def load_precomputed_cells(app):
+    """The committed cells, or None if the file is absent or unreadable.
+    Never raises: a missing file just means "compute it", which is
+    always correct, only slower."""
+    if _precomputed_cache["loaded"]:
+        return _precomputed_cache["fingerprint"], _precomputed_cache["value"]
+
+    _precomputed_cache["loaded"] = True
+    try:
+        path = os.path.join(app.root_path, "static", "data", PRECOMPUTED_CELLS_NAME)
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        geojson = payload.get("geojson")
+        if geojson and geojson.get("features"):
+            _precomputed_cache["fingerprint"] = payload.get("fingerprint")
+            _precomputed_cache["value"] = geojson
+    except (OSError, ValueError, AttributeError):  # pragma: no cover - defensive
+        pass
+    return _precomputed_cache["fingerprint"], _precomputed_cache["value"]
+
+
 def compute_choropleth_geojson(coords, city_boundary_ring=None, app=None, resolution=None, force=False):
     """`coords` is {name: {"lat":, "lng":, ...}} -- the same shape
     geocoding_service.merged_coords() returns. `city_boundary_ring` is
@@ -215,6 +269,14 @@ def compute_choropleth_geojson(coords, city_boundary_ring=None, app=None, resolu
     key = _cache_key(coords)
     if not force and _result_cache["key"] == key:
         return _result_cache["value"]
+
+    # The committed answer, when it still describes these coordinates.
+    # See PRECOMPUTED_CELLS_NAME above for why this exists.
+    if not force and app is not None:
+        stored_fingerprint, stored = load_precomputed_cells(app)
+        if stored is not None and stored_fingerprint == _fingerprint(coords):
+            _result_cache["key"], _result_cache["value"] = key, stored
+            return stored
 
     names = list(coords.keys())
     if len(names) < 1:

@@ -408,3 +408,91 @@ def test_chunking_does_not_change_the_geometry():
         cs._NEAREST_CHUNK = saved
 
     assert np.array_equal(chunked, one_shot)
+
+
+def test_the_committed_cells_file_exists_and_matches_the_coordinates(app):
+    """The cells are a pure function of the 76 static coordinates, so
+    they are computed once by scripts/precompute_choropleth.py and
+    committed. This fails if the file is missing, or if someone edited
+    barangay_coords.json without rebuilding it -- in which case the app
+    still works (it recomputes) but has silently gone back to doing the
+    expensive thing on a 512 MB instance."""
+    from app.services.choropleth_service import _fingerprint, load_precomputed_cells
+    from app.services.geocoding_service import load_seed_coords
+
+    with app.app_context():
+        coords = load_seed_coords(app)
+        stored_fingerprint, stored = load_precomputed_cells(app)
+
+        assert stored is not None, (
+            "app/static/data/barangay_cells.json is missing -- run "
+            "python scripts/precompute_choropleth.py and commit it"
+        )
+        assert len(stored["features"]) == len(coords)
+        assert stored_fingerprint == _fingerprint(coords), (
+            "the committed cells were built from different coordinates -- re-run "
+            "python scripts/precompute_choropleth.py"
+        )
+
+
+def test_the_served_cells_are_what_the_computation_produces(app):
+    """The fast path must be a cache, not an approximation. If these
+    ever diverge, the map is quietly showing geometry that the
+    algorithm no longer agrees with."""
+    import json
+
+    from app.services import choropleth_service as cs
+    from app.services.geocoding_service import load_seed_coords
+
+    with app.app_context():
+        coords = load_seed_coords(app)
+        cs._result_cache["key"] = None
+        served = cs.compute_choropleth_geojson(coords, app=app)
+        cs._result_cache["key"] = None
+        computed = cs.compute_choropleth_geojson(coords, app=app, force=True)
+
+    assert json.dumps(served, sort_keys=True) == json.dumps(computed, sort_keys=True)
+
+
+def test_changed_coordinates_bypass_the_committed_file(app):
+    """A stale file must never win. Move one barangay and the app has
+    to recompute rather than serve cells that no longer describe it."""
+    import json
+
+    from app.services import choropleth_service as cs
+    from app.services.geocoding_service import load_seed_coords
+
+    with app.app_context():
+        coords = load_seed_coords(app)
+        cs._result_cache["key"] = None
+        from_file = cs.compute_choropleth_geojson(coords, app=app)
+
+        moved = dict(coords)
+        first = sorted(moved)[0]
+        moved[first] = {"lat": moved[first]["lat"] + 0.01, "lng": moved[first]["lng"]}
+        cs._result_cache["key"] = None
+        recomputed = cs.compute_choropleth_geojson(moved, app=app)
+
+    assert json.dumps(recomputed, sort_keys=True) != json.dumps(from_file, sort_keys=True)
+
+
+def test_a_failed_cell_fetch_is_reported_not_swallowed():
+    """The front end used to turn any failure -- 500, 502 from an
+    OOM-killed worker, timeout -- into an empty FeatureCollection. The
+    map then looked identical to "there is simply no data", which is
+    what made three rounds of this impossible to diagnose from a
+    screenshot."""
+    import os
+    import re
+
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    with open(os.path.join(root, "app", "static", "js", "map.js"), encoding="utf-8") as handle:
+        source = handle.read()
+
+    loader = re.search(r"async function loadChoropleth\(force\) \{.*?\n\}", source, re.S)
+    assert loader, "loadChoropleth() not found"
+    body = loader.group(0)
+
+    assert "console.error" in body, "a failure must reach the console"
+    assert "showChoroplethProblem" in body, "a failure must reach the page"
+    assert "response.ok" in body, "a non-200 must be treated as a failure, not parsed as JSON"

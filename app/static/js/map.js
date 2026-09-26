@@ -260,12 +260,49 @@ async function loadCoords(force) {
 // a new fetch.
 async function loadChoropleth(force) {
   if (dssChoroplethCache && !force) return dssChoroplethCache;
+  // WHY THIS REPORTS INSTEAD OF SHRUGGING.
+  //
+  // This used to swallow every failure into an empty FeatureCollection.
+  // The map then drew Tarlac City's outline with nothing inside it and
+  // the tier counters all read 0 -- which looks exactly like "there is
+  // no data", and is indistinguishable from a 500, a 502 from an
+  // out-of-memory worker, or a timeout. Three separate debugging
+  // sessions started from that screenshot with nothing to go on.
+  //
+  // A missing layer is now stated, in the console and on the page.
   try {
-    dssChoroplethCache = await fetch(window.DSS_BARANGAY_CHOROPLETH_URL).then((r) => r.json());
+    const response = await fetch(window.DSS_BARANGAY_CHOROPLETH_URL);
+    if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    const payload = await response.json();
+    if (!payload || !Array.isArray(payload.features)) {
+      throw new Error("the response carried no GeoJSON features");
+    }
+    dssChoroplethCache = payload;
+    showChoroplethProblem(null);
   } catch (err) {
-    dssChoroplethCache = { type: "FeatureCollection", features: [] };
+    console.error("[MarketLens] barangay cells could not be loaded:", err);
+    dssChoroplethCache = { type: "FeatureCollection", features: [], error: String(err.message || err) };
+    showChoroplethProblem(dssChoroplethCache.error);
   }
   return dssChoroplethCache;
+}
+
+// Puts the reason on the page, next to the map it is missing from.
+function showChoroplethProblem(message) {
+  const host = document.getElementById("mapIsolationBanner");
+  if (!host) return;
+  const existing = document.getElementById("dssChoroplethProblem");
+  if (!message) {
+    if (existing) existing.remove();
+    return;
+  }
+  const html =
+    '<div class="alert alert-warning py-2 small mb-2" id="dssChoroplethProblem">' +
+    "<strong>The barangay shading could not be loaded.</strong> " +
+    "The map below shows the city outline and the barangay list is unaffected. " +
+    '<span class="text-muted d-block">' + message + "</span></div>";
+  if (existing) existing.outerHTML = html;
+  else host.insertAdjacentHTML("afterbegin", html);
 }
 
 // GeoJSON -> the nested {lat, lng} structure L.polygon() expects.
