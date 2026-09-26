@@ -571,10 +571,19 @@ def find_or_create_lgu_data(location):
 _COMPETITOR_SOURCES = ("Google Places API", "DTI")
 
 
-def reconciled_competitor_counts(industries, locations):
+def reconciled_competitor_counts(industries, locations, with_source=False):
     """{(industry, location): count} merged across sources, in one
     query. Pairs with no competitor figure at all are simply absent --
-    callers keep whatever the chosen market_data row already held."""
+    callers keep whatever the chosen market_data row already held.
+
+    `with_source=True` returns {(industry, location): (count, source)}
+    instead, naming which source supplied the winning number. The LGU
+    dashboard needs that: it reports how much of a barangay's business
+    count is confirmed by a live Google lookup, and after
+    reconciliation the winning figure may have come from the permit
+    register instead -- crediting it to Places would be a false claim
+    about where the number came from.
+    """
     rows = (
         db.session.query(
             MarketData.industry_type,
@@ -603,11 +612,14 @@ def reconciled_competitor_counts(industries, locations):
 
     # ...then the larger of whatever sources that barangay has.
     merged = {}
-    for (industry, location, _source), (_rank, count) in freshest.items():
+    for (industry, location, source), (_rank, count) in freshest.items():
         pair = (industry, location)
-        if pair not in merged or count > merged[pair]:
-            merged[pair] = count
-    return merged
+        if pair not in merged or count > merged[pair][0]:
+            merged[pair] = (count, source)
+
+    if with_source:
+        return merged
+    return {pair: count for pair, (count, _source) in merged.items()}
 
 
 def build_feature_vector(market, lgu, years_in_operation, industry_type, competitor_count=None):

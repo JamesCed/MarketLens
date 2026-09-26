@@ -165,6 +165,7 @@ def home():
             featured_forecast.saturation_index,
             featured_forecast.viability_score,
             featured_forecast.input_location,
+            industry_type=featured_forecast.input_industry_type,
         )
         # forecast_result.recommendation is JSON-serialized structured
         # data (see recommendation_service.py) -- parse it back into

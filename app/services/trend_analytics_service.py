@@ -80,6 +80,8 @@ from app.services.forecasting_service import compute_scores, compute_scores_batc
 from app.services.recommendation_service import parse_recommendation
 from app.services.historical_baseline_service import (
     EARLIEST_HISTORY,
+    POST_RECOVERY_GROWTH,
+    growth_index,
     national_context,
     project_businesses,
     project_saturation,
@@ -496,14 +498,74 @@ def latest_market_data_by_key():
     combo (newest date; highest id among same-date ties, which is the
     ordering the old Python loop implemented) and then loads only
     those rows.
+
+    COMPETITOR COUNTS COME BACK RECONCILED, not raw.
+
+    Every figure on Trend Reports and the LGU dashboard is read from
+    here, and they have to agree with what the model scored. Without
+    this they would not: uploading a permit register makes the DTI row
+    the freshest one for that combo, so "newest wins" would show the
+    permit count on the trend page while the engine scored the larger
+    reconciled figure -- one system quoting two different competitor
+    counts for the same barangay on two different pages.
+
+    The row is WRAPPED rather than edited (see _ReconciledRow): these
+    are live ORM objects, and assigning to one would mark the session
+    dirty and persist a derived number as though it had been measured.
     """
-    from app.services.forecasting_service import _latest_market_rows
+    from app.services.forecasting_service import (
+        _latest_market_rows, reconciled_competitor_counts,
+    )
 
     industries = [row[0] for row in db.session.query(MarketData.industry_type).distinct().all()]
     locations = [row[0] for row in db.session.query(MarketData.location).distinct().all()]
     if not industries or not locations:
         return {}
-    return _latest_market_rows(industries, locations)
+
+    rows = _latest_market_rows(industries, locations)
+    merged = reconciled_competitor_counts(industries, locations, with_source=True)
+    return {
+        key: _ReconciledRow(row, *merged[key]) if key in merged else row
+        for key, row in rows.items()
+    }
+
+
+class _ReconciledRow:
+    """A read-only view of a MarketData row whose competitor_count is
+    the cross-source reconciled figure.
+
+    Everything else passes straight through to the real row, so a
+    caller reading .location, .source or .date_recorded sees exactly
+    what it saw before. Two attributes are added: `raw_competitor_count`
+    (what this particular row measured) and `competitor_source` (which
+    source supplied the winning number), because the LGU dashboard
+    reports how much of a barangay's count is confirmed by a live
+    Google lookup and must not credit Places for a figure the permit
+    register supplied.
+
+    Deliberately not a subclass and deliberately not writable: it must
+    be impossible to add one of these to a session by accident.
+    """
+
+    __slots__ = ("_row", "competitor_count", "competitor_source")
+
+    def __init__(self, row, competitor_count, competitor_source):
+        object.__setattr__(self, "_row", row)
+        object.__setattr__(self, "competitor_count", competitor_count)
+        object.__setattr__(self, "competitor_source", competitor_source)
+
+    def __getattr__(self, name):
+        return getattr(self._row, name)
+
+    def __setattr__(self, name, value):
+        raise AttributeError(
+            "reconciled market rows are read-only -- write to the underlying "
+            "MarketData row if a measured figure really needs to change"
+        )
+
+    @property
+    def raw_competitor_count(self):
+        return self._row.competitor_count
 
 
 def get_overview_stats(baseline, real_forecasts):
@@ -1071,7 +1133,13 @@ def get_barangay_business_table(latest_market=None):
         count = int(row.competitor_count or 0)
         entry["total_businesses"] += count
         entry["industries"] += 1
-        if row.source == "Google Places API":
+        # Credit Places only when Places actually supplied the winning
+        # figure. After reconciliation the freshest row can be the
+        # permit register while the larger, reported count came from
+        # Google -- or the reverse -- so `source` alone would mis-state
+        # how much of this barangay is confirmed by a live lookup.
+        winning_source = getattr(row, "competitor_source", row.source)
+        if winning_source == "Google Places API":
             entry["from_places_api"] += count
         if count > entry["_top_count"]:
             entry["_top_count"] = count
@@ -1358,38 +1426,250 @@ def _trend_delta(monthly_trends, invert=False):
     return round(-avg_delta if invert else avg_delta, 1)
 
 
-def project_quarterly_outlook(saturation_index, viability_score, location, quarters=4):
-    """Powers the Home page's "Forecast & Recommendations" bar chart
-    ("Current vs. Projected Demand & Viability"). Quarter 1 is built
-    entirely from REAL numbers: this forecast's own saturation_index /
-    viability_score, plus that barangay's own real foot_traffic_index
-    (app/ml/seed_data.py) as the "Demand" bar -- a genuinely different
-    input from viability, not just a restatement of it. Quarters 2-4
-    are an ILLUSTRATIVE, deterministic projection (steady compounding
-    rates, not a separate model run) -- demand and viability drift
-    up, saturation drifts up too (markets tend to fill in further over
-    time absent intervention). All 3 series are scaled to a 0-60 axis
-    to match the paper's storyboard chart. This is clearly a
-    projection, never presented as a second AI prediction."""
+# How much of the model's own confidence a quarter of forecast horizon
+# costs. The Random Forest's confidence describes how much its trees
+# agree about ONE feature vector; it says nothing about whether that
+# vector will still describe the market in nine months. Projecting the
+# inputs forward adds uncertainty the model cannot see, so it is
+# subtracted here rather than left for a reader to guess at. 8 points
+# per quarter puts a Q4 figure roughly 24 points below its Q1 sibling,
+# which is the right order for "this is the model's real answer to a
+# question about next year".
+HORIZON_CONFIDENCE_PENALTY = 8.0
+
+
+def project_quarterly_outlook(saturation_index, viability_score, location,
+                              industry_type=None, quarters=4):
+    """The Home page's "Current vs. Projected Demand & Viability" chart:
+    FOUR REAL MODEL RUNS, one per quarter.
+
+    WHAT THIS USED TO BE, AND WHY IT CHANGED
+
+    Q1 was real and Q2-Q4 were decoration: the Q1 bars multiplied by
+    1.08, 1.04 and 1.06 per quarter. Those constants came from nowhere.
+    The chart therefore always sloped the same way -- demand up,
+    saturation up, viability up -- for every barangay, every industry
+    and every plan, because the shape was in the multipliers rather
+    than in the data. It could not tell an SME anything they had not
+    already been told by the Q1 bar, and it could never disagree with
+    itself.
+
+    Now each quarter RECALIBRATES THE FEATURE VECTOR and re-runs the
+    Random Forest on it. The saturation bar for Q3 is the model's own
+    prediction for Q3's inputs, not Q1's answer scaled by a constant,
+    so the line can flatten, fall or steepen depending on the barangay
+    -- and when it rises, it rises because the model says so.
+
+    WHAT MOVES BETWEEN QUARTERS, AND WHAT DOES NOT
+
+    Only the competitor count is projected forward, and it moves along
+    the PSA/DTI national MSME establishment series that
+    historical_baseline_service already uses to project BACKWARDS for
+    the Trend Reports page (published 2019-2023, continued at
+    POST_RECOVERY_GROWTH after that). Using one series in both
+    directions matters: a back-projection and a forward projection that
+    disagreed about the same market would be two different claims from
+    one system.
+
+    Everything else -- population density, rent, foot traffic,
+    historical success rate, business density -- is HELD AT TODAY'S
+    VALUE, because this project has no published forward series for any
+    of them and inventing drift rates is exactly the thing being
+    removed. Holding them is an assumption too, and it is stated in
+    `assumptions` below so the UI can show it rather than imply the
+    whole vector was forecast.
+
+    Competitor count is also the feature the engine weights most
+    heavily (msi_weight_competitor_density, 0.45), so it is the one
+    worth projecting if only one can be.
+
+    Returns the three 0-60 series the chart draws, plus per-quarter
+    `confidence`, the projected `competitors`, and `basis` -- "model"
+    for a real run, "scaled" if the model was unavailable and the old
+    arithmetic had to stand in.
+    """
+    from app.services.forecasting_service import (
+        _lgu_rows, _latest_market_rows, _predict_saturation, build_feature_vector,
+        reconciled_competitor_counts,
+    )
+
     profile = get_barangay_profile(location)
     foot_traffic = profile["foot_traffic_index"] if profile else 45.0
+    today = date.today()
 
-    demand_q1 = min(60.0, foot_traffic * 0.6)
-    saturation_q1 = min(60.0, float(saturation_index or 0) * 0.6)
-    viability_q1 = min(60.0, float(viability_score or 0) * 6.0)
+    market = lgu = None
+    current_competitors = None
+    if industry_type:
+        market = _latest_market_rows([industry_type], [location]).get((industry_type, location))
+        lgu = _lgu_rows([location]).get(location)
+        current_competitors = reconciled_competitor_counts(
+            [industry_type], [location]
+        ).get((industry_type, location))
+        if current_competitors is None and market is not None:
+            current_competitors = market.competitor_count
 
-    demand, saturation, viability = [], [], []
-    for i in range(quarters):
-        demand.append(round(min(60.0, demand_q1 * (1 + 0.08 * i)), 1))
-        saturation.append(round(min(60.0, saturation_q1 * (1 + 0.04 * i)), 1))
-        viability.append(round(min(60.0, viability_q1 * (1 + 0.06 * i)), 1))
+    # This combo's own observed rate where the history supports one,
+    # the national series otherwise. Which was used is reported in
+    # `assumptions` -- "projected from this barangay's own trend" and
+    # "projected from the national series" are different claims and the
+    # UI should not present them as the same one.
+    observed = observed_competitor_growth(industry_type, location) if industry_type else None
+
+    labels, demand, saturation, viability = [], [], [], []
+    confidence, competitors, basis = [], [], []
+
+    for index in range(quarters):
+        # Quarter 1 is now, so its growth is 1.0 and its model run
+        # reproduces the stored forecast. Later quarters are anchored
+        # three months apart.
+        if observed is not None:
+            growth = (1.0 + observed) ** index
+        else:
+            # series_key is deliberately NOT passed. _series_variation
+            # adds a small deterministic wobble so that dozens of
+            # back-projected history lines do not sit on top of each
+            # other -- useful there, wrong here: across four forward
+            # points it made demand fall in Q2 and rise again in Q3,
+            # which reads as a finding and is an artefact.
+            growth = growth_index(_add_months(today, 3 * index), reference=today)
+
+        quarter_saturation = None
+        quarter_confidence = None
+        projected_competitors = None
+
+        if market is not None and lgu is not None and current_competitors is not None:
+            projected_competitors = max(0, int(round(float(current_competitors) * growth)))
+            vector = build_feature_vector(
+                market, lgu, 0, industry_type, competitor_count=projected_competitors
+            )
+            predicted, model_confidence, _version = _predict_saturation(vector)
+            quarter_saturation = predicted
+            quarter_confidence = round(
+                max(0.0, model_confidence - HORIZON_CONFIDENCE_PENALTY * index), 1
+            )
+
+        if quarter_saturation is None:
+            # No rows for this combo yet (a brand-new database, or a
+            # location the engine has never scored). Fall back to the
+            # stored figure rather than refusing to draw the chart, and
+            # mark the bar so nothing claims it was a model run.
+            quarter_saturation = float(saturation_index or 0)
+            quarter_confidence = None
+            basis.append("scaled")
+        else:
+            basis.append("model")
+
+        quarter_viability = round(max(0.0, min(10.0, (100.0 - quarter_saturation) / 10.0)), 1)
+
+        labels.append(f"Q{index + 1}")
+        competitors.append(projected_competitors)
+        confidence.append(quarter_confidence)
+        # Demand uses the same establishment index: more businesses
+        # trading in a market is this project's only published proxy
+        # for commercial activity in it. Named in `assumptions` as a
+        # proxy, because it is one.
+        demand.append(round(min(60.0, foot_traffic * 0.6 * growth), 1))
+        saturation.append(round(min(60.0, quarter_saturation * 0.6), 1))
+        viability.append(round(min(60.0, quarter_viability * 6.0), 1))
 
     return {
-        "labels": [f"Q{i + 1}" for i in range(quarters)],
+        "labels": labels,
         "demand": demand,
         "saturation": saturation,
         "viability": viability,
+        "confidence": confidence,
+        "competitors": competitors,
+        "basis": basis,
+        "recalibrated": all(entry == "model" for entry in basis),
+        "assumptions": {
+            "projected": "competitor count",
+            "source": "observed" if observed is not None else "national",
+            "series": (
+                f"this barangay's own recorded trend ({observed:+.1%} per quarter)"
+                if observed is not None else
+                "the PSA/DTI national MSME establishment series (published "
+                f"2019-2023, continued at {POST_RECOVERY_GROWTH:.0%}/year)"
+            ),
+            "held": "population density, rent, foot traffic, historical success "
+                    "rate and business density are held at today's values",
+            "demand_proxy": "foot traffic scaled by the same growth rate",
+        },
     }
+
+
+# Widest per-quarter competitor growth this will believe from a
+# barangay's own history, either way. Two refreshes weeks apart can
+# differ for reasons that are not a trend -- a Places lookup that hit
+# the 60-result ceiling, a permit register covering half the city --
+# and an unclamped rate compounded over four quarters turns one such
+# row into a hockey stick. +/-15% a quarter is still a market changing
+# fast; beyond that the evidence is more likely about the measurement
+# than the market.
+MAX_OBSERVED_QUARTERLY_GROWTH = 0.15
+
+# Below this the history is too short to read a rate from: two counts a
+# fortnight apart say almost nothing about a year.
+MIN_HISTORY_DAYS = 60
+
+
+def observed_competitor_growth(industry_type, location):
+    """This combo's OWN observed competitor growth, per quarter, or
+    None when its history is too thin to read one from.
+
+    WHY THIS BEATS THE NATIONAL SERIES WHEN IT EXISTS. The national
+    MSME series continues at 3%/year, which over four quarters moves a
+    count of 2 to a count of 2 and a count of 34 to 35 -- a
+    recalibration that recalibrates nothing, and a chart that is flat
+    for every barangay in the city. That is the same failure as the
+    hardcoded multipliers it replaced, just with a more respectable
+    source: the shape is in the constant rather than in the barangay.
+
+    market_data is a history table -- one row per refresh -- so a
+    barangay that has been scored a few times over a few months has
+    already recorded its own trend. Reading the rate from those rows
+    is what makes Q3 differ between a barangay filling up fast and one
+    standing still, which is the entire point of drawing the chart.
+
+    The national series stays as the fallback, so a combo with no
+    history still gets a defensible number rather than a flat line.
+    """
+    rows = (
+        db.session.query(MarketData.date_recorded, MarketData.competitor_count)
+        .filter(
+            MarketData.industry_type == industry_type,
+            MarketData.location == location,
+            MarketData.competitor_count.isnot(None),
+        )
+        .order_by(MarketData.date_recorded.asc(), MarketData.market_id.asc())
+        .all()
+    )
+    if len(rows) < 2:
+        return None
+
+    (first_date, first_count), (last_date, last_count) = rows[0], rows[-1]
+    span_days = (last_date - first_date).days
+    if span_days < MIN_HISTORY_DAYS or not first_count or first_count <= 0:
+        return None
+
+    quarters = span_days / 91.3125
+    try:
+        per_quarter = (float(last_count) / float(first_count)) ** (1.0 / quarters) - 1.0
+    except (ValueError, ZeroDivisionError, OverflowError):
+        return None
+
+    return max(-MAX_OBSERVED_QUARTERLY_GROWTH,
+               min(MAX_OBSERVED_QUARTERLY_GROWTH, per_quarter))
+
+
+def _add_months(anchor, months):
+    """`anchor` moved forward by whole months, clamped to the last valid
+    day (so a 31st never rolls into the next month)."""
+    import calendar
+
+    total = anchor.month - 1 + months
+    year = anchor.year + total // 12
+    month = total % 12 + 1
+    return date(year, month, min(anchor.day, calendar.monthrange(year, month)[1]))
 
 
 # How many months/quarters of history the charts draw, ending at the

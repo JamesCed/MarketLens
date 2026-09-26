@@ -558,3 +558,175 @@ def test_the_budget_counter_cannot_commit_someone_elses_transaction(app, lgu_use
     assert after == before, (
         "the day-budget counter committed a row that was staged by someone else"
     )
+
+
+# ---------------------------------------------------------------------
+# 7. An upload reaches the Trend Reports, not just the dashboard
+# ---------------------------------------------------------------------
+
+def test_an_upload_changes_what_the_trend_reports_read(app, lgu_user):
+    """The whole point of the pipeline. If the numbers on Trend
+    Reports do not move after an upload, the data went into the
+    database and nowhere else."""
+    from app.services.data_import_service import process_upload
+    from app.services.trend_analytics_service import latest_market_data_by_key
+
+    location = BARANGAY_NAMES[0]
+    industry = "Accommodation and Food Service Activities"
+
+    path = _csv(
+        [(location, "56101", "active")] * 9 + [(BARANGAY_NAMES[1], "56101", "active")] * 2,
+        ["barangay", "psic_code", "status"],
+    )
+    try:
+        with app.app_context():
+            # Google saw 3 of them; the city has permits for 9.
+            db.session.add(MarketData(
+                industry_type=industry, location=location, competitor_count=3,
+                population_density=2500, historical_success_rate=0.55,
+                foot_traffic_index=48, average_rent=19000,
+                source="Google Places API", date_recorded=date.today() - timedelta(days=2),
+            ))
+            db.session.commit()
+
+            before = latest_market_data_by_key()[(industry, location)].competitor_count
+            _count, status, message = process_upload("LGU_DATA", path, "DTI", lgu_user)
+            assert status == "success", message
+
+            row = latest_market_data_by_key()[(industry, location)]
+    finally:
+        os.unlink(path)
+
+    assert before == 3
+    assert row.competitor_count == 9, (
+        "the trend reports still read the pre-upload figure"
+    )
+    assert row.raw_competitor_count == 9
+    assert row.competitor_source == "DTI"
+
+
+def test_the_trend_reports_never_disagree_with_the_model(app, lgu_user):
+    """Reconciliation has to happen on BOTH paths or the same barangay
+    gets two different competitor counts on two different pages."""
+    from app.services.forecasting_service import compute_scores
+    from app.services.trend_analytics_service import latest_market_data_by_key
+
+    location, industry = BARANGAY_NAMES[2], BUSINESS_TYPES[0]
+    with app.app_context():
+        db.session.add(MarketData(
+            industry_type=industry, location=location, competitor_count=17,
+            population_density=2500, historical_success_rate=0.55,
+            foot_traffic_index=48, average_rent=19000,
+            source="Google Places API", date_recorded=date.today() - timedelta(days=3),
+        ))
+        db.session.add(MarketData(
+            industry_type=industry, location=location, competitor_count=4,
+            source="DTI", date_recorded=date.today(),      # newer, smaller
+        ))
+        db.session.add(LguData(
+            source="DTI", barangay=location, permit_count=4, business_density=1.2,
+            upload_date=date.today(), uploaded_by=lgu_user,
+        ))
+        db.session.commit()
+
+        trend_figure = latest_market_data_by_key()[(industry, location)].competitor_count
+        model_figure = compute_scores(industry, location)["competitor_count"]
+
+    assert trend_figure == model_figure == 17
+
+
+def test_a_reconciled_row_cannot_be_written_to(app):
+    """The wrapper exists so a derived number cannot be persisted as
+    though it had been measured. Writing to one must fail loudly
+    rather than quietly dirtying the session."""
+    from app.services.trend_analytics_service import latest_market_data_by_key
+
+    with app.app_context():
+        db.session.add(MarketData(
+            industry_type=BUSINESS_TYPES[0], location=BARANGAY_NAMES[0],
+            competitor_count=5, source="Google Places API", date_recorded=date.today(),
+        ))
+        db.session.commit()
+        row = latest_market_data_by_key()[(BUSINESS_TYPES[0], BARANGAY_NAMES[0])]
+
+        with pytest.raises(AttributeError):
+            row.competitor_count = 999
+
+
+# ---------------------------------------------------------------------
+# 8. The guidance an LGU officer actually needs
+# ---------------------------------------------------------------------
+
+def test_the_upload_page_documents_every_column_it_accepts(app, lgu_user):
+    from app.controllers.lgu_controller import UPLOAD_COLUMNS
+
+    client = app.test_client()
+    client.post("/login", data={"email": "officer@tarlac.test", "password": "password123"},
+                follow_redirects=True)
+    page = client.get("/lgu/government-data-upload").get_data(as_text=True)
+
+    for columns in UPLOAD_COLUMNS.values():
+        for name, _required, _meaning, _example in columns:
+            assert f"<code>{name}</code>" in page, f"{name} is accepted but not documented"
+
+
+def test_the_template_csv_matches_the_documented_columns(app, lgu_user):
+    """A template that hands out a header row the importer no longer
+    accepts is worse than no template."""
+    import csv
+    import io
+
+    from app.controllers.lgu_controller import UPLOAD_COLUMNS
+
+    client = app.test_client()
+    client.post("/login", data={"email": "officer@tarlac.test", "password": "password123"},
+                follow_redirects=True)
+
+    for dataset_type, columns in UPLOAD_COLUMNS.items():
+        response = client.get(f"/lgu/dataset-template/{dataset_type}")
+        assert response.status_code == 200
+        assert "text/csv" in response.headers["Content-Type"]
+
+        rows = list(csv.reader(io.StringIO(response.get_data(as_text=True))))
+        assert rows[0] == [name for name, _r, _m, _e in columns]
+        assert len(rows[1]) == len(columns)
+
+
+def test_the_downloaded_template_actually_imports(app, lgu_user):
+    """The strongest form of the previous test: take the file the page
+    hands out, upload it back, and require it to succeed."""
+    import tempfile
+
+    from app.services.data_import_service import process_upload
+
+    client = app.test_client()
+    client.post("/login", data={"email": "officer@tarlac.test", "password": "password123"},
+                follow_redirects=True)
+    body = client.get("/lgu/dataset-template/LGU_DATA").get_data(as_text=True)
+
+    handle = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8")
+    handle.write(body)
+    handle.close()
+    try:
+        with app.app_context():
+            count, status, message = process_upload("LGU_DATA", handle.name, "DTI", lgu_user)
+    finally:
+        os.unlink(handle.name)
+
+    assert status == "success", f"the page's own template does not import: {message}"
+    assert count >= 1
+
+
+def test_an_sme_cannot_download_the_template(app):
+    with app.app_context():
+        sme = User(name="Juan", email="sme@tmpl.test", role="SME")
+        sme.set_password("password123")
+        db.session.add(sme)
+        db.session.commit()
+
+    client = app.test_client()
+    client.post("/login", data={"email": "sme@tmpl.test", "password": "password123"},
+                follow_redirects=True)
+    response = client.get("/lgu/dataset-template/LGU_DATA", follow_redirects=False)
+
+    assert response.status_code in (302, 403)

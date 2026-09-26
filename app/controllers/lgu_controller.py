@@ -161,6 +161,90 @@ def dashboard():
     )
 
 
+# The column reference shown on the upload page AND used to build the
+# downloadable templates, so the guidance and the file can never
+# disagree about what a column is called. Each entry is
+# (column, required, what it means, example).
+UPLOAD_COLUMNS = {
+    "LGU_DATA": [
+        ("barangay", True,
+         "Official Tarlac City barangay name. Must match exactly (case is forgiven); "
+         "an unrecognised name is rejected with a suggestion rather than imported.",
+         "San Roque"),
+        ("psic_code", False,
+         "PSIC code, section letter, or the line of business. Include this and each row "
+         "is treated as ONE business permit, so the system can count competitors per "
+         "industry per barangay -- this is what makes an upload change the "
+         "recommendations rather than only the totals.",
+         "56101"),
+        ("business_name", False, "The registered business name. Kept for your reference.",
+         "Aling Nena's Carinderia"),
+        ("status", False,
+         "Permit status. Only active/approved/released/issued/valid/renewed are counted "
+         "as competitors; anything else (expired, cancelled) is ignored.",
+         "active"),
+        ("permit_count", False,
+         "Total permits in this barangay across all trades. Use this for a barangay "
+         "SUMMARY row instead of one row per business.", "240"),
+        ("business_density", False, "Businesses per hectare, if your office computes it.", "1.4"),
+        ("closure_records", False, "Businesses that closed in the period.", "12"),
+        ("zoning_info", False, "Zoning classification or notes.", "Commercial"),
+        ("effective_date", False, "The date these figures describe. Defaults to today.",
+         "2026-09-01"),
+    ],
+    "MARKET_DATA": [
+        ("industry_type", True, "PSIC section name, code, or trade description.",
+         "Food and Beverage"),
+        ("location", True, "Official Tarlac City barangay name, matched as above.", "San Roque"),
+        ("competitor_count", False, "Businesses of this industry operating in this barangay.",
+         "14"),
+        ("population_density", False, "People per square kilometre.", "2500"),
+        ("historical_success_rate", False,
+         "A FRACTION between 0 and 1, not a percentage. 0.85 means 85%; writing 85 is "
+         "rejected, because it would move the figure by two orders of magnitude.",
+         "0.85"),
+        ("foot_traffic_index", False, "Relative foot traffic, 0-100.", "48"),
+        ("average_rent", False, "Typical monthly commercial rent in pesos.", "19000"),
+        ("date_recorded", False, "The date these figures describe. Defaults to today.",
+         "2026-09-01"),
+    ],
+}
+
+
+@lgu_bp.route("/lgu/dataset-template/<dataset_type>")
+@role_required("LGU", "Admin")
+def dataset_template(dataset_type):
+    """A ready-made CSV with the right headers and one example row.
+
+    Generated from UPLOAD_COLUMNS, the same list the guidance table on
+    the page renders from, so the documentation and the file cannot
+    drift apart -- which is the usual way a "download the template"
+    link starts handing out a header row the importer no longer
+    accepts.
+    """
+    import csv
+    import io
+
+    from flask import Response
+
+    columns = UPLOAD_COLUMNS.get(dataset_type)
+    if columns is None:
+        flash("Unknown dataset type.", "danger")
+        return redirect(url_for("lgu.government_upload"))
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([name for name, _required, _meaning, _example in columns])
+    writer.writerow([example for _name, _required, _meaning, example in columns])
+
+    filename = f"marketlens_{dataset_type.lower()}_template.csv"
+    return Response(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @lgu_bp.route("/lgu/government-data-upload", methods=["GET", "POST"])
 @role_required("LGU", "Admin")
 def government_upload():
@@ -224,4 +308,5 @@ def government_upload():
         recent_market_data=recent_market_data,
         lgu_sources=LGU_SOURCES,
         market_sources=MARKET_SOURCES,
+        upload_columns=UPLOAD_COLUMNS,
     )

@@ -177,7 +177,32 @@
 
         <p class="dss-text-muted-sm mb-1">Current vs. Projected Demand &amp; Viability (6-12 month)</p>
         <canvas id="outlookBarChart" height="130"></canvas>
-        <p class="text-muted mb-3" style="font-size:.68rem;">Q1 uses this forecast's real AI score and this barangay's real foot-traffic data; Q2-Q4 are an illustrative projection, not a separate model run.</p>
+        {#
+          This caption used to call Q2-Q4 a projection rather than a
+          model run, and that was accurate at the time:
+          they were Q1 multiplied by three hardcoded constants. They
+          are four real Random Forest runs now, so the caption says
+          what is actually true -- including what is projected and what
+          is held, which is the part that keeps it honest rather than
+          just impressive.
+        #}
+        <p class="text-muted mb-3" style="font-size:.68rem;">
+          {% if quarterly_outlook and quarterly_outlook.recalibrated %}
+            Each quarter is a separate AI model run, recalibrated: the competitor count is
+            projected along the {{ quarterly_outlook.assumptions.series }}, and
+            {{ quarterly_outlook.assumptions.held }}. Demand is
+            {{ quarterly_outlook.assumptions.demand_proxy }}. Confidence falls with the
+            forecast horizon
+            {%- if quarterly_outlook.confidence and quarterly_outlook.confidence[0] %}
+              ({{ quarterly_outlook.confidence[0] }}% at Q1 to
+              {{ quarterly_outlook.confidence[-1] }}% at Q{{ quarterly_outlook.labels|length }})
+            {%- endif %}.
+          {% else %}
+            Q1 uses this forecast's real AI score and this barangay's real foot-traffic data.
+            Later quarters could not be recalibrated -- no market data is on file for this
+            industry and barangay yet -- so they repeat Q1's figure rather than inventing a trend.
+          {% endif %}
+        </p>
 
         <div class="d-flex align-items-center justify-content-center mb-2">
           <div class="position-relative" style="width:160px; height:160px;">
@@ -363,9 +388,12 @@
 
 {% if featured_forecast %}
 <script>
-  // Current vs. Projected Demand & Viability bar chart -- see
-  // app/services/trend_analytics_service.py's project_quarterly_outlook()
-  // for exactly what's real (Q1) vs. an illustrative projection (Q2-Q4).
+  // Current vs. Projected Demand & Viability bar chart. Every quarter
+  // is a separate Random Forest run on a recalibrated feature vector
+  // -- see project_quarterly_outlook() in
+  // app/services/trend_analytics_service.py for what is projected
+  // (the competitor count, from this barangay's own recorded trend
+  // where it has one) and what is held at today's value.
   const outlook = {{ quarterly_outlook|tojson }};
   new Chart(document.getElementById('outlookBarChart'), {
     type: 'bar',

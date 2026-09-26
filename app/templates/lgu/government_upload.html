@@ -39,15 +39,82 @@
     </div>
   </form>
 
+  {#
+    WHAT TO PUT IN THE FILE.
+
+    This used to be four bullet points naming the columns. It is a
+    table now because the questions an LGU officer actually has are
+    "is this one required", "what goes in it" and "what does a valid
+    value look like" -- and a comma-separated list in a sentence
+    answers none of the three.
+
+    Both the table and the downloadable template are rendered from
+    lgu_controller.UPLOAD_COLUMNS, so the guidance, the example file
+    and the importer cannot drift apart.
+  #}
+  <div class="mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h6 class="mb-0"><i class="bi bi-list-check"></i> Columns for this dataset</h6>
+      <a id="templateLink" class="btn btn-sm btn-outline-primary"
+         href="{{ url_for('lgu.dataset_template', dataset_type='LGU_DATA') }}">
+        <i class="bi bi-download"></i> Download template CSV
+      </a>
+    </div>
+
+    {% for dataset_type, columns in upload_columns.items() %}
+      <div class="dss-column-guide table-responsive" data-dataset="{{ dataset_type }}"
+           {% if dataset_type != 'LGU_DATA' %}hidden{% endif %}>
+        <table class="table table-sm align-middle small mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width:20%;">Column</th>
+              <th style="width:10%;">Required</th>
+              <th>What goes in it</th>
+              <th style="width:18%;">Example</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for name, required, meaning, example in columns %}
+              <tr>
+                <td><code>{{ name }}</code></td>
+                <td>
+                  {% if required %}
+                    <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle">Required</span>
+                  {% else %}
+                    <span class="text-muted">Optional</span>
+                  {% endif %}
+                </td>
+                <td class="text-muted">{{ meaning }}</td>
+                <td><code>{{ example }}</code></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endfor %}
+  </div>
+
   <div class="alert alert-info mt-3 mb-0 small">
-    <strong>Important Guidelines:</strong>
+    <strong>How your file is handled:</strong>
     <ul class="mb-0">
-      <li><strong>Gov't / Zoning Data (lgu_data)</strong> needs a <code>barangay</code> column, plus any of
-        <code>zoning_info, closure_records, permit_count, business_density, effective_date</code>.</li>
-      <li><strong>Market Data (market_data)</strong> needs <code>industry_type, location</code> columns, plus any of
-        <code>competitor_count, population_density, historical_success_rate, foot_traffic_index, average_rent, date_recorded</code>.</li>
-      <li>Missing numeric values in columns you DO include are automatically filled in using that column's average (data imputation).</li>
-      <li>The uploaded file itself is not stored -- only the parsed data rows are saved.</li>
+      <li><strong>All or nothing.</strong> If any row cannot be read, nothing is imported and
+        your existing data is left exactly as it was. You will get the row number, the column
+        and the value for each problem, so you can fix the file and upload again.</li>
+      <li><strong>Blank is fine; wrong is not.</strong> An empty numeric cell is filled with that
+        column's own average (data imputation). A cell with something unreadable in it &mdash;
+        <code>12o</code> instead of <code>120</code> &mdash; is reported and refused, because
+        silently averaging a typo would hide it.</li>
+      <li><strong>Barangay names must be official.</strong> A misspelling is rejected with a
+        suggestion. Importing it as typed would create a row nothing in the system ever reads.</li>
+      <li><strong>One row per business beats one row per barangay.</strong> Include
+        <code>psic_code</code> and the system counts competitors per industry per barangay,
+        which is what drives the saturation scores, the city-wide rankings and the trend
+        reports. A barangay summary with only <code>permit_count</code> still imports, but it
+        cannot tell a coffee shop from a hardware store.</li>
+      <li><strong>Everything recalculates on success.</strong> The city-wide recommendations,
+        the saturation map and the trend reports all pick up the new figures on the next page
+        load &mdash; no re-seeding, no restart.</li>
+      <li>The uploaded file itself is not stored &mdash; only the parsed data rows are saved.</li>
     </ul>
   </div>
 </div>
@@ -114,5 +181,21 @@
     sourceSelect.innerHTML = opts.map(s => `<option value="${s}">${s}</option>`).join('');
   }
   datasetType.addEventListener('change', refreshSources);
+
+  // Show the column guide for whichever table is selected, and point
+  // the template download at the same one -- downloading the wrong
+  // template is a guaranteed failed upload.
+  const templateLink = document.getElementById('templateLink');
+  const templateBase = "{{ url_for('lgu.dataset_template', dataset_type='__TYPE__') }}";
+  function refreshGuide() {
+    document.querySelectorAll('.dss-column-guide').forEach((box) => {
+      box.hidden = box.dataset.dataset !== datasetType.value;
+    });
+    if (templateLink) {
+      templateLink.href = templateBase.replace('__TYPE__', datasetType.value);
+    }
+  }
+  datasetType.addEventListener('change', refreshGuide);
+  refreshGuide();
 </script>
 {% endblock %}
