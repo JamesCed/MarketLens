@@ -62,9 +62,15 @@
      month-over-month change, AS OF the month picked above. A card whose
      month has no dated rows behind it shows "no comparison" rather than
      a fabricated "+0% from last month". -->
-<div class="row g-3 mb-3" id="summaryCards">
+<!-- EQUAL HEIGHT, whatever the text does. Bootstrap columns are
+     already full-height; it is the .dss-card inside that shrinks to
+     its content, so a card whose trend line wraps to two ("(estimated)")
+     grew taller than its neighbours. .dss-kpi-row makes each card fill
+     its column and pins the big number to a fixed row, so the four
+     headline figures stay on one line across. -->
+<div class="row g-3 mb-3 dss-kpi-row" id="summaryCards">
   <div class="col-6 col-lg-3">
-    <div class="dss-card">
+    <div class="dss-card dss-kpi">
       <div class="d-flex justify-content-between align-items-start">
         <div class="text-muted small">Total Businesses</div>
         <i class="bi" id="statTotalBusinessesIcon"></i>
@@ -74,7 +80,7 @@
     </div>
   </div>
   <div class="col-6 col-lg-3">
-    <div class="dss-card">
+    <div class="dss-card dss-kpi">
       <div class="d-flex justify-content-between align-items-start">
         <div class="text-muted small">New Startups</div>
         <i class="bi" id="statNewStartupsIcon"></i>
@@ -84,7 +90,7 @@
     </div>
   </div>
   <div class="col-6 col-lg-3">
-    <div class="dss-card">
+    <div class="dss-card dss-kpi">
       <div class="d-flex justify-content-between align-items-start">
         <div class="text-muted small">Market Saturation</div>
         <i class="bi" id="statSaturationIcon"></i>
@@ -94,7 +100,7 @@
     </div>
   </div>
   <div class="col-6 col-lg-3">
-    <div class="dss-card">
+    <div class="dss-card dss-kpi">
       <div class="d-flex justify-content-between align-items-start">
         <div class="text-muted small">Avg. Viability</div>
         <i class="bi" id="statViabilityIcon"></i>
@@ -104,7 +110,6 @@
     </div>
   </div>
 </div>
-<p class="text-muted small mb-3" id="asOfNote"></p>
 
 <div class="row g-3 mb-3">
   <div class="col-lg-6">
@@ -168,40 +173,7 @@
   <div id="topIndustriesList"></div>
 </div>
 
-<!-- Bulk fetch from Google Places.
-     What used to sit here was a TEMPORARY verification panel: a table
-     listing every (industry x barangay) row that had come back from
-     Google, to prove the integration was real. It has served its
-     purpose and is gone.
 
-     The FETCH control is kept, because it is not verification -- it is
-     the only way to pull competitor data into the database, and the
-     grid is far from complete. -->
-<div class="dss-card" id="placesRefreshBox">
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <div>
-      <h6 class="mb-1"><i class="bi bi-cloud-download"></i> Business data from Google Places</h6>
-      <div class="text-muted small" id="placesRefreshProgressText">Checking how much is already fetched&hellip;</div>
-    </div>
-    <div class="d-flex gap-2">
-      <button type="button" class="btn btn-sm btn-primary" id="placesRefreshStart">
-        <i class="bi bi-cloud-download"></i> Fetch remaining
-      </button>
-      <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="placesRefreshStop">Stop</button>
-    </div>
-  </div>
-  <div class="progress mt-2" style="height:8px;">
-    <div class="progress-bar bg-success" id="placesRefreshBar" style="width:0%"></div>
-  </div>
-  <div class="text-muted mt-2" style="font-size:.75rem;">
-    <i class="bi bi-exclamation-triangle"></i>
-    A complete sweep is 20 industries &times; 76 barangays = <strong>1,520 lookups</strong>, and with result paging
-    each can cost up to 3 Google Places requests &mdash; roughly <strong>4,560 billable calls</strong> on the billing
-    account attached to your key. It runs in batches and you can stop at any point; the most populous barangays and
-    the most common industries are fetched first, so stopping early still leaves the map and charts looking right
-    where anyone will actually look.
-  </div>
-</div>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -353,32 +325,6 @@ function renderPeriodCards(po) {
   renderKpi("statViability", "statViabilityTrend", "statViabilityIcon",
     c.avg_viability, { format: (v) => `${Number(v).toFixed(1)}/10`, pointUnit: " pts", deltaDigits: 2 });
 
-  const note = document.getElementById("asOfNote");
-  if (!note) return;
-
-  const anyProjected = Object.values(c).some(card => card && card.projected);
-  let html =
-    `Figures as of <strong>${po.as_of_label}</strong>, compared with ${po.previous_label}. ` +
-    (po.forecasts_in_month
-      ? `${po.forecasts_in_month} real forecast(s) were run in ${po.as_of_label}.`
-      : `No forecasts were run in ${po.as_of_label}, so saturation and viability are scaled from the model's current baseline rather than measured for that month.`);
-
-  // Where a projected month's shape comes from -- named on screen, not
-  // left for anyone to take on trust. The Places API has no historical
-  // endpoint of any kind, so this is the honest alternative: real
-  // published national figures, applied to this app's real current
-  // counts.
-  if (anyProjected && po.basis) {
-    const b = po.basis;
-    html +=
-      ` <span class="text-muted">Months before this system began collecting its own data are back-projected from the ` +
-      `${b.source} &mdash; about <strong>${Number(b.national_establishments).toLocaleString()}</strong> MSME establishments nationally in ${b.year}` +
-      (b.is_published_year
-        ? ", a published figure"
-        : ", continued past the last published year at a conservative rate") +
-      `. Google Places has no historical data of any kind, so no API can supply these months; they are modelled, flagged "(estimated)" above, and replaced by real readings as this app accumulates them.</span>`;
-  }
-  note.innerHTML = html;
 }
 
 // ---- Quarterly Performance & Growth Rate ---------------------------
@@ -815,95 +761,5 @@ setupPeriodSelector();
 loadTrendData();
 
 
-// ---- Bulk "fetch everything from Google", in stoppable batches ------
-// Drives the "Fetch remaining" card above. The verification table that
-// used to sit beside it is gone; these endpoints are not verification
-// and stay.
-(function () {
-  const startBtn = document.getElementById("placesRefreshStart");
-  const stopBtn = document.getElementById("placesRefreshStop");
-  const bar = document.getElementById("placesRefreshBar");
-  const text = document.getElementById("placesRefreshProgressText");
-  if (!startBtn) return;
-
-  let running = false;
-
-  function paint(p) {
-    const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
-    bar.style.width = pct + "%";
-    text.innerHTML =
-      `<strong>${p.done.toLocaleString()}</strong> of ${p.total.toLocaleString()} industry &times; barangay lookups ` +
-      `have real Google data (${pct}%) &middot; ${p.pending.toLocaleString()} remaining`;
-    return p;
-  }
-
-  async function loadProgress() {
-    try {
-      const p = await fetch("{{ url_for('api.places_refresh_progress') }}").then(r => r.json());
-
-      // READ-ONLY DEPLOYMENT (PLACES_LIVE_FETCH=false). The whole card
-      // goes, rather than sitting there disabled: on the live site the
-      // competitor data was collected locally and imported, so there is
-      // nothing to fetch and nothing to explain. Checked BEFORE the
-      // missing-key branch, because a read-only deployment has no key
-      // on purpose and "every count is simulated" would be the exact
-      // opposite of the truth.
-      if (p.live_fetch_disabled) {
-        const box = document.getElementById("placesRefreshBox");
-        if (box) box.remove();
-        return null;
-      }
-
-      if (!p.configured) {
-        text.textContent = "No GOOGLE_PLACES_API_KEY configured in .env.";
-        startBtn.disabled = true;
-        return null;
-      }
-      return paint(p);
-    } catch (err) {
-      text.textContent = "Could not read fetch progress.";
-      return null;
-    }
-  }
-
-  async function runBatches() {
-    running = true;
-    startBtn.classList.add("d-none");
-    stopBtn.classList.remove("d-none");
-
-    while (running) {
-      let result;
-      try {
-        result = await fetch("{{ url_for('api.places_refresh') }}?limit=25", {
-          method: "POST",
-          headers: { "X-CSRFToken": "{{ csrf_token() }}" },
-        }).then(r => r.json());
-      } catch (err) {
-        text.textContent = "Fetch failed — stopping. Check your key and network, then try again.";
-        break;
-      }
-      if (result.error) {
-        text.textContent = result.error;
-        break;
-      }
-      paint(result);
-      // Nothing left, or a whole batch failed (bad key / quota) -- stop
-      // rather than hammering Google in a loop.
-      if (result.pending === 0 || result.requested === 0 || result.refreshed === 0) break;
-    }
-
-    running = false;
-    stopBtn.classList.add("d-none");
-    startBtn.classList.remove("d-none");
-  }
-
-  startBtn.addEventListener("click", runBatches);
-  stopBtn.addEventListener("click", () => {
-    running = false;
-    text.innerHTML += " &middot; stopping after this batch&hellip;";
-  });
-
-  loadProgress();
-})();
 </script>
 {% endblock %}

@@ -799,8 +799,62 @@ function setupHideSaturationToggle() {
   });
 }
 
+// ---- Saturation Map loading state ------------------------------------
+// Shown while the barangay scores and cells are being fetched. This
+// runs on the FIRST load and on every industry/overlay change, because
+// both re-score all 76 barangays -- the second case is the one that
+// used to leave the map looking frozen with no explanation.
+//
+// Staged messages, but honest ones: they describe what the server is
+// actually doing, and the whole thing is removed the moment the data
+// lands rather than running to the end of a scripted timeline.
+const MAP_LOAD_STAGES = [
+  [0, "Reading the businesses on file\u2026"],
+  [450, "Scoring every barangay with the AI engine\u2026"],
+  [1600, "Drawing the saturation zones\u2026"],
+];
+
+let mapLoadTimer = null;
+
+function showMapLoading(on) {
+  const box = document.getElementById("mapLoading");
+  const step = document.getElementById("mapLoadingStep");
+  if (!box) return;
+
+  if (mapLoadTimer) {
+    clearInterval(mapLoadTimer);
+    mapLoadTimer = null;
+  }
+  if (!on) {
+    box.hidden = true;
+    return;
+  }
+
+  const started = performance.now();
+  if (step) step.textContent = MAP_LOAD_STAGES[0][1];
+  box.hidden = false;
+  mapLoadTimer = setInterval(() => {
+    const elapsed = performance.now() - started;
+    let message = MAP_LOAD_STAGES[0][1];
+    for (const [at, text] of MAP_LOAD_STAGES) if (elapsed >= at) message = text;
+    if (step) step.textContent = message;
+  }, 200);
+}
+
 async function loadLocations() {
   const businessType = currentBusinessType();
+  showMapLoading(true);
+  try {
+    return await loadLocationsInner(businessType);
+  } finally {
+    // finally, not after the happy path: a failed fetch must not leave
+    // the overlay up forever covering a map the visitor could still
+    // pan and read.
+    showMapLoading(false);
+  }
+}
+
+async function loadLocationsInner(businessType) {
   // Fetch the forecast rows and the real barangay coordinates in
   // parallel. Coordinates used to only load once a Google Map actually
   // initialized (focusMapOn() -> loadCoords()), which never happens

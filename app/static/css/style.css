@@ -1058,3 +1058,67 @@ body.dss-body {
   background: #fff4e5; color: #8a5a00; border: 1px solid #ffe0b2;
 }
 [data-bs-theme="dark"] .dss-pref-soon { background: #3a2c14; color: #f0c485; border-color: #5a4520; }
+
+
+/* ---------- Saturation Map loading overlay ---------- */
+/* Reuses .dss-loader-spin / -title / -step from the Trend Reports
+   loader, so the two pages read as the same product rather than two
+   different spinners. Only the placement is new. */
+.dss-map-wrap { position: relative; }
+.dss-map-loading {
+  position: absolute; inset: 0; z-index: 500;   /* above Leaflet panes, below its controls' popups */
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, .72);
+  backdrop-filter: blur(2px);
+  border-radius: .5rem;
+}
+[data-bs-theme="dark"] .dss-map-loading { background: rgba(15, 23, 32, .72); }
+.dss-map-loading[hidden] { display: none; }
+.dss-map-loading-card {
+  display: flex; align-items: center; gap: .85rem;
+  padding: .9rem 1.15rem; border-radius: .7rem;
+  background: var(--ml-surface, #fff);
+  border: 1px solid var(--ml-line, #e3e9f0);
+  box-shadow: 0 6px 24px rgba(16, 32, 54, .13);
+  max-width: 90%;
+}
+/* The overlay fades rather than blinking: on a warm cache the whole
+   load is ~50ms, and a spinner that flashes for one frame reads as a
+   glitch. Fading in over .25s means a fast load shows almost nothing
+   and a slow one still explains itself. */
+.dss-map-loading { animation: dss-map-fade .25s ease-in; }
+@keyframes dss-map-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .dss-map-loading { animation: none; }
+}
+
+/* ---------- Trend Reports KPI cards: equal height ---------- */
+/* The four headline cards sat at different heights whenever one card's
+   trend line wrapped to a second line -- "(estimated)" under New
+   Startups was the usual culprit, and the row looked broken rather
+   than informative.
+   
+   Bootstrap's columns are already equal height; it is the .dss-card
+   inside that shrinks to its own content. So each card is made to fill
+   its column, and the three rows inside it (label / figure / trend) are
+   laid out so the big number sits at the same vertical position in all
+   four. The trend line takes the leftover space and is allowed to wrap
+   to two lines without moving anything above it. */
+.dss-kpi-row > [class*="col-"] { display: flex; }
+.dss-kpi-row .dss-kpi {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.dss-kpi .fs-3 {
+  line-height: 1.2;
+  margin-top: .15rem;
+}
+.dss-kpi > .small:last-child {
+  /* Pushed to the bottom, and reserving two lines' worth of height, so
+     a card whose trend wraps is the same height as one whose does not
+     -- rather than every other card growing to match it. */
+  margin-top: auto;
+  padding-top: .3rem;
+  min-height: 2.5em;
+}

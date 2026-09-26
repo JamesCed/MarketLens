@@ -175,20 +175,32 @@ def test_the_page_can_tell_disabled_apart_from_unconfigured(app):
     assert payload["live_fetch_disabled"] is True, "and that is on purpose, not a misconfiguration"
 
 
-def test_the_fetch_card_is_removed_rather_than_left_disabled(app):
-    """On a read-only deployment there is nothing to fetch, so the card
-    goes entirely. Pinned because the template branches on a flag the
-    server has to keep sending."""
+def test_the_bulk_fetch_card_is_gone_from_the_page(app):
+    """The "Business data from Google Places" card was removed from
+    Trend Reports at the user's request -- on the live site it only
+    ever said "No GOOGLE_PLACES_API_KEY configured", and its billing
+    warning was noise on a page meant to be read by a panel.
+
+    This pins the removal as deliberate: the markup, its script, and
+    every element id it reached for. A half-removal that leaves the
+    script behind is a page that throws on load.
+
+    The SERVER-side refusal is unaffected and still tested above --
+    /api/places-refresh returns 403 when live fetching is off. Removing
+    a button is not a security control; that endpoint is.
+    """
     import os
 
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    with open(os.path.join(root, "app", "templates", "sme", "trend_reports.html"), encoding="utf-8") as f:
-        page = f.read()
+    with open(os.path.join(root, "app", "templates", "sme", "trend_reports.html"), encoding="utf-8") as handle:
+        page = handle.read()
 
-    assert 'id="placesRefreshBox"' in page, "the card needs an id to be removable"
-    assert "p.live_fetch_disabled" in page
-    assert page.index("p.live_fetch_disabled") < page.index("!p.configured"), \
-        "the disabled case must be handled before the missing-key case"
+    for orphan in ("placesRefreshBox", "placesRefreshStart", "placesRefreshStop",
+                   "placesRefreshBar", "placesRefreshProgressText", "loadProgress("):
+        assert orphan not in page, f"{orphan} survived the removal -- the page will error on load"
+
+    assert "Fetch remaining" not in page
+    assert "billable calls" not in page
 
 
 # ---------------------------------------------------------------------

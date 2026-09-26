@@ -56,7 +56,21 @@
       </div>
       <!-- OpenStreetMap via Leaflet: no API key, so unlike the old
            Google basemap there is no "key missing" placeholder state. -->
-      <div id="dss-map"></div>
+      <!-- The map and its loading state share a positioned wrapper, so
+           the overlay covers the map only -- not the legend or the
+           barangay list, which stay readable while scores refresh. -->
+      <div class="dss-map-wrap">
+        <div id="dss-map"></div>
+        <div id="mapLoading" class="dss-map-loading" hidden>
+          <div class="dss-map-loading-card">
+            <div class="dss-loader-spin" aria-hidden="true"></div>
+            <div>
+              <div class="dss-loader-title">Scoring Tarlac City&hellip;</div>
+              <div class="dss-loader-step" id="mapLoadingStep">Reading the businesses on file&hellip;</div>
+            </div>
+          </div>
+        </div>
+      </div>
       <!-- The legend IS the filter: click a tier to show/hide those
            zones on the map. Counts update with the selected industry. -->
       <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
