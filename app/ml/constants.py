@@ -237,3 +237,154 @@ CLUSTER_THRESHOLDS = [25.0, 50.0, 75.0, 100.0]  # <=25 Low, <=50 Moderate, <=75 
 N_CLUSTERS = 4
 RANDOM_STATE = 42
 N_ESTIMATORS = 100  # "T = 100" per the paper's Random Forest formula
+
+
+# =====================================================================
+# READING AN LGU PERMIT REGISTER'S "WHAT TRADE IS THIS" COLUMN
+# =====================================================================
+# BUSINESS_TYPES above is the PSIC section list (minus Public
+# Administration and Extraterritorial Organizations, which no SME
+# registers under, plus "Food and Beverage", which this project carries
+# separately because it is the most common SME category in the city).
+# A real business-permit register does NOT contain those exact strings.
+# Depending on which office exported it, the trade column holds a PSIC
+# section LETTER ("G"), a numeric PSIC code ("47211"), or whatever the
+# clerk typed ("Sari-sari Store", "coffee shop/cafe").
+#
+# All three have to land on one of the sections above, or the count is
+# filed under an industry nothing else in the app scores. Anything that
+# cannot be mapped confidently is deliberately counted NOWHERE: an
+# uncounted permit understates one barangay, a MIScounted one corrupts
+# the comparison between barangays, and comparing barangays is the
+# whole basis of the recommendation engine.
+
+# PSIC section letters. O and U are intentionally absent.
+_PSIC_SECTION_LETTERS = {
+    "A": "Agriculture, Forestry, and Fishing",
+    "B": "Mining and Quarrying",
+    "C": "Manufacturing",
+    "D": "Electricity, Gas, Steam, and Air Conditioning Supply",
+    "E": "Water Supply; Sewerage, Waste Management, and Remediation Activities",
+    "F": "Construction",
+    "G": "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles",
+    "H": "Transportation and Storage",
+    "I": "Accommodation and Food Service Activities",
+    "J": "Information and Communication",
+    "K": "Financial and Insurance Activities",
+    "L": "Real Estate Activities",
+    "M": "Professional, Scientific, and Technical Activities",
+    "N": "Administrative and Support Service Activities",
+    "P": "Education",
+    "Q": "Human Health and Social Work Activities",
+    "R": "Arts, Entertainment, and Recreation",
+    "S": "Other Service Activities",
+    "T": "Activities of Households as Employers",
+}
+
+# PSIC division (the first TWO digits of any numeric code) -> section.
+# A five-digit code like 47211 is division 47, which is section G.
+# Ranges are inclusive and follow PSIC 2009's own section boundaries.
+_PSIC_DIVISION_RANGES = [
+    ((1, 3), "A"), ((5, 9), "B"), ((10, 33), "C"), ((35, 35), "D"),
+    ((36, 39), "E"), ((41, 43), "F"), ((45, 47), "G"), ((49, 53), "H"),
+    ((55, 56), "I"), ((58, 63), "J"), ((64, 66), "K"), ((68, 68), "L"),
+    ((69, 75), "M"), ((77, 82), "N"), ((85, 85), "P"), ((86, 88), "Q"),
+    ((90, 93), "R"), ((94, 96), "S"), ((97, 98), "T"),
+]
+
+# Free text a Tarlac City permit clerk actually writes. Matched against
+# the lowercased cell, longest phrase first, so "internet cafe" is not
+# caught by the bare "cafe" rule and filed under Food and Beverage.
+_TRADE_PHRASES = [
+    ("carinderia", "Food and Beverage"),
+    ("eatery", "Food and Beverage"),
+    ("restaurant", "Food and Beverage"),
+    ("coffee", "Food and Beverage"),
+    ("bakery", "Food and Beverage"),
+    ("bakeshop", "Food and Beverage"),
+    ("catering", "Food and Beverage"),
+    ("canteen", "Food and Beverage"),
+    ("food", "Food and Beverage"),
+    ("cafe", "Food and Beverage"),
+    ("lodging", "Accommodation and Food Service Activities"),
+    ("hotel", "Accommodation and Food Service Activities"),
+    ("resort", "Accommodation and Food Service Activities"),
+    ("sari-sari", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"),
+    ("sari sari", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"),
+    ("grocery", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"),
+    ("wholesale", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"),
+    ("hardware", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"),
+    ("pharmacy", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"),
+    ("drugstore", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"),
+    ("trading", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"),
+    ("retail", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"),
+    ("water refilling", "Water Supply; Sewerage, Waste Management, and Remediation Activities"),
+    ("internet cafe", "Information and Communication"),
+    ("computer shop", "Information and Communication"),
+    ("salon", "Other Service Activities"),
+    ("barber", "Other Service Activities"),
+    ("laundry", "Other Service Activities"),
+    ("repair", "Other Service Activities"),
+    ("printing", "Manufacturing"),
+    ("construction", "Construction"),
+    ("hauling", "Transportation and Storage"),
+    ("trucking", "Transportation and Storage"),
+    ("tricycle", "Transportation and Storage"),
+    ("pawnshop", "Financial and Insurance Activities"),
+    ("remittance", "Financial and Insurance Activities"),
+    ("lending", "Financial and Insurance Activities"),
+    ("apartment", "Real Estate Activities"),
+    ("rental", "Real Estate Activities"),
+    ("clinic", "Human Health and Social Work Activities"),
+    ("dental", "Human Health and Social Work Activities"),
+    ("tutorial", "Education"),
+    ("school", "Education"),
+    ("videoke", "Arts, Entertainment, and Recreation"),
+    ("billiard", "Arts, Entertainment, and Recreation"),
+]
+# Longest first, so a phrase is never shadowed by a shorter one it
+# contains. Sorted once at import rather than on every lookup.
+_TRADE_PHRASES.sort(key=lambda pair: -len(pair[0]))
+
+_SECTION_BY_NAME = {name.casefold(): name for name in BUSINESS_TYPES}
+
+
+def canonical_industry_for(raw_value):
+    """Map one permit register's trade cell onto a BUSINESS_TYPES
+    entry, or None when it cannot be mapped confidently.
+
+    None is a real answer here, not a failure -- see the note above on
+    why a miscounted permit is worse than an uncounted one.
+    """
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+
+    # 1. The exact section name, however it is cased.
+    exact = _SECTION_BY_NAME.get(text.casefold())
+    if exact:
+        return exact
+
+    # 2. A bare section letter. Guarded to a single character, so a
+    #    one-letter cell reads as a section while "Agriculture" does
+    #    not read as the letter A.
+    if len(text) == 1 and text.upper() in _PSIC_SECTION_LETTERS:
+        return _PSIC_SECTION_LETTERS[text.upper()]
+
+    # 3. A numeric PSIC code: its first two digits are the division,
+    #    and the division determines the section.
+    digits = "".join(character for character in text if character.isdigit())
+    if digits:
+        division = int(digits[:2])
+        for (low, high), letter in _PSIC_DIVISION_RANGES:
+            if low <= division <= high:
+                return _PSIC_SECTION_LETTERS[letter]
+        return None
+
+    # 4. Free text. Longest phrase first (see _TRADE_PHRASES).
+    lowered = text.casefold()
+    for phrase, section in _TRADE_PHRASES:
+        if phrase in lowered:
+            return section
+
+    return None

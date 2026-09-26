@@ -1362,3 +1362,28 @@ body.dss-body {
   /* The countdown bar still drains: it conveys the remaining time,
      which is information rather than decoration. */
 }
+
+/* =====================================================================
+   EMPTY STATE  (cold start -- no LGU dataset uploaded yet)
+   =====================================================================
+   Shown where city-wide LGU recommendations would go before any
+   official dataset exists. It is a card rather than a line of grey
+   text because it has a job: say plainly that nothing is wrong, say
+   what is missing, and give the one person who can fix it the button
+   that fixes it. */
+.dss-empty-state {
+  display: flex; gap: .75rem; align-items: flex-start;
+  padding: .9rem 1rem;
+  border: 1px dashed var(--dss-border, #d7dee8);
+  border-radius: .6rem;
+  background: rgba(148, 163, 184, .08);
+}
+.dss-empty-state p { margin: .15rem 0 0; color: var(--dss-muted, #64748b); }
+.dss-empty-state-icon {
+  font-size: 1.4rem; line-height: 1; flex-shrink: 0;
+  color: var(--dss-blue, #2563eb); opacity: .75;
+}
+[data-bs-theme="dark"] .dss-empty-state {
+  border-color: rgba(148, 163, 184, .35);
+  background: rgba(148, 163, 184, .10);
+}

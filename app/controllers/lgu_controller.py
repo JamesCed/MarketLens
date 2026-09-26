@@ -31,7 +31,11 @@ from app.ml.constants import CLUSTER_THRESHOLDS
 from app.utils.decorators import role_required
 from app.utils.helpers import allowed_file, unique_upload_path
 from app.utils.audit import log_action
-from app.services.data_import_service import process_upload
+from app.services.data_import_service import (
+    active_lgu_dataset_summary,
+    has_active_lgu_data,
+    process_upload,
+)
 
 lgu_bp = Blueprint("lgu", __name__)
 
@@ -147,6 +151,13 @@ def dashboard():
         locations=BARANGAY_NAMES,
         sample_barangays=sample_barangays,
         saturated_threshold=CLUSTER_THRESHOLDS[2],
+        # Same cold start as the SME Home panel: the city-wide
+        # recommendation is a claim about the city's own records, so it
+        # is not made until an LGU account has uploaded some. This is
+        # the page that account actually lands on, so it is also where
+        # the "Upload Dataset" way out belongs.
+        has_lgu_data=has_active_lgu_data(),
+        lgu_dataset=active_lgu_dataset_summary(),
     )
 
 

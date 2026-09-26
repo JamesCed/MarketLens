@@ -84,6 +84,24 @@ sme_bp = Blueprint("sme", __name__)
 BUSINESS_STAGES = ["startup", "existing"]
 
 
+def _forecast_predates_lgu_data(forecast):
+    """True when a real LGU upload has landed since this forecast was
+    written, so the forecast is quoting figures the city's own records
+    have since revised.
+
+    Deliberately compares against REAL uploads only -- the placeholder
+    rows the scoring engine creates for itself carry today's date, so
+    counting them would mark every forecast stale the moment a new
+    barangay was scored, and regenerate forever.
+    """
+    from app.services.data_import_service import active_lgu_dataset_summary
+
+    dataset = active_lgu_dataset_summary()
+    if dataset is None or forecast is None or forecast.forecast_date is None:
+        return False
+    return forecast.forecast_date < dataset["upload_date"]
+
+
 @sme_bp.route("/home")
 @role_required("SME")
 def home():
@@ -126,6 +144,15 @@ def home():
         featured_forecast = profiles[0].latest_forecast()
         if featured_forecast is None:
             featured_forecast = generate_forecast_for_profile(profiles[0])
+        elif _forecast_predates_lgu_data(featured_forecast):
+            # An LGU upload has landed since this forecast was written,
+            # so its numbers -- and the recommendation text quoting
+            # them -- describe a city that no longer matches the
+            # records. Re-running it here is what makes "upload the
+            # permits and the output changes" true on the page the SME
+            # actually lands on, rather than only after they happen to
+            # edit their plan.
+            featured_forecast = generate_forecast_for_profile(profiles[0])
 
     featured_industry_type = (
         featured_forecast.input_industry_type if featured_forecast else FEATURED_BUSINESS_TYPES[0]
@@ -145,6 +172,17 @@ def home():
         # panel shows readable text instead of a raw JSON string.
         featured_recommendation = parse_recommendation(featured_forecast.recommendation)
 
+    # COLD START. The "LGU Recommendations" panel ranks barangays
+    # city-wide -- which barangays the city should steer investment to.
+    # That is a claim about the city's own records, so until an LGU
+    # account has actually uploaded some, the panel says so instead of
+    # ranking barangays off auto-generated placeholder rows. Everything
+    # else on this page answers "what does the data we have say", which
+    # is a fair question either way, so none of it is gated.
+    from app.services.data_import_service import active_lgu_dataset_summary, has_active_lgu_data
+
+    has_lgu_data = has_active_lgu_data()
+
     return render_template(
         "sme/home.html",
         profiles=profiles,
@@ -158,6 +196,8 @@ def home():
         featured_recommendation=featured_recommendation,
         quarterly_outlook=quarterly_outlook,
         demand_summary=get_demand_summary(),
+        has_lgu_data=has_lgu_data,
+        lgu_dataset=active_lgu_dataset_summary() if has_lgu_data else None,
     )
 
 

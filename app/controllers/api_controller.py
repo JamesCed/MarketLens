@@ -119,6 +119,62 @@ def locations_forecast():
     return jsonify(rows)
 
 
+@api_bp.route("/lgu-recommendations")
+@login_required
+def lgu_recommendations():
+    """The Home page's "LGU Recommendations" panel: the city's best and
+    worst barangays for one industry, ranked server-side.
+
+    A SEPARATE ENDPOINT FROM /locations-forecast, on purpose.
+
+    /locations-forecast also draws the Saturation Map, and the map has
+    to keep working with or without an uploaded permit register -- it
+    answers "what does the data we have say", which is a fair question
+    either way. This endpoint answers "which barangays should the city
+    steer investment to", which is a claim about the city's own
+    records, and it declines to answer before those records exist.
+    Gating the shared endpoint would have blanked the map in order to
+    gate the panel.
+
+    Ranking happens HERE rather than in the browser because "top
+    opportunity" and "top saturated" are findings, not presentation:
+    the page must not be able to disagree with the API about which
+    barangay is best, and a second consumer should not have to
+    re-implement the sort to get the same answer.
+    """
+    from app.services.data_import_service import has_active_lgu_data
+
+    if not has_active_lgu_data():
+        return jsonify({"has_lgu_data": False, "top_opportunity": [], "top_saturated": []})
+
+    industry_type = request.args.get("industry_type", BUSINESS_TYPES[0])
+    locations = _known_locations()
+    scored = compute_scores_batch([(industry_type, location) for location in locations])
+
+    rows = [
+        {
+            "location": location,
+            "saturation_index": scores["saturation_index"],
+            "viability_score": scores["viability_score"],
+            "cluster_label": scores["cluster_label"],
+            "competitor_count": scores["competitor_count"],
+        }
+        for location, scores in zip(locations, scored)
+    ]
+    # Least saturated first. Ties broken by viability, then by name, so
+    # the list is stable between refreshes -- a "top 3" that reshuffles
+    # on reload with unchanged data reads as noise, not a finding.
+    rows.sort(key=lambda row: (row["saturation_index"], -row["viability_score"], row["location"]))
+
+    return jsonify({
+        "has_lgu_data": True,
+        "industry_type": industry_type,
+        "barangays_ranked": len(rows),
+        "top_opportunity": rows[:3],
+        "top_saturated": list(reversed(rows[-3:])),
+    })
+
+
 @api_bp.route("/forecast")
 @login_required
 def forecast():

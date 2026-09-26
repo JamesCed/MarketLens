@@ -28,6 +28,74 @@
   <div id="smeSearchResults" class="mx-auto" style="max-width:700px;" hidden></div>
 </div>
 
+{#
+  CITY-WIDE RECOMMENDATIONS -- gated on a real LGU upload.
+
+  Which barangays the city should steer investment to is a claim about
+  the city's own records. Before any have been uploaded the app has
+  only the auto-generated placeholder rows the scoring engine writes
+  for itself, and ranking barangays off those would present figures
+  nobody submitted as though the city had. So this says "no record
+  yet" and offers the way out -- on the page the LGU account actually
+  lands on, which is why the Upload button lives here rather than only
+  on the SME Home panel.
+
+  Everything else on this dashboard works either way: the barangay
+  table, the saturation map and the industry cards answer "what does
+  the data we have say", which is a fair question with or without a
+  permit register.
+#}
+<div class="dss-card mb-3">
+  <div class="d-flex justify-content-between align-items-start mb-2">
+    <h6 class="mb-0">City-wide Recommendations</h6>
+    {% if has_lgu_data and lgu_dataset %}
+      <span class="text-muted text-end" style="font-size:.72rem;">
+        {{ lgu_dataset.source }} dataset &middot;
+        uploaded {{ lgu_dataset.upload_date.strftime('%B %d, %Y') }} &middot;
+        {{ lgu_dataset.barangays_covered }} barangay(s)
+      </span>
+    {% endif %}
+  </div>
+
+  {% if has_lgu_data %}
+    <select id="lguRecIndustry" class="form-select form-select-sm mb-3" style="max-width:340px;">
+      {% for bt in business_types %}<option value="{{ bt }}">{{ bt }}</option>{% endfor %}
+    </select>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="fw-semibold small mb-1 text-success">
+          <i class="bi bi-graph-up-arrow"></i> Top Opportunity
+        </div>
+        <ol id="lguTopOpportunity" class="small mb-0 ps-3">
+          <li class="list-unstyled text-muted">
+            <span class="spinner-border spinner-border-sm"></span> Ranking barangays&hellip;
+          </li>
+        </ol>
+      </div>
+      <div class="col-md-6">
+        <div class="fw-semibold small mb-1 text-danger">
+          <i class="bi bi-exclamation-octagon"></i> Top Saturated
+        </div>
+        <ol id="lguTopSaturated" class="small mb-0 ps-3"></ol>
+      </div>
+    </div>
+  {% else %}
+    <div class="dss-empty-state">
+      <i class="bi bi-inbox dss-empty-state-icon" aria-hidden="true"></i>
+      <div class="flex-grow-1">
+        <div class="fw-semibold">No record yet</div>
+        <p class="mb-2">
+          No official LGU dataset is active. Upload business permit data to generate
+          city-wide recommendations.
+        </p>
+        <a href="{{ url_for('lgu.government_upload') }}" class="btn btn-sm btn-primary">
+          <i class="bi bi-upload"></i> Upload Dataset
+        </a>
+      </div>
+    </div>
+  {% endif %}
+</div>
+
 <!-- City-wide industry cards (same layout as the SME Home cards) -->
 <div class="row g-3 mb-2">
   {% for card in industry_cards %}
@@ -233,6 +301,51 @@
         window.location.href = mapUrl + '?location=' + encodeURIComponent(tr.dataset.location || '');
       });
     });
+  })();
+</script>
+
+<script>
+  // ---- City-wide recommendations (Top Opportunity / Top Saturated) ----
+  // The containers only exist once a real LGU dataset is active, so
+  // the guard below is also the cold-start gate on the client side --
+  // no dataset, no fetch, nothing ranked off placeholder rows.
+  //
+  // The ranking itself is the API's, not this page's: see
+  // api.lgu_recommendations for why "top opportunity" is a finding
+  // rather than a presentation detail.
+  (function () {
+    const opportunityBox = document.getElementById('lguTopOpportunity');
+    const saturatedBox = document.getElementById('lguTopSaturated');
+    const picker = document.getElementById('lguRecIndustry');
+    if (!opportunityBox || !saturatedBox) return;
+
+    const line = (r) =>
+      `<li>Brgy. <strong>${r.location}</strong> &mdash; ${r.saturation_index.toFixed(0)}% saturated,`
+      + ` ${r.competitor_count} competitor(s), viability ${r.viability_score}/10</li>`;
+
+    function load() {
+      const industry = picker ? picker.value : '';
+      opportunityBox.innerHTML =
+        '<li class="list-unstyled text-muted"><span class="spinner-border spinner-border-sm"></span> Ranking barangays&hellip;</li>';
+      saturatedBox.innerHTML = '';
+      fetch(`{{ url_for('api.lgu_recommendations') }}?industry_type=${encodeURIComponent(industry)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data || data.has_lgu_data === false) {
+            opportunityBox.innerHTML = '<li class="list-unstyled text-muted">No record yet.</li>';
+            return;
+          }
+          opportunityBox.innerHTML = (data.top_opportunity || []).map(line).join('')
+            || '<li class="list-unstyled text-muted">No barangay data yet.</li>';
+          saturatedBox.innerHTML = (data.top_saturated || []).map(line).join('');
+        })
+        .catch(() => {
+          opportunityBox.innerHTML = '<li class="list-unstyled text-muted">Could not load rankings.</li>';
+        });
+    }
+
+    if (picker) picker.addEventListener('change', load);
+    load();
   })();
 </script>
 {% endblock %}

@@ -18,6 +18,20 @@ DEFAULT_SETTINGS = {
     "msi_weight_sociodemographic": ("0.20", "MSI weight w3 for Socio-Demographic Score"),
     "saturation_alert_threshold": ("75", "Saturation Index (0-100) above which an early-warning notification fires"),
     "places_max_results": ("0", "Max competitor results kept per Google Places text search (0 = unlimited)"),
+    # The day-scoped cap on live Google Places lookups. Places API
+    # (New) bills per call, and with PLACES_LIVE_FETCH=true on a public
+    # URL every signed-in visitor can trigger them -- so the
+    # per-request cap in forecasting_service bounds the wrong quantity
+    # on its own. 0 means unlimited. This bounds what the APP spends; a
+    # quota set in the Google Cloud Console bounds what the KEY can
+    # spend, which also covers anything using it outside this app.
+    "places_daily_call_budget": (
+        "500",
+        "Maximum live Google Places lookups per day (0 = unlimited). Reaching it is not an error: "
+        "the app serves the competitor counts already on file, exactly as when live fetching is off.",
+    ),
+    "places_calls_today": ("0", "Live Google Places lookups spent so far today (maintained by the app)"),
+    "places_calls_day": ("", "The date places_calls_today refers to (maintained by the app)"),
     "use_llm_recommendations": (
         "true",
         "true = use an LLM (GPT-4o-mini via OpenRouter, or Claude, see LLM_PROVIDER/OPENAI_* in .env) to write "

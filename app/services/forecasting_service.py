@@ -59,6 +59,22 @@ from app.ml.seed_data import get_barangay_profile, get_real_population
 # government data for that barangay -- see find_or_create_lgu_data().
 SYSTEM_USER_EMAIL = "system@dss.local"
 
+# The exact zoning_info text on a placeholder lgu_data row -- the rows
+# find_or_create_lgu_data() writes for itself so the model always has a
+# business_density to compute with.
+#
+# IT IS A CONSTANT BECAUSE TWO PLACES DEPEND ON IT MATCHING.
+# data_import_service.has_active_lgu_data() has to tell a row the app
+# invented from a row a person uploaded, and authorship alone does not
+# settle it: _get_system_user_id() falls back to "the first Admin, then
+# any user" on a database with no system account, so a placeholder can
+# end up attributed to a real person. This sentence is written in one
+# place and read in the other, so re-wording it cannot silently turn
+# every placeholder into an "official dataset".
+PLACEHOLDER_ZONING_NOTE = (
+    "Auto-generated placeholder -- no LGU upload on file yet for this location."
+)
+
 _MODEL_CACHE = {"rf": None, "loaded": False}
 
 # How many SIMULATED market_data rows a single web request is allowed to
@@ -99,23 +115,138 @@ def set_places_refresh_budget(limit):
         pass
 
 
+# ---------------------------------------------------------------------
+# THE DAY BUDGET -- the one that stands between a public URL and a bill
+# ---------------------------------------------------------------------
+# The per-request budget above bounds ONE page load. It does nothing
+# about a thousand page loads, and Places API (New) is billed per call.
+# With PLACES_LIVE_FETCH=true on a public deployment, every visitor who
+# can sign in can trigger lookups, so the per-request cap alone bounds
+# the wrong quantity entirely.
+#
+# This is a second, day-scoped cap, counted in system_settings so it
+# survives a worker restart and can be changed from the Admin page
+# without a redeploy. Reaching it does not break anything: lookups stop
+# and the app serves the counts already on file, which is exactly what
+# PLACES_LIVE_FETCH=false does all the time.
+#
+# IT IS NOT A SUBSTITUTE FOR GOOGLE'S OWN QUOTA. This bounds what the
+# APP spends. A quota set in the Cloud Console bounds what the KEY can
+# spend, including anything that gets hold of it outside this app.
+# Both, or neither is worth much.
+PLACES_DAILY_BUDGET_KEY = "places_daily_call_budget"
+PLACES_DAY_COUNTER_KEY = "places_calls_today"
+PLACES_DAY_STAMP_KEY = "places_calls_day"
+DEFAULT_PLACES_DAILY_BUDGET = 500
+
+
+def places_calls_today():
+    """(calls used today, budget) for the Admin page. Budget 0 means
+    unlimited. Read-only -- it never advances the counter."""
+    today = date.today().isoformat()
+    if _DAY_SPEND["day"] == today:
+        used = _DAY_SPEND["used"]          # the live tally beats the snapshot
+    else:
+        stamp = SystemSetting.get(PLACES_DAY_STAMP_KEY, "")
+        used = int(SystemSetting.get_float(PLACES_DAY_COUNTER_KEY, 0) or 0)
+        if stamp != today:
+            used = 0
+    budget = int(SystemSetting.get_float(PLACES_DAILY_BUDGET_KEY, DEFAULT_PLACES_DAILY_BUDGET) or 0)
+    return used, budget
+
+
+# Counted in memory, persisted for visibility. See _spend_day_budget.
+_DAY_SPEND = {"day": None, "used": 0}
+
+
+def _spend_day_budget():
+    """Count one live lookup against today's allowance. False when the
+    allowance is gone.
+
+    ENFORCED IN MEMORY, PERSISTED ONLY WHEN IT IS SAFE TO.
+
+    SystemSetting.set() commits. Calling it from here would commit
+    whatever else the caller happens to have staged -- and this runs
+    deep inside scoring, which the LGU upload pipeline's single
+    all-or-nothing transaction must be able to survive. A budget
+    counter that can half-commit somebody else's file import is a
+    far worse bug than an imprecise counter.
+
+    So the in-memory tally is what enforces the cap, and the row is
+    written only when the session has nothing pending. That is exact
+    for this deployment (gunicorn --workers 1, so one process holds
+    the whole tally) and slightly under-counts across a restart, which
+    errs toward letting a lookup through rather than blocking one --
+    the right direction for a safety net whose hard backstop is
+    Google's own quota.
+    """
+    try:
+        today = date.today().isoformat()
+
+        # Whether the CALLER has work in flight, captured before this
+        # function touches the session at all.
+        #
+        # Checking it later does not work, and a test caught that:
+        # every SystemSetting read below runs a query, a query
+        # AUTOFLUSHES pending objects into the transaction, and the
+        # commit that follows would then persist them. The guard has to
+        # be read first, and the reads themselves have to happen with
+        # autoflush off, or simply asking what the budget is would
+        # flush somebody else's half-built import into the database.
+        caller_has_pending = bool(db.session.new or db.session.dirty or db.session.deleted)
+
+        with db.session.no_autoflush:
+            if _DAY_SPEND["day"] != today:
+                # New day in this process. A stored count is trusted
+                # only if it is for today, so a mid-day restart resumes
+                # the allowance rather than starting it over.
+                stored_day = SystemSetting.get(PLACES_DAY_STAMP_KEY, "")
+                stored_used = int(SystemSetting.get_float(PLACES_DAY_COUNTER_KEY, 0) or 0)
+                _DAY_SPEND["day"] = today
+                _DAY_SPEND["used"] = stored_used if stored_day == today else 0
+
+            budget = int(SystemSetting.get_float(PLACES_DAILY_BUDGET_KEY,
+                                                 DEFAULT_PLACES_DAILY_BUDGET) or 0)
+
+        if budget and _DAY_SPEND["used"] >= budget:
+            return False
+
+        _DAY_SPEND["used"] += 1
+
+        if not caller_has_pending:
+            SystemSetting.set(PLACES_DAY_STAMP_KEY, today)
+            SystemSetting.set(PLACES_DAY_COUNTER_KEY, str(_DAY_SPEND["used"]))
+        return True
+    except Exception:  # pragma: no cover - a broken counter must not block the page
+        from flask import current_app
+
+        current_app.logger.warning("Places day budget check failed", exc_info=True)
+        return True
+
+
 def _can_spend_live_refresh():
     """True if this request still has budget to attempt a live Places
     lookup. Outside a request context (CLI scripts, seeding, tests)
-    there is no budget and every lookup is allowed."""
+    the per-request budget does not apply -- but the DAY budget still
+    does, because a script left in a loop spends the same money a web
+    request does."""
     try:
         from flask import g, has_request_context
 
         if not has_request_context():
-            return True
+            return _spend_day_budget()
+
         budget = getattr(g, "_dss_places_budget", _MAX_LIVE_REFRESH_PER_REQUEST)
-        if budget is None:
-            return True
-        used = getattr(g, "_dss_places_refreshes", 0)
-        if used >= budget:
-            return False
-        g._dss_places_refreshes = used + 1
-        return True
+        if budget is not None:
+            used = getattr(g, "_dss_places_refreshes", 0)
+            if used >= budget:
+                return False
+            g._dss_places_refreshes = used + 1
+
+        # Per-request budget passed; the day's allowance is the last
+        # word. Checked second so an already-exhausted request does not
+        # consume a day slot it will not use.
+        return _spend_day_budget()
     except (ImportError, RuntimeError):
         return True
 
@@ -384,7 +515,7 @@ def find_or_create_lgu_data(location):
 
     row = LguData(
         source="Other",
-        zoning_info="Auto-generated placeholder -- no LGU upload on file yet for this location.",
+        zoning_info=PLACEHOLDER_ZONING_NOTE,
         closure_records=0,
         barangay=location,
         permit_count=0,
@@ -398,11 +529,101 @@ def find_or_create_lgu_data(location):
     return row
 
 
-def build_feature_vector(market, lgu, years_in_operation, industry_type):
+# =====================================================================
+# COMPETITOR DENSITY: GOOGLE PLACES RECONCILED WITH LGU PERMITS
+# =====================================================================
+# Two sources now write a competitor count for the same (industry,
+# barangay) into market_data:
+#
+#   source = "Google Places API"  -- what Google can see operating.
+#   source = "DTI"                -- what the city has issued permits
+#                                    for, grouped per trade by the LGU
+#                                    upload pipeline (see
+#                                    data_import_service.derive_permit_counts).
+#
+# NEWEST-ROW-WINS IS THE WRONG MERGE. It is what the app did by
+# accident, and it means whichever source was written last silently
+# erases the other: upload a permit register on Tuesday and a Places
+# count of 12 becomes a permit count of 3, not because the market
+# changed but because a file was uploaded.
+#
+# WHY max() IS THE RIGHT ONE. Both sources UNDERCOUNT, in different
+# directions, and neither contains the other:
+#
+#   * Google lists businesses that chose to be listed. Unlisted
+#     micro-enterprises -- a large share of Philippine SMEs -- are
+#     invisible to it, and a Text Search stops issuing page tokens
+#     after 60 results.
+#   * A permit register holds businesses that registered. Informal
+#     operators, and anyone trading on a lapsed permit, are missing
+#     from it.
+#
+# A business seen by EITHER source exists. So the count supported by
+# the evidence is the larger of the two, never their sum (which would
+# double-count every business that is both listed and licensed, i.e.
+# most established ones) and never the newest (which discards
+# evidence). max() is the conservative floor: "at least this many
+# competitors are really there".
+#
+# Each source is taken at its own freshest date, so an old permit
+# register does not hold back a fresh Google count, and vice versa.
+
+_COMPETITOR_SOURCES = ("Google Places API", "DTI")
+
+
+def reconciled_competitor_counts(industries, locations):
+    """{(industry, location): count} merged across sources, in one
+    query. Pairs with no competitor figure at all are simply absent --
+    callers keep whatever the chosen market_data row already held."""
+    rows = (
+        db.session.query(
+            MarketData.industry_type,
+            MarketData.location,
+            MarketData.source,
+            MarketData.competitor_count,
+            MarketData.date_recorded,
+            MarketData.market_id,
+        )
+        .filter(
+            MarketData.industry_type.in_(industries),
+            MarketData.location.in_(locations),
+            MarketData.source.in_(_COMPETITOR_SOURCES),
+            MarketData.competitor_count.isnot(None),
+        )
+        .all()
+    )
+
+    # Freshest row per (industry, location, source) first...
+    freshest = {}
+    for industry, location, source, count, recorded, market_id in rows:
+        key = (industry, location, source)
+        rank = (recorded, market_id)
+        if key not in freshest or rank > freshest[key][0]:
+            freshest[key] = (rank, int(count))
+
+    # ...then the larger of whatever sources that barangay has.
+    merged = {}
+    for (industry, location, _source), (_rank, count) in freshest.items():
+        pair = (industry, location)
+        if pair not in merged or count > merged[pair]:
+            merged[pair] = count
+    return merged
+
+
+def build_feature_vector(market, lgu, years_in_operation, industry_type, competitor_count=None):
     """Order MUST match app/ml/constants.py FEATURE_NAMES exactly -- this
-    is the single source of truth train_model.py and this file both use."""
+    is the single source of truth train_model.py and this file both use.
+
+    `competitor_count` overrides the chosen row's own figure with the
+    reconciled cross-source one (see reconciled_competitor_counts). It
+    is passed in rather than written onto the row because the row is a
+    live ORM object: assigning to it would mark the session dirty and
+    quietly persist a derived number as though it had been measured.
+    """
+    if competitor_count is None:
+        competitor_count = market.competitor_count
     return [
-        float(market.competitor_count or 0),
+        float(competitor_count or 0),
         float(market.population_density or 0),
         float(market.foot_traffic_index or 0),
         float(market.average_rent or 0),
@@ -483,7 +704,11 @@ def compute_scores(industry_type, location, years_in_operation=0):
     market = find_or_create_market_data(industry_type, location)
     lgu = find_or_create_lgu_data(location)
 
-    feature_vector = build_feature_vector(market, lgu, years_in_operation, industry_type)
+    competitor_count = reconciled_competitor_counts([industry_type], [location]).get(
+        (industry_type, location), market.competitor_count
+    )
+    feature_vector = build_feature_vector(market, lgu, years_in_operation, industry_type,
+                                          competitor_count=competitor_count)
     saturation_index, confidence_level, model_version = _predict_saturation(feature_vector)
     viability_score = round(max(0.0, min(10.0, (100.0 - saturation_index) / 10.0)), 1)
     cluster_label = _cluster_label_for(saturation_index)
@@ -493,7 +718,7 @@ def compute_scores(industry_type, location, years_in_operation=0):
         "location": location,
         "market_id": market.market_id,
         "lgu_id": lgu.lgu_id,
-        "competitor_count": market.competitor_count,
+        "competitor_count": competitor_count,
         "saturation_index": saturation_index,
         "viability_score": viability_score,
         "confidence_level": confidence_level,
@@ -535,6 +760,8 @@ def compute_scores_batch(pairs, years_in_operation=0):
 
     market_by_key = _latest_market_rows(industries, locations)
     lgu_by_location = _lgu_rows(locations)
+    # One extra query for the whole batch, not one per pair.
+    merged_counts = reconciled_competitor_counts(industries, locations)
 
     resolved, missing = [], []
     for index, (industry, location) in enumerate(pairs):
@@ -549,8 +776,11 @@ def compute_scores_batch(pairs, years_in_operation=0):
 
     if resolved:
         matrix = np.array([
-            build_feature_vector(market, lgu, years_in_operation, industry)
-            for _i, industry, _loc, market, lgu in resolved
+            build_feature_vector(
+                market, lgu, years_in_operation, industry,
+                competitor_count=merged_counts.get((industry, location), market.competitor_count),
+            )
+            for _i, industry, location, market, lgu in resolved
         ])
         _load_models()
         rf_model = _MODEL_CACHE["rf"]
@@ -562,8 +792,10 @@ def compute_scores_batch(pairs, years_in_operation=0):
             # so defer to it rather than restating the formula here.
             for position, (index, industry, location, market, lgu) in enumerate(resolved):
                 saturation, confidence, version = _predict_saturation(list(matrix[position]))
-                results[index] = _score_dict(industry, location, market, lgu,
-                                             saturation, confidence, version)
+                results[index] = _score_dict(
+                    industry, location, market, lgu, saturation, confidence, version,
+                    competitor_count=merged_counts.get((industry, location), market.competitor_count),
+                )
         else:
             predictions = np.clip(rf_model.predict(matrix), 0.0, 100.0)
             spreads = _tree_predictions(rf_model, matrix).std(axis=0)
@@ -572,6 +804,7 @@ def compute_scores_batch(pairs, years_in_operation=0):
                 results[index] = _score_dict(
                     industry, location, market, lgu,
                     float(predictions[position]), float(confidences[position]), "rf_v1",
+                    competitor_count=merged_counts.get((industry, location), market.competitor_count),
                 )
 
     for index in missing:
@@ -581,16 +814,24 @@ def compute_scores_batch(pairs, years_in_operation=0):
     return results
 
 
-def _score_dict(industry_type, location, market, lgu, saturation_index, confidence_level, model_version):
+def _score_dict(industry_type, location, market, lgu, saturation_index, confidence_level,
+                model_version, competitor_count=None):
     """The one place the compute_scores() result shape is defined, so
-    the batch path cannot drift away from the single-row path."""
+    the batch path cannot drift away from the single-row path.
+
+    `competitor_count` is the reconciled cross-source figure. It is
+    reported as well as scored: a card that says "12 competitors" and
+    a model that scored 3 would be two different answers on one page.
+    """
     saturation_index = round(max(0.0, min(100.0, saturation_index)), 2)
+    if competitor_count is None:
+        competitor_count = market.competitor_count
     return {
         "industry_type": industry_type,
         "location": location,
         "market_id": market.market_id,
         "lgu_id": lgu.lgu_id,
-        "competitor_count": market.competitor_count,
+        "competitor_count": competitor_count,
         "saturation_index": saturation_index,
         "viability_score": round(max(0.0, min(10.0, (100.0 - saturation_index) / 10.0)), 1),
         "confidence_level": round(confidence_level, 2),

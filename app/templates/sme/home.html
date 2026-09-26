@@ -120,6 +120,57 @@
     <div class="dss-card h-100">
       <h6 class="mb-3">Forecast &amp; Recommendations</h6>
 
+      {#
+        COLD START. Ranking barangays city-wide is a claim
+        about the city's own records, so it is not made until
+        an LGU account has uploaded some. Before that this is
+        an empty state with a way out of it, rather than a
+        spinner that resolves into rankings computed from
+        auto-generated placeholder rows -- numbers nobody
+        submitted, presented as though the city had.
+
+        The gate is server-side (has_lgu_data, from
+        data_import_service.has_active_lgu_data). The fetch
+        lives inside this branch too, so the ranking endpoint
+        is never even called in the empty state.
+      #}
+      <div class="small mb-2">
+        <span class="fw-bold">LGU Recommendations</span>
+        {% if has_lgu_data %}
+          <div id="lguRecommendationList" class="mt-1">
+            <div class="text-muted"><span class="spinner-border spinner-border-sm"></span> Ranking barangays&hellip;</div>
+          </div>
+          {% if lgu_dataset %}
+            <div class="text-muted mt-1" style="font-size:.72rem;">
+              From the {{ lgu_dataset.source }} dataset uploaded
+              {{ lgu_dataset.upload_date.strftime('%B %d, %Y') }} &middot;
+              {{ lgu_dataset.barangays_covered }} barangay(s) on file
+            </div>
+          {% endif %}
+        {% else %}
+          <div class="dss-empty-state mt-2">
+            <i class="bi bi-inbox dss-empty-state-icon" aria-hidden="true"></i>
+            <div class="flex-grow-1">
+              <div class="fw-semibold">No record yet</div>
+              <p class="mb-2">
+                No official LGU dataset is active. Upload business permit data to
+                generate city-wide recommendations.
+              </p>
+              {% if current_user.role in ('LGU', 'Admin') %}
+                <a href="{{ url_for('lgu.government_upload') }}" class="btn btn-sm btn-primary">
+                  <i class="bi bi-upload"></i> Upload Dataset
+                </a>
+              {% else %}
+                {# An SME cannot upload one, so offering them
+                   the button would be a dead end. Say who can. #}
+                <span class="text-muted">Your city's LGU account can upload one.</span>
+              {% endif %}
+            </div>
+          </div>
+        {% endif %}
+      </div>
+
+
       {% if featured_forecast %}
         {% set f = featured_forecast %}
         <p class="text-muted small mb-2">{{ f.input_industry_type }} in {{ f.input_location }}</p>
@@ -157,12 +208,6 @@
             <div class="d-flex gap-3">
               <div class="fs-3">💡</div>
               <div class="flex-grow-1">
-                <div class="small mb-2">
-                  <span class="fw-bold">LGU Recommendations</span>
-                  <div id="lguRecommendationList" class="mt-1">
-                    <div class="text-muted"><span class="spinner-border spinner-border-sm"></span> Ranking barangays&hellip;</div>
-                  </div>
-                </div>
                 <div class="small">
                   <span class="fw-bold">Recommendation:</span><br>
                   {% if featured_recommendation and featured_recommendation.headline %}
@@ -370,22 +415,39 @@
   // map.js below, which calls this same endpoint on its own.
   (function () {
     const industryType = {{ featured_industry_type|tojson }};
+    // Absent in the cold-start state: the template renders the empty
+    // card instead of this container, so the ranking endpoint is never
+    // called and no barangay is ranked off placeholder rows.
     const lguBox = document.getElementById('lguRecommendationList');
     if (!lguBox) return;
 
-    fetch(`{{ url_for('api.locations_forecast') }}?industry_type=${encodeURIComponent(industryType)}`)
+    // The ranking is done server-side now (see api.lgu_recommendations).
+    // This used to fetch every barangay's score and sort them here,
+    // which meant the page and the API could disagree about which
+    // barangay was best, and any second consumer had to re-implement
+    // the same sort to get the same answer.
+    fetch(`{{ url_for('api.lgu_recommendations') }}?industry_type=${encodeURIComponent(industryType)}`)
       .then((r) => r.json())
-      .then((rows) => {
-        if (!Array.isArray(rows) || !rows.length) {
+      .then((data) => {
+        if (!data || data.has_lgu_data === false) {
+          // Server says there is no active dataset after all -- one may
+          // have been deactivated since this page rendered.
+          lguBox.innerHTML = '<div class="text-muted">No record yet &mdash; no official LGU dataset is active.</div>';
+          return;
+        }
+        const opportunity = data.top_opportunity || [];
+        const saturated = data.top_saturated || [];
+        if (!opportunity.length && !saturated.length) {
           lguBox.innerHTML = '<div class="text-muted">No barangay data yet.</div>';
           return;
         }
-        const sorted = [...rows].sort((a, b) => a.saturation_index - b.saturation_index);
-        const topOpportunity = sorted.slice(0, 3);
-        const topSaturated = sorted.slice(-3).reverse();
-        const rows3 = topOpportunity.map((r) => `<li>Top Opportunity: Brgy. ${r.location} (${r.saturation_index.toFixed(0)}% saturated)</li>`).join('');
-        const rows4 = topSaturated.map((r) => `<li>Top Saturated: Brgy. ${r.location} (${r.saturation_index.toFixed(0)}% saturated)</li>`).join('');
-        lguBox.innerHTML = `<ul class="mt-1 mb-0 ps-3">${rows3}${rows4}</ul>`;
+        const line = (label, r) =>
+          `<li>${label}: Brgy. ${r.location} (${r.saturation_index.toFixed(0)}% saturated,`
+          + ` ${r.competitor_count} competitor(s))</li>`;
+        lguBox.innerHTML = '<ul class="mt-1 mb-0 ps-3">'
+          + opportunity.map((r) => line('Top Opportunity', r)).join('')
+          + saturated.map((r) => line('Top Saturated', r)).join('')
+          + '</ul>';
       })
       .catch(() => {
         lguBox.innerHTML = '<div class="text-muted">Could not load rankings.</div>';
