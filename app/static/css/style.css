@@ -43,10 +43,7 @@ body.dss-body {
 .dss-sidebar-header { padding: 1rem; border-bottom: 1px solid #e5e7eb; }
 .dss-sidebar-brand { font-weight: 700; font-size: 0.85rem; line-height: 1.3; display:flex; gap:.5rem; align-items:flex-start;}
 .dss-logo-dot { width: 10px; height: 10px; background: var(--dss-blue); border-radius: 2px; margin-top:4px; flex-shrink:0;}
-/* A flex column so Support can be pushed to the bottom with
-   margin-top:auto -- see .dss-nav-support. As a plain block the
-   auto margin does nothing and Support just sits under Settings. */
-.dss-nav { flex: 1; padding: .75rem; overflow-y: auto; display: flex; flex-direction: column; }
+.dss-nav { flex: 1; padding: .75rem; overflow-y: auto; }
 .dss-nav-link {
   display: flex; align-items: center; gap: .6rem;
   padding: .55rem .75rem; margin-bottom: .2rem; border-radius: .4rem;
@@ -55,7 +52,7 @@ body.dss-body {
 .dss-nav-link:hover { background: #e5e7eb; }
 .dss-nav-link.active { background: var(--dss-blue-light); color: var(--dss-blue-dark); font-weight: 600; }
 .dss-nav-section { font-size: .7rem; color: #9ca3af; letter-spacing: .05em; margin: .75rem .5rem .25rem; }
-.dss-sidebar-footer { padding: .75rem 1rem; font-size: .7rem; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+.dss-sidebar-footer { padding: .5rem .75rem; border-top: 1px solid #e5e7eb; }
 
 /* ---------------- Layout ---------------- */
 .dss-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -332,13 +329,23 @@ body.dss-body {
    <button> (it opens a dialog, not a location), so these undo the
    button defaults that would otherwise make it look unlike its
    neighbours. */
+/* Support is a <button> (it opens a dialog, not a location) sitting in
+   the sidebar footer. These undo the button defaults that would
+   otherwise make it look unlike the nav links above it.
+
+   NOTE font-size, explicitly. An earlier version used the `font`
+   SHORTHAND with `inherit`, which also reset font-size -- to the
+   sidebar's 1rem rather than .dss-nav-link's .9rem -- so Support
+   rendered visibly larger than Settings directly above it. Inherit the
+   family, keep the link's size. */
 .dss-nav-support {
-  margin-top: auto;   /* the gap above it: see .dss-nav */
   width: 100%;
+  margin-bottom: 0;
   text-align: left;
   border: 0;
   background: none;
-  font: inherit;
+  font-family: inherit;
+  font-size: .9rem;
   cursor: pointer;
 }
 

@@ -83,17 +83,17 @@
       <i class="bi bi-gear"></i> Settings
     </a>
 
-    {# Pushed to the bottom of the nav by .dss-nav-support's margin-top:
-       auto, so it sits away from the pages and reads as a different
-       kind of thing -- help, not another destination. #}
-    <button type="button" class="dss-nav-link dss-nav-support"
-            data-bs-toggle="modal" data-bs-target="#supportModal">
-      <i class="bi bi-life-preserver"></i> Support
-    </button>
   </nav>
 
+  {# Support lives in the FOOTER rather than the nav list: it is help,
+     not a seventh destination, and sitting below the divider says that
+     without needing a label. It also replaces the old "TARLAC CITY LGU
+     DEMO" caption, which said nothing a visitor could act on. #}
   <div class="dss-sidebar-footer">
-    TARLAC CITY LGU DEMO
+    <button type="button" class="dss-nav-link dss-nav-support"
+            data-bs-toggle="modal" data-bs-target="#supportModal">
+      <i class="bi bi-question-circle"></i> Support
+    </button>
   </div>
 </aside>
 
