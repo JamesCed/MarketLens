@@ -312,11 +312,19 @@ def register():
             # like "verification is broken" and starts looking like
             # "verification quietly is not happening". Nobody notices
             # until they wonder why unverified accounts exist.
+            # The reason is whatever the transport recorded, not a
+            # guess. This line used to name GMAIL_ADDRESS and port 587
+            # unconditionally -- so on a deployment using the Brevo
+            # transport it sent the reader to check two settings that
+            # were not involved, directly underneath the line stating
+            # the real cause. An error message that contradicts the one
+            # above it is worse than no error message.
+            failure = email_service.last_failure()
             current_app.logger.error(
-                "verification email to %s could not be sent -- check GMAIL_ADDRESS / "
-                "GMAIL_APP_PASSWORD (spaces removed) and whether this host allows "
-                "outbound SMTP on port 587",
+                "verification email to %s could not be sent: %s%s",
                 email,
+                failure.get("detail", "no detail recorded"),
+                f" -- {failure['hint']}" if failure.get("hint") else "",
             )
             if current_app.config.get("REQUIRE_EMAIL_VERIFICATION", False):
                 flash(
@@ -560,8 +568,11 @@ def forgot_password():
                 # failed would confirm the account exists, which is the
                 # one thing this route must not do.
                 current_app.logger.error(
-                    "password reset code for %s could not be sent -- see /admin/email-status",
+                    "password reset code for %s could not be sent: %s%s",
                     email,
+                    email_service.last_failure().get("detail", "no detail recorded"),
+                    (f" -- {email_service.last_failure()['hint']}"
+                     if email_service.last_failure().get("hint") else ""),
                 )
 
         flash(

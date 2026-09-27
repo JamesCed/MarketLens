@@ -304,8 +304,25 @@ def _hint_for(detail):
                 "services as of 26 September 2026, and no app password fixes that. Either "
                 "upgrade to a paid instance, or set BREVO_API_KEY to send over HTTPS "
                 "instead (see app/services/email_service.py).")
+    if "key not found" in lowered:
+        # Brevo's page is headed "SMTP & API" and offers two
+        # credentials that look alike. The SMTP one (xsmtpsib-) is a
+        # password for their mail relay; the REST API only accepts the
+        # API key (xkeysib-). Handing the REST API the SMTP key returns
+        # exactly this, and "Key not found" reads like "your key was
+        # deleted" rather than "that is the wrong kind of key" -- which
+        # sends people off regenerating a credential that was never the
+        # problem.
+        return ("Brevo does not recognise this credential. The most likely cause is the "
+                "wrong KIND of key: Brevo's 'SMTP & API' page offers both an SMTP key "
+                "(starts xsmtpsib-, for their mail relay) and an API key (starts "
+                "xkeysib-, for the REST API this app uses). Only the xkeysib- one works "
+                "here. Open Brevo > SMTP & API > API keys and copy that value into "
+                "BREVO_API_KEY.")
     if "unauthorized" in lowered or "401" in lowered:
-        return "Brevo rejected the API key. Check BREVO_API_KEY."
+        return ("Brevo rejected the API key. Check BREVO_API_KEY is the xkeysib- API key "
+                "from Brevo > SMTP & API > API keys, copied whole and with no trailing "
+                "space.")
     if "sender" in lowered and ("not valid" in lowered or "400" in lowered):
         return ("Brevo will only send from a verified sender. Add the address in "
                 "MAIL_FROM_ADDRESS (or GMAIL_ADDRESS) to Brevo under Senders & IPs, "
@@ -406,10 +423,29 @@ def status():
 
     password = current_app.config.get("GMAIL_APP_PASSWORD") or ""
     brevo_key = current_app.config.get("BREVO_API_KEY") or ""
+
+    # The prefix is reported because it is the whole diagnosis for the
+    # most common Brevo mistake -- see _hint_for's "key not found"
+    # branch. Three characters of a key identify its TYPE and are no
+    # use to anybody who steals them.
+    brevo_report = {"set": bool(brevo_key), "length": len(brevo_key)}
+    if brevo_key:
+        if brevo_key.startswith("xkeysib-"):
+            brevo_report["kind"] = "API key (correct for this app)"
+        elif brevo_key.startswith("xsmtpsib-"):
+            brevo_report["kind"] = "SMTP key -- WRONG KIND"
+            brevo_report["fix"] = (
+                "This is Brevo's SMTP relay password, which their REST API rejects with "
+                "401 'Key not found'. Copy the xkeysib- API key from Brevo > SMTP & API "
+                "> API keys instead."
+            )
+        else:
+            brevo_report["kind"] = "unrecognised prefix -- expected xkeysib-"
+
     return {
         "configured": is_configured(),
         "transport": "brevo (HTTPS)" if brevo_key else "gmail smtp (port 587)",
-        "brevo_api_key": {"set": bool(brevo_key), "length": len(brevo_key)},
+        "brevo_api_key": brevo_report,
         "sending_as": _from_address()[1] or "(not set)",
         "gmail_address": current_app.config.get("GMAIL_ADDRESS", "") or "(not set)",
         "app_password": {

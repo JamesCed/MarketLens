@@ -720,3 +720,84 @@ def test_the_brevo_key_is_redacted_from_a_traceback(app):
         failure = email_service.last_failure()
 
     assert "xkeysib-SECRET-value-here" not in repr(failure)
+
+
+# ---------------------------------------------------------------------
+# 8. The Brevo key mix-up that actually happened
+# ---------------------------------------------------------------------
+# A live deployment logged, verbatim:
+#
+#   Brevo returned HTTP 401: {"message":"Key not found","code":"unauthorized"}
+#
+# Brevo's page is headed "SMTP & API" and offers two credentials that
+# look alike. The SMTP one (xsmtpsib-) is a password for their mail
+# relay; the REST API only accepts the API key (xkeysib-). Giving the
+# REST API the SMTP key returns exactly that 401 -- and "Key not found"
+# reads like "your key was deleted", which sends people off
+# regenerating a credential that was never the problem.
+
+def test_an_smtp_key_in_the_api_slot_is_named_as_the_problem(app):
+    from app.services import email_service
+
+    app.config["BREVO_API_KEY"] = "xsmtpsib-abc123-defg"
+    with app.app_context():
+        report = email_service.status()["brevo_api_key"]
+
+    assert "WRONG KIND" in report["kind"]
+    assert "xkeysib-" in report["fix"]
+
+
+def test_a_correct_api_key_is_reported_as_correct(app):
+    from app.services import email_service
+
+    app.config["BREVO_API_KEY"] = "xkeysib-abc123-defg"
+    with app.app_context():
+        report = email_service.status()["brevo_api_key"]
+
+    assert "correct" in report["kind"]
+    assert "fix" not in report
+
+
+def test_key_not_found_explains_the_two_kinds_of_key(app):
+    """The hint has to name the cause. "Brevo rejected the API key" is
+    true and sends you to regenerate the same wrong credential."""
+    from app.services import email_service
+
+    with app.app_context():
+        email_service._record_failure(RuntimeError(
+            'Brevo returned HTTP 401: {"message":"Key not found","code":"unauthorized"}'
+        ))
+        hint = email_service.last_failure()["hint"]
+
+    assert "xsmtpsib-" in hint and "xkeysib-" in hint
+    assert "API keys" in hint
+
+
+def test_the_failure_log_reports_the_real_reason_not_a_guess(app, monkeypatch, caplog):
+    """The log line under the real error used to say "check
+    GMAIL_ADDRESS / GMAIL_APP_PASSWORD ... SMTP on port 587" even on a
+    deployment using the Brevo transport -- pointing at two settings
+    that were not involved, immediately below the line stating the
+    actual cause."""
+    import logging
+
+    from app.services import email_service
+
+    def failing(*_args, **_kwargs):
+        email_service._record_failure(RuntimeError(
+            'Brevo returned HTTP 401: {"message":"Key not found","code":"unauthorized"}'
+        ))
+        return False
+
+    monkeypatch.setattr(email_service, "send_verification_code", failing)
+    app.config["REQUIRE_EMAIL_VERIFICATION"] = True
+
+    client = app.test_client()
+    with caplog.at_level(logging.ERROR):
+        _register(client)
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Key not found" in logged, "the log does not carry the transport's own reason"
+    assert "port 587" not in logged, (
+        "the log still blames SMTP on a deployment that was not using SMTP"
+    )
