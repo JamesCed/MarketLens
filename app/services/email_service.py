@@ -57,12 +57,30 @@ def is_configured():
 
 def _send(to_email, to_name, subject, body):
     """Deliver one plain-text message. True if a transport accepted it.
-    Never raises -- a mail failure must not 500 a registration."""
+
+    NEVER RAISES, and this outer guard is the one that makes that true.
+
+    The transports below each catch what they expect -- an SMTP error,
+    an HTTP error. This catches what they do not: anything raised
+    before their own try block, by a library version that behaves
+    differently on the host than it does here, or by a response shape
+    nobody anticipated. Registration and password reset both call this
+    while the visitor is mid-form, and a mail problem turning into a
+    500 loses their typing and tells them nothing.
+
+    "Defensive" is usually a smell. Here it is the actual requirement:
+    sending email is the one step in these flows that depends on a
+    third party, a network and a credential all at once.
+    """
     from flask import current_app
 
-    if current_app.config.get("BREVO_API_KEY"):
-        return _send_via_brevo(to_email, to_name, subject, body)
-    return _send_via_gmail_smtp(to_email, subject, body)
+    try:
+        if current_app.config.get("BREVO_API_KEY"):
+            return _send_via_brevo(to_email, to_name, subject, body)
+        return _send_via_gmail_smtp(to_email, subject, body)
+    except Exception as exc:  # noqa: BLE001
+        _record_failure(exc, include_traceback=True)
+        return False
 
 
 def _from_address():
@@ -211,7 +229,7 @@ def send_password_reset_code(to_email, to_name, code):
 _LAST_FAILURE = {}
 
 
-def _record_failure(exc):
+def _record_failure(exc, include_traceback=False):
     from datetime import datetime
 
     detail = f"{type(exc).__name__}: {exc}"
@@ -221,27 +239,48 @@ def _record_failure(exc):
         "at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "hint": _hint_for(detail),
     })
+
+    # An UNEXPECTED exception -- one the transports did not anticipate
+    # -- carries its traceback into the diagnostics, because for those
+    # the type and message alone are rarely enough to say what to
+    # change. Redacted like everything else. Expected failures (a 535,
+    # a timeout) do not, since their hint already says what to do.
+    if include_traceback:
+        import traceback
+
+        _LAST_FAILURE["traceback"] = _redact(traceback.format_exc(), limit=1500)
+        _LAST_FAILURE["hint"] = (
+            _LAST_FAILURE["hint"]
+            or "Unexpected error inside the mail transport -- the traceback below is "
+               "the whole of it. This is a bug rather than a configuration problem."
+        )
+
     try:
         from flask import current_app
 
-        current_app.logger.error("verification email failed: %s", _LAST_FAILURE["detail"])
+        current_app.logger.error(
+            "verification email failed: %s", _LAST_FAILURE["detail"],
+            exc_info=include_traceback,
+        )
     except Exception:  # pragma: no cover - no app context
         pass
 
 
-def _redact(text):
-    """The app password must never reach a log line or a diagnostics
-    page; smtplib puts attempted credentials into some error messages."""
+def _redact(text, limit=400):
+    """No credential may reach a log line or a diagnostics page.
+    smtplib puts attempted credentials into some error messages, and a
+    traceback can carry a local variable holding an API key."""
     message = str(text or "")
     try:
         from flask import current_app
 
-        secret = (current_app.config.get("GMAIL_APP_PASSWORD") or "").strip()
-        if len(secret) >= 8:
-            message = message.replace(secret, "***redacted***")
+        for key in ("GMAIL_APP_PASSWORD", "BREVO_API_KEY"):
+            secret = (current_app.config.get(key) or "").strip()
+            if len(secret) >= 8:
+                message = message.replace(secret, "***redacted***")
     except Exception:  # pragma: no cover
         pass
-    return message[:400]
+    return message[:limit]
 
 
 def _hint_for(detail):

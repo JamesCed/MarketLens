@@ -641,3 +641,82 @@ def test_the_code_is_a_random_six_digit_integer(app, sent):
     _register(client)
     assert re.fullmatch(r"\d{6}", sent[0]["code"])
     assert 0 <= int(sent[0]["code"]) <= 999_999
+
+
+def test_an_unexpected_transport_error_does_not_500_the_form(app, monkeypatch):
+    """The guard that turns a crash into a message.
+
+    Each transport catches what it expects -- an SMTP error, an HTTP
+    error. This covers what they do not: anything raised before their
+    own try block, or by a library behaving differently on the host
+    than it does in development. Registration and password reset both
+    call this mid-form, and a mail problem becoming a 500 loses the
+    visitor's typing and tells them nothing.
+    """
+    from app.services import email_service
+
+    def exploding(*_args, **_kwargs):
+        raise RuntimeError("something nobody anticipated")
+
+    monkeypatch.setattr(email_service, "_send_via_brevo", exploding)
+    app.config["BREVO_API_KEY"] = "xkeysib-test"
+
+    with app.app_context():
+        assert email_service.send_verification_code("a@b.test", "A", "123456") is False
+        failure = email_service.last_failure()
+
+    assert "something nobody anticipated" in failure["detail"]
+    assert "traceback" in failure, (
+        "an unexpected error must carry its traceback into the diagnostics -- the "
+        "type and message alone rarely say what to change"
+    )
+
+
+def test_the_registration_form_survives_an_exploding_transport(app, monkeypatch):
+    """End to end: the visitor gets a message, not a 500."""
+    from app.services import email_service
+
+    monkeypatch.setattr(email_service, "_send_via_brevo",
+                        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")))
+    app.config["BREVO_API_KEY"] = "xkeysib-test"
+    app.config["REQUIRE_EMAIL_VERIFICATION"] = True
+
+    client = app.test_client()
+    response = _register(client)
+
+    assert response.status_code == 200
+    assert "account was not created" in response.get_data(as_text=True)
+
+
+def test_the_forgot_password_form_survives_an_exploding_transport(app, monkeypatch):
+    from app.services import email_service
+
+    with app.app_context():
+        user = User(name="Maria", email="maria2@otp.test", role="SME")
+        user.set_password("oldpassword1")
+        db.session.add(user)
+        db.session.commit()
+
+    monkeypatch.setattr(email_service, "_send_via_brevo",
+                        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")))
+    app.config["BREVO_API_KEY"] = "xkeysib-test"
+
+    client = app.test_client()
+    response = client.post("/forgot-password", data={"email": "maria2@otp.test"},
+                           follow_redirects=True)
+
+    assert response.status_code == 200
+
+
+def test_the_brevo_key_is_redacted_from_a_traceback(app):
+    """A traceback can carry a local variable holding the API key."""
+    from app.services import email_service
+
+    app.config["BREVO_API_KEY"] = "xkeysib-SECRET-value-here"
+    with app.app_context():
+        email_service._record_failure(
+            RuntimeError("failed with xkeysib-SECRET-value-here"), include_traceback=True
+        )
+        failure = email_service.last_failure()
+
+    assert "xkeysib-SECRET-value-here" not in repr(failure)
