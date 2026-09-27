@@ -194,6 +194,25 @@ services:
       - key: GMAIL_SENDER_NAME
         value: "MarketLens"
 
+      # ---- IF CODES ARE NOT ARRIVING, THIS IS ALMOST CERTAINLY WHY ----
+      # Render blocks outbound SMTP (ports 25, 465, 587) on FREE web
+      # services, since 26 September 2026. The connection never leaves
+      # the host, so no app password fixes it. Two ways out:
+      #
+      #   1. Upgrade this service to any paid instance type, or
+      #   2. Set BREVO_API_KEY and email goes over HTTPS on port 443
+      #      instead, which is not blocked. Brevo's free tier is 300
+      #      emails a day -- sign up, create a key under SMTP & API,
+      #      and VERIFY the sending address under Senders, Domains &
+      #      Dedicated IPs or every send is refused.
+      #
+      # MAIL_FROM_ADDRESS is optional and defaults to GMAIL_ADDRESS;
+      # set it when the address verified with Brevo is a different one.
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM_ADDRESS
+        sync: false
+
       # Deliberately ABSENT: GOOGLE_PLACES_API_KEY,
       # GOOGLE_GEOCODING_API_KEY, GOOGLE_MAPS_JS_API_KEY.
       #

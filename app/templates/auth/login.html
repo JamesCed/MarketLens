@@ -97,7 +97,13 @@
           </div>
 
           <div class="mb-3">
-            <label class="form-label" for="ml-password">Password</label>
+            <div class="d-flex justify-content-between align-items-baseline">
+              <label class="form-label mb-1" for="ml-password">Password</label>
+              {# Beside the field rather than below the button: this is
+                 where someone looks the moment the password they typed
+                 does not work. #}
+              <a href="{{ url_for('auth.forgot_password') }}" class="small">Forgot password?</a>
+            </div>
             <div class="input-group">
               <span class="input-group-text"><i class="bi bi-lock"></i></span>
               <input type="password" id="ml-password" name="password" class="form-control"

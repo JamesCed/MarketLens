@@ -488,3 +488,197 @@ def logout():
     logout_user()
     flash("You have been logged out.", "info")
     return redirect(url_for("auth.login"))
+
+
+# =====================================================================
+# FORGOTTEN PASSWORD
+# =====================================================================
+# Same shape as registration verification -- a six-digit code to the
+# address on file -- and the same three protections, for the same
+# reasons: a bounded number of guesses, a throttle on resending, and a
+# code that expires.
+#
+# ONE THING IS DELIBERATELY DIFFERENT, AND IT IS THE IMPORTANT ONE.
+#
+# This form must not reveal whether an address has an account. "No
+# account with that email" turns the page into a free membership
+# oracle: submit a list of addresses, and every one that comes back
+# "sent" is a confirmed user of this system -- which, for a system
+# whose users are named business owners and city officials, is not a
+# harmless disclosure. So the response is identical either way, and
+# the code is only actually emailed when the account exists.
+#
+# The cost is a real one: somebody who mistypes their own address gets
+# the same reassuring message and no email. That is why the wording
+# names the address back to them and says to check it.
+
+PASSWORD_RESET_SESSION_KEY = "pending_password_reset"
+
+
+@auth_bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if current_user.is_authenticated:
+        return redirect(url_for("auth.index"))
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        if not email:
+            flash("Please enter the email address you registered with.", "danger")
+            return render_template("auth/forgot_password.html", email="")
+
+        user = User.query.filter_by(email=email).first()
+        ttl = int(current_app.config.get("PASSWORD_RESET_CODE_TTL_MINUTES", 15))
+
+        # A code is generated either way, and the session state is set
+        # either way. Only the SENDING depends on the account existing.
+        #
+        # THE SESSION STATE MATTERS AS MUCH AS THE FLASH MESSAGE. An
+        # earlier version set it only for real accounts, so an unknown
+        # address bounced straight back to this form while a known one
+        # went on to the reset page -- identical wording, completely
+        # different page, and the membership oracle this route exists
+        # to avoid was rebuilt out of a redirect. A test caught it.
+        #
+        # The decoy code is never emailed to anybody, so it cannot be
+        # entered; the attempt cap disposes of it after a few guesses,
+        # and reset_password() looks the account up again before
+        # changing anything.
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        session[PASSWORD_RESET_SESSION_KEY] = {
+            "email": email,
+            "code": code,
+            "expires_at": (datetime.utcnow() + timedelta(minutes=ttl)).isoformat(),
+            "attempts": 0,
+            "last_sent_at": datetime.utcnow().isoformat(),
+        }
+
+        if user is not None and user.is_active:
+            if email_service.send_password_reset_code(email, user.name, code):
+                log_action("password_reset_requested", details=f"email={email}")
+            else:
+                # Logged, not shown. Telling this visitor the send
+                # failed would confirm the account exists, which is the
+                # one thing this route must not do.
+                current_app.logger.error(
+                    "password reset code for %s could not be sent -- see /admin/email-status",
+                    email,
+                )
+
+        flash(
+            f"If an account exists for {email}, a six-digit reset code is on its way. "
+            f"Check your inbox and your spam folder, and make sure that address is "
+            f"spelled the way you registered it.",
+            "info",
+        )
+        return redirect(url_for("auth.reset_password"))
+
+    return render_template("auth/forgot_password.html", email="")
+
+
+@auth_bp.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    if current_user.is_authenticated:
+        return redirect(url_for("auth.index"))
+
+    pending = session.get(PASSWORD_RESET_SESSION_KEY)
+
+    if request.method == "POST":
+        # No pending reset in this session. Deliberately the same
+        # message as a wrong code: "that code is not valid" tells a
+        # visitor nothing about whether an account exists.
+        if not pending:
+            flash("That reset code is no longer valid. Please request a new one.", "danger")
+            return redirect(url_for("auth.forgot_password"))
+
+        entered = request.form.get("code", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if datetime.utcnow() > datetime.fromisoformat(pending["expires_at"]):
+            session.pop(PASSWORD_RESET_SESSION_KEY, None)
+            flash("That code expired. Please request a new one.", "danger")
+            return redirect(url_for("auth.forgot_password"))
+
+        if len(password) < 6:
+            flash("Your new password must be at least 6 characters.", "danger")
+            return render_template("auth/reset_password.html", email=pending["email"])
+        if password != confirm:
+            flash("The two passwords do not match.", "danger")
+            return render_template("auth/reset_password.html", email=pending["email"])
+
+        if not entered or not secrets.compare_digest(entered, pending["code"]):
+            # compare_digest rather than != : a plain comparison on a
+            # secret returns faster the earlier it finds a difference,
+            # which leaks the code one character at a time to anybody
+            # patient enough to measure it. The attempt cap makes that
+            # attack impractical anyway; using the constant-time
+            # comparison costs nothing and removes the question.
+            max_attempts = int(current_app.config.get("EMAIL_VERIFICATION_MAX_ATTEMPTS", 5))
+            pending["attempts"] = int(pending.get("attempts", 0)) + 1
+            remaining = max_attempts - pending["attempts"]
+
+            if remaining <= 0:
+                session.pop(PASSWORD_RESET_SESSION_KEY, None)
+                log_action("password_reset_abandoned", details=f"email={pending['email']}")
+                flash(
+                    "Too many incorrect codes. For your security that reset was "
+                    "cancelled -- please request a new one.",
+                    "danger",
+                )
+                return redirect(url_for("auth.forgot_password"))
+
+            session[PASSWORD_RESET_SESSION_KEY] = pending
+            flash(
+                f"Incorrect code -- {remaining} attempt{'s' if remaining != 1 else ''} left.",
+                "danger",
+            )
+            return render_template("auth/reset_password.html", email=pending["email"])
+
+        user = User.query.filter_by(email=pending["email"]).first()
+        if user is None or not user.is_active:
+            session.pop(PASSWORD_RESET_SESSION_KEY, None)
+            flash("That account is no longer available. Please contact us.", "danger")
+            return redirect(url_for("auth.login"))
+
+        user.set_password(password)
+        db.session.commit()
+        session.pop(PASSWORD_RESET_SESSION_KEY, None)
+        log_action("password_reset_completed", details=f"email={user.email}")
+        flash("Your password has been changed. You can now sign in with it.", "success")
+        return redirect(url_for("auth.login"))
+
+    if not pending:
+        return redirect(url_for("auth.forgot_password"))
+    return render_template("auth/reset_password.html", email=pending["email"])
+
+
+@auth_bp.route("/reset-password/resend", methods=["POST"])
+def resend_password_reset_code():
+    pending = session.get(PASSWORD_RESET_SESSION_KEY)
+    if not pending:
+        return redirect(url_for("auth.forgot_password"))
+
+    cooldown = int(current_app.config.get("EMAIL_VERIFICATION_RESEND_SECONDS", 60))
+    last_sent = pending.get("last_sent_at")
+    if last_sent:
+        waited = (datetime.utcnow() - datetime.fromisoformat(last_sent)).total_seconds()
+        if waited < cooldown:
+            flash(
+                f"A code was just sent. Please wait {int(cooldown - waited)} more second(s).",
+                "warning",
+            )
+            return redirect(url_for("auth.reset_password"))
+
+    user = User.query.filter_by(email=pending["email"]).first()
+    ttl = int(current_app.config.get("PASSWORD_RESET_CODE_TTL_MINUTES", 15))
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    if user is not None and email_service.send_password_reset_code(pending["email"], user.name, code):
+        pending["code"] = code
+        pending["expires_at"] = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat()
+        pending["last_sent_at"] = datetime.utcnow().isoformat()
+        pending["attempts"] = 0
+        session[PASSWORD_RESET_SESSION_KEY] = pending
+        flash("A new reset code was sent.", "success")
+    else:
+        flash("Couldn't send a new code right now -- please try again in a moment.", "danger")
+    return redirect(url_for("auth.reset_password"))

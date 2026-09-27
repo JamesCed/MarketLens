@@ -255,6 +255,35 @@ class Config:
     # tolerate them, and the resulting 535 looks identical to a wrong
     # password, so _clean() below strips whitespace rather than leaving
     # that to whoever fills in the deployment panel.
+    # ---- Sending over HTTPS instead of SMTP ----
+    #
+    # On 26 September 2026 Render began blocking outbound traffic to
+    # SMTP ports 25, 465 and 587 on FREE web services. The connection
+    # never leaves the host, so no app password, timeout or retry gets
+    # a message out -- verification codes simply stop arriving on a
+    # deployment where nothing about the code changed.
+    #
+    # Set BREVO_API_KEY and email goes over HTTPS on port 443 instead,
+    # which is not blocked. Leave it unset and Gmail SMTP is used
+    # exactly as before, so local development and any paid host need no
+    # configuration change at all.
+    #
+    # Brevo's free tier is 300 emails a day. The SENDING ADDRESS must
+    # be verified with Brevo first (Senders, Domains & Dedicated IPs)
+    # or every send is refused -- that is the one failure here that
+    # looks like a code problem and is not.
+    BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "").strip()
+
+    # Who the mail comes from. Defaults to GMAIL_ADDRESS so an existing
+    # setup keeps working; set it explicitly when the verified Brevo
+    # sender is a different address.
+    MAIL_FROM_ADDRESS = os.environ.get("MAIL_FROM_ADDRESS", "").strip()
+
+    # How long a password-reset code lasts. Longer than the sign-up
+    # code because resetting a password often means going to find
+    # another device to read the email on.
+    PASSWORD_RESET_CODE_TTL_MINUTES = int(os.environ.get("PASSWORD_RESET_CODE_TTL_MINUTES", 15))
+
     GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "").strip()
     GMAIL_APP_PASSWORD = "".join(os.environ.get("GMAIL_APP_PASSWORD", "").split())
     GMAIL_SENDER_NAME = os.environ.get("GMAIL_SENDER_NAME", "SME Market Saturation DSS")
@@ -280,8 +309,11 @@ class Config:
     # with no Gmail settings is unaffected either way.
     REQUIRE_EMAIL_VERIFICATION = _bool(
         os.environ.get("REQUIRE_EMAIL_VERIFICATION"),
-        bool(os.environ.get("GMAIL_ADDRESS", "").strip()
-             and os.environ.get("GMAIL_APP_PASSWORD", "").strip()),
+        bool(
+            os.environ.get("BREVO_API_KEY", "").strip()
+            or (os.environ.get("GMAIL_ADDRESS", "").strip()
+                and os.environ.get("GMAIL_APP_PASSWORD", "").strip())
+        ),
     )
 
     # How many wrong codes before the pending registration is thrown
