@@ -113,7 +113,11 @@
 
 <div class="row g-3 mb-3">
   <div class="col-lg-6">
-    <div class="dss-card">
+    {# dss-card-fill on BOTH cards, not just the short one. Whichever
+       column happens to be shorter is a function of the copy and the
+       viewport width, so marking only today's shorter one would put the
+       gap back the first time that changed. See style.css. #}
+    <div class="dss-card dss-card-fill">
       <h6>Monthly Industry Trends</h6>
       <p class="text-muted small mb-2">Saturation % &middot; real forecast months shown as-is, other months filled from the city-wide baseline (see page note above)</p>
       <canvas id="monthlyChart" height="220"></canvas>
@@ -128,7 +132,7 @@
     </div>
   </div>
   <div class="col-lg-6">
-    <div class="dss-card">
+    <div class="dss-card dss-card-fill">
       <h6>Industry Distribution</h6>
       <p class="text-muted small mb-2">Share of every business on file across Tarlac City: all market data
         (Google Places lookups + PSA/DTI and reference rows) plus registered SME plans. Every industry gets

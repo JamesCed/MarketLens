@@ -252,6 +252,43 @@ body.dss-body {
   border-radius: .4rem;
   padding: .5rem .75rem;
 }
+
+/* MAKING THE TWO CHART CARDS FINISH ON THE SAME LINE.
+   "Monthly Industry Trends" and "Industry Distribution" sit side by
+   side, and the right one carries a three-line explanation against the
+   left one's single line. With both legends capped at a flat 190px the
+   left card simply stopped ~170px higher than the right, leaving a
+   block of empty column beside a legend that was scrolling -- which
+   reads as something failing to render rather than as a layout choice.
+
+   The row already stretches its columns to equal height (that is
+   Bootstrap's default), so all that was missing was a way for the
+   shorter card's legend to absorb the difference. These two modifiers
+   do that and nothing else: the card becomes a flex column, and the
+   legend is the element that grows. It stays correct at any width and
+   with any number of industries, where a taller fixed max-height would
+   only be right at one viewport size. */
+.dss-card-fill {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.dss-card-fill > .dss-scroll-legend {
+  /* flex-basis 0, NOT auto. With `auto` the legend's 20 rows of content
+     count towards the card's natural height, so instead of absorbing
+     the slack it inflates the card -- both columns then grow to ~1100px,
+     the scrollbar never appears and the page below is pushed off screen.
+     Measured that happening before settling on this. Basis 0 means the
+     legend contributes nothing to the natural height, the card is sized
+     by everything else in it, and the legend takes exactly whatever the
+     taller sibling leaves over. */
+  flex: 1 1 0;
+  max-height: none;
+  /* Never shorter than it used to be, so a legend with three industries
+     in it does not collapse to a sliver when the columns happen to
+     match. */
+  min-height: 190px;
+}
 .dss-scroll-legend-item {
   display: flex;
   align-items: center;
@@ -464,27 +501,138 @@ body.dss-body {
 @keyframes ml-drift-c { to { transform: translate3d(-90px, -110px, 0) scale(1.17); } }
 
 /* Radar rings -- the visual rhyme with the magnifying glass in the mark. */
-.ml-radar { position: absolute; top: 20%; right: 13%; width: 0; height: 0; }
-.ml-radar i {
-  position: absolute; left: 50%; top: 50%;
-  width: 240px; height: 240px; margin: -120px 0 0 -120px;
-  border: 1px solid rgba(92,207,234,.42);
-  border-radius: 50%;
-  opacity: 0;
-  animation: ml-ping 7s ease-out infinite;
+/* ---------------- The lens ----------------
+   A large magnifying glass drifting slowly across the backdrop, in
+   place of the three expanding rings that used to sit here.
+
+   The rings were a radar sweep: three circles pinging outward on a 7s
+   loop. Busy, and the wrong metaphor -- this product looks closely at
+   one city, it does not scan for contacts. The brand mark is already a
+   magnifier, so the backdrop now echoes it.
+
+   THE GLASS IS REAL, not a drawing of glass. backdrop-filter means the
+   lens brightens and saturates whatever is actually behind it, so the
+   perspective grid and the drifting orbs visibly change as it passes
+   over them. That is what sells it, and it is why the lens has no
+   background colour of its own beyond a faint sheen -- a painted-on
+   "glass" fill would read as a flat disc the moment it crossed
+   something.
+
+   EVERYTHING ANIMATED IS transform OR opacity, so the whole thing runs
+   on the compositor and never triggers layout -- the same rule the
+   orbs and the grid above follow. The drift is 34s and the sheen 9s,
+   both deliberately slower than anything else on the page: a backdrop
+   that draws the eye is a backdrop that is in the way. */
+.ml-lens {
+  /* Placed off the brightest part of the backdrop. Sitting it over
+     orb-1's core made the lens read as another glowing blob instead of
+     as glass -- the magnification only shows when there is structure
+     (the grid) behind it to brighten. The 320px lens plus its handle
+     needs ~14rem of clearance from the right edge or the rim clips. */
+  position: absolute; top: 30%; right: 17%;
+  width: 0; height: 0;
+  animation: ml-lens-drift 34s ease-in-out infinite alternate;
+  will-change: transform;
 }
-.ml-radar i:nth-child(2) { animation-delay: 2.33s; }
-.ml-radar i:nth-child(3) { animation-delay: 4.66s; }
-@keyframes ml-ping {
-  0%   { transform: scale(.28); opacity: 0; }
-  12%  { opacity: .85; }
-  100% { transform: scale(2.3); opacity: 0; }
+
+/* The lens body. */
+.ml-lens-glass {
+  position: absolute; left: 50%; top: 50%;
+  width: 320px; height: 320px; margin: -160px 0 0 -160px;
+  border-radius: 50%;
+  border: 2px solid rgba(92,207,234,.55);
+  /* The magnification. saturate + brightness do the work; the 0.4px
+     blur only softens the grid lines enough that the edge of the lens
+     reads as a boundary rather than a drawn circle. */
+  backdrop-filter: brightness(1.22) saturate(1.5) blur(.4px);
+  -webkit-backdrop-filter: brightness(1.22) saturate(1.5) blur(.4px);
+  /* A rim light rather than a fill: bright where the glass curves away,
+     nearly clear through the middle. */
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255,255,255,.10), transparent 42%),
+    radial-gradient(circle at 50% 50%, transparent 58%, rgba(92,207,234,.09) 100%);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.06) inset,
+    0 0 44px -6px rgba(92,207,234,.34),
+    0 24px 60px -30px rgba(0,0,0,.7);
+  overflow: hidden;
+}
+
+/* The sheen: one soft diagonal band travelling across the glass. Kept
+   inside the lens by the parent's overflow, so it reads as light
+   moving over a curved surface rather than a stripe on the page. */
+.ml-lens-glass::after {
+  content: "";
+  position: absolute; inset: -40%;
+  background: linear-gradient(
+    115deg,
+    transparent 38%,
+    rgba(255,255,255,.14) 48%,
+    rgba(255,255,255,.22) 50%,
+    rgba(255,255,255,.14) 52%,
+    transparent 62%);
+  animation: ml-lens-sheen 9s ease-in-out infinite;
+}
+
+/* The handle. Rotated out of the lens at the usual 45 degrees, with
+   its own tiny inset highlight so it does not read as a flat bar. */
+.ml-lens-handle {
+  position: absolute; left: 50%; top: 50%;
+  /* Starts INSIDE the rim (140 < the 160px radius) so the join is
+     hidden behind the glass rather than floating off it. */
+  width: 24px; height: 150px;
+  margin: 140px 0 0 -12px;
+  border-radius: 13px;
+  background: linear-gradient(100deg,
+    rgba(92,207,234,.50), rgba(92,207,234,.20) 46%, rgba(92,207,234,.42));
+  box-shadow: 0 0 0 1px rgba(255,255,255,.07) inset,
+              0 0 26px -8px rgba(92,207,234,.5);
+  transform-origin: 50% -140px;   /* = the lens centre */
+  /* NEGATIVE, i.e. counter-clockwise. The handle hangs below the centre
+     before rotating, so +45deg swings it down-LEFT; the brand mark in
+     static/img/marketlens-icon.png has it down-RIGHT, and a backdrop
+     that mirrors the logo it sits under is just wrong. */
+  transform: rotate(-45deg);
+}
+
+/* A slow breath on the whole assembly, out of phase with the drift so
+   the two never visibly line up and the motion stays organic. */
+.ml-lens-halo {
+  position: absolute; left: 50%; top: 50%;
+  width: 320px; height: 320px; margin: -160px 0 0 -160px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(92,207,234,.10), transparent 62%);
+  filter: blur(26px);
+  animation: ml-lens-breathe 11s ease-in-out infinite;
+}
+
+@keyframes ml-lens-drift {
+  0%   { transform: translate3d(0, 0, 0) rotate(-5deg); }
+  50%  { transform: translate3d(-90px, 54px, 0) rotate(2deg); }
+  100% { transform: translate3d(36px, -40px, 0) rotate(-8deg); }
+}
+@keyframes ml-lens-sheen {
+  0%, 100% { transform: translate3d(-58%, 0, 0); }
+  50%      { transform: translate3d(58%, 0, 0); }
+}
+@keyframes ml-lens-breathe {
+  0%, 100% { opacity: .40; transform: scale(1); }
+  50%      { opacity: .72; transform: scale(1.06); }
+}
+
+@media (max-width: 900px) {
+  /* Smaller, and further out of the way of the card it sits behind. */
+  .ml-lens { top: 10%; right: 4%; transform: scale(.62); }
+  .ml-lens-glass, .ml-lens-halo { backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* A still backdrop, not a broken one: the layers stay, they just stop. */
-  .ml-bg-grid, .ml-orb, .ml-radar i { animation: none !important; }
-  .ml-radar i { opacity: .3; }
+  /* A still backdrop, not a broken one: the layers stay, they just stop.
+     The lens keeps its glass -- backdrop-filter is not motion -- so the
+     page still looks composed rather than half-drawn. */
+  .ml-bg-grid, .ml-orb,
+  .ml-lens, .ml-lens-glass::after, .ml-lens-halo { animation: none !important; }
+  .ml-lens-halo { opacity: .7; }
   .ml-landing * { scroll-behavior: auto !important; }
 }
 

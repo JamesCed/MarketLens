@@ -801,3 +801,81 @@ def test_the_failure_log_reports_the_real_reason_not_a_guess(app, monkeypatch, c
     assert "port 587" not in logged, (
         "the log still blames SMTP on a deployment that was not using SMTP"
     )
+
+
+# ---------------------------------------------------------------------
+# SHOW / HIDE PASSWORD
+# ---------------------------------------------------------------------
+# The reset form rendered two eye buttons that did nothing. The handler
+# was copy-pasted into login.html and register.html -- each copy
+# commented as "delegated, so the same handler serves this page and the
+# registration form" -- and delegation only reaches within one page, so
+# the third page to grow the markup got no handler at all. It looked
+# live and was inert.
+
+def test_the_reset_form_offers_a_reveal_for_both_password_fields(app, existing_user, reset_sent):
+    client = app.test_client()
+    client.post("/forgot-password", data={"email": existing_user}, follow_redirects=True)
+    page = client.get("/reset-password").get_data(as_text=True)
+
+    assert page.count("ml-reveal") == 2
+    assert 'data-target="ml-password"' in page
+    assert 'data-target="ml-confirm"' in page
+
+
+def test_the_reveal_handler_reaches_the_reset_form(app, existing_user, reset_sent):
+    """The actual bug. The buttons were never the problem -- nothing was
+    listening for their clicks."""
+    client = app.test_client()
+    client.post("/forgot-password", data={"email": existing_user}, follow_redirects=True)
+    page = client.get("/reset-password").get_data(as_text=True)
+
+    assert "ml-reveal" in page, "the page renders reveal buttons"
+    assert "js/main.js" in page, "...and must load the script that binds them"
+
+
+def test_the_reveal_handler_exists_exactly_once_in_the_codebase():
+    """Guards the fix rather than the symptom.
+
+    Three pages now render .ml-reveal buttons and a fourth will
+    eventually. Binding in main.js -- loaded by base.html before
+    extra_scripts -- means a new button works the moment somebody adds
+    it. A per-page copy reintroduces exactly the failure above, so this
+    fails if one comes back.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+
+    main_js = (root / "app" / "static" / "js" / "main.js").read_text(encoding="utf-8")
+    assert 'closest(".ml-reveal")' in main_js, "the shared handler must live in main.js"
+
+    offenders = []
+    for template in (root / "app" / "templates").rglob("*.html"):
+        if 'closest(".ml-reveal")' in template.read_text(encoding="utf-8"):
+            offenders.append(template.name)
+    assert offenders == [], (
+        f"{offenders} carry their own copy of the reveal handler -- it belongs in "
+        "main.js, or the next page to add a reveal button gets inert markup"
+    )
+
+
+def test_every_reveal_button_points_at_a_field_that_exists():
+    """A reveal whose data-target names no input is silently dead: the
+    handler bails on the missing element and the click does nothing,
+    which is indistinguishable from the bug this all started with."""
+    import pathlib
+    import re as _re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    problems = []
+
+    for template in (root / "app" / "templates").rglob("*.html"):
+        body = template.read_text(encoding="utf-8")
+        targets = _re.findall(r'class="[^"]*ml-reveal[^"]*"[^>]*data-target="([^"]+)"', body)
+        ids = set(_re.findall(r'\bid="([^"]+)"', body))
+        for target in targets:
+            if target not in ids:
+                problems.append(f"{template.name}: data-target={target!r}")
+
+    assert problems == [], problems

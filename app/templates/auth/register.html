@@ -35,7 +35,11 @@
     <span class="ml-orb ml-orb-1"></span>
     <span class="ml-orb ml-orb-2"></span>
     <span class="ml-orb ml-orb-3"></span>
-    <span class="ml-radar"><i></i><i></i><i></i></span>
+    <span class="ml-lens">
+      <span class="ml-lens-halo"></span>
+      <span class="ml-lens-handle"></span>
+      <span class="ml-lens-glass"></span>
+    </span>
   </div>
 
   <header class="ml-nav" id="top">
@@ -257,8 +261,14 @@
               </div>
               <div class="col-sm-6">
                 <label class="form-label" for="ml-pw2">Confirm password</label>
-                <input type="password" id="ml-pw2" name="confirm_password" class="form-control"
-                       minlength="6" autocomplete="new-password">
+                {# The confirm field had no reveal while the one beside it
+                   did, which is the field you most want to check. #}
+                <div class="input-group">
+                  <input type="password" id="ml-pw2" name="confirm_password" class="form-control"
+                         minlength="6" autocomplete="new-password">
+                  <button class="btn btn-outline-secondary ml-reveal" type="button"
+                          data-target="ml-pw2" aria-label="Show password"><i class="bi bi-eye"></i></button>
+                </div>
               </div>
             </div>
 
@@ -292,16 +302,7 @@
 
 {% block extra_scripts %}
 <script>
-document.addEventListener("click", (e) => {
-  const btn = e.target.closest(".ml-reveal");
-  if (!btn) return;
-  const field = document.getElementById(btn.dataset.target);
-  if (!field) return;
-  const show = field.type === "password";
-  field.type = show ? "text" : "password";
-  btn.querySelector("i").className = show ? "bi bi-eye-slash" : "bi bi-eye";
-  btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
-});
+// Show/hide password moved to static/js/main.js -- one copy, every page.
 
 (function () {
   const nav = document.querySelector(".ml-nav");

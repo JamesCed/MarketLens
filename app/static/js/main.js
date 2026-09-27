@@ -145,3 +145,43 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   });
 });
+
+
+/* =====================================================================
+   SHOW / HIDE PASSWORD
+   =====================================================================
+   Any `<button class="ml-reveal" data-target="<input id>">` toggles that
+   field between password and text, and swaps its eye icon.
+
+   THIS LIVES HERE, ONCE, ON PURPOSE.
+
+   It used to be copy-pasted into the bottom of login.html and
+   register.html -- two identical listeners, each with a comment saying
+   it was "delegated, so the same handler serves this page and the
+   registration form". Delegation only helps within a page, so the third
+   page to grow reveal buttons got the markup and no handler at all: on
+   the password-reset form both eye buttons rendered, looked live, and
+   did nothing when clicked.
+
+   main.js is already loaded by base.html on every page, before
+   {% block extra_scripts %}, so binding here means a reveal button
+   works the moment somebody adds one -- which is the property the
+   duplicated version was reaching for and could not have.
+
+   Revealing costs nothing in security: the value is already in the DOM,
+   and anyone who can read it can read it either way. What it buys is
+   not retyping a long password on a phone keyboard. */
+document.addEventListener("click", (event) => {
+  const button = event.target.closest(".ml-reveal");
+  if (!button) return;
+
+  const field = document.getElementById(button.dataset.target);
+  if (!field) return;
+
+  const show = field.type === "password";
+  field.type = show ? "text" : "password";
+
+  const icon = button.querySelector("i");
+  if (icon) icon.className = show ? "bi bi-eye-slash" : "bi bi-eye";
+  button.setAttribute("aria-label", show ? "Hide password" : "Show password");
+});

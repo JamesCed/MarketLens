@@ -35,7 +35,11 @@
     <span class="ml-orb ml-orb-1"></span>
     <span class="ml-orb ml-orb-2"></span>
     <span class="ml-orb ml-orb-3"></span>
-    <span class="ml-radar"><i></i><i></i><i></i></span>
+    <span class="ml-lens">
+      <span class="ml-lens-halo"></span>
+      <span class="ml-lens-handle"></span>
+      <span class="ml-lens-glass"></span>
+    </span>
   </div>
 
   {# ---------------------------- top nav ---------------------------- #}
@@ -270,18 +274,9 @@
 
 {% block extra_scripts %}
 <script>
-// Show/hide password. Delegated, so the same handler serves this page and
-// the registration form without either knowing about the other.
-document.addEventListener("click", (e) => {
-  const btn = e.target.closest(".ml-reveal");
-  if (!btn) return;
-  const field = document.getElementById(btn.dataset.target);
-  if (!field) return;
-  const show = field.type === "password";
-  field.type = show ? "text" : "password";
-  btn.querySelector("i").className = show ? "bi bi-eye-slash" : "bi bi-eye";
-  btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
-});
+// Show/hide password moved to static/js/main.js, which base.html loads
+// on every page. The copy that used to sit here served this page and
+// left the password-reset form's two eye buttons doing nothing.
 
 // Give the nav a solid background once the hero has scrolled past it,
 // so the links stay readable over the page content.
