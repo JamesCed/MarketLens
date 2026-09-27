@@ -1,0 +1,27 @@
+{#
+  shared/_footer.html
+  ----------------------
+  The dark bar at the foot of a dashboard.
+
+  It used to live inline in sme/home.html only, which meant an LGU
+  officer and an administrator had no Contact Us anywhere on their own
+  landing page -- the one place a person looks when they want to reach
+  somebody. Pulled out here and included from all three dashboards, so
+  the entry exists for every role and there is one copy to change.
+
+  "Contact Us" is a button rather than a span because it now does
+  something: it opens shared/_contact_modal.html, which base.html
+  includes for every signed-in page.
+#}
+<footer class="dss-home-footer mt-4">
+  <div class="d-flex flex-wrap justify-content-between gap-2 align-items-center">
+    <a href="https://psa.gov.ph" target="_blank" rel="noopener" class="text-white text-decoration-none">
+      🌐 PSA Data Source
+    </a>
+    <span>📊 DTI-Verified</span>
+    <span>💬 Community Forum</span>
+    <button type="button" class="dss-footer-link" data-bs-toggle="modal" data-bs-target="#contactModal">
+      📞 Contact Us
+    </button>
+  </div>
+</footer>

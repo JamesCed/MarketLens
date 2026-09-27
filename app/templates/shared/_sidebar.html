@@ -145,11 +145,17 @@
         </p>
 
         <h6 class="mb-2">Getting help</h6>
+        {# The address is repeated here on purpose: someone who opened
+           Support is already looking for help and should not have to
+           find a second dialog to get an address. Both read
+           SUPPORT_EMAIL from config, so they cannot disagree. #}
         <p class="small text-muted mb-0">
           For access problems, a wrong figure, or a barangay that looks incorrect,
+          email us at <a href="mailto:{{ SUPPORT_EMAIL }}">{{ SUPPORT_EMAIL }}</a>, or
           contact the administrator of this deployment &mdash; they can see every
           account under <em>Admin &rsaquo; Manage Users</em> and the full audit
-          trail of what changed and when.
+          trail of what changed and when. <strong>Contact Us</strong> at the foot of
+          your dashboard says more about what to include in a message.
         </p>
       </div>
       <div class="modal-footer justify-content-between">

@@ -68,7 +68,13 @@
 #}
 {% include "shared/_flash.html" %}
 
+{#
+  Contact Us is reachable from every dashboard's footer, so the dialog
+  it opens is included once here rather than three times. Signed-in
+  pages only: the landing page has its own layout and no footer bar.
+#}
 {% if current_user.is_authenticated %}
+  {% include "shared/_contact_modal.html" %}
   {% include "shared/_sidebar.html" %}
   <div class="dss-content">
     {% include "shared/_topbar.html" %}

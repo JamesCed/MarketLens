@@ -108,6 +108,9 @@ def create_app(config_name=None):
             # and profile_controller doesn't otherwise pass
             # business_types to the template.
             "ALL_BUSINESS_TYPES": BUSINESS_TYPES,
+            # The Contact Us dialog is reachable from every dashboard,
+            # so its address has to be available on every page.
+            "SUPPORT_EMAIL": app.config.get("SUPPORT_EMAIL", ""),
         }
 
     # ---- one-time data migrations ----

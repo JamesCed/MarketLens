@@ -260,15 +260,11 @@
   </div>
 </div>
 
-<!-- Footer -- matches Reference/Figma_Storyboard/src/app/pages/home.tsx -->
-<footer class="dss-home-footer mt-4">
-  <div class="d-flex flex-wrap justify-content-between gap-2">
-    <a href="https://psa.gov.ph" target="_blank" rel="noopener" class="text-white text-decoration-none">🌐 PSA Data Source</a>
-    <span>📊 DTI-Verified</span>
-    <span>💬 Community Forum</span>
-    <span>📞 Contact Us</span>
-  </div>
-</footer>
+<!-- Footer -- matches Reference/Figma_Storyboard/src/app/pages/home.tsx.
+     Moved into shared/_footer.html so the LGU and Admin dashboards get
+     the same bar, and so Contact Us exists for every role rather than
+     only for an SME. -->
+{% include "shared/_footer.html" %}
 
 <!-- "+ New Business Plan" modal -- triggered from the top bar's + button
      (see shared/_topbar.html). Replaces the old always-visible inline

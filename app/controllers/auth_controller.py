@@ -295,12 +295,38 @@ def register():
             if sent:
                 pending["code"] = code
                 pending["expires_at"] = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat()
+                pending["attempts"] = 0
+                pending["last_sent_at"] = datetime.utcnow().isoformat()
                 session[PENDING_SESSION_KEY] = pending
                 flash(f"We sent a 6-digit verification code to {email}. Enter it below to finish creating your account.", "info")
                 return redirect(url_for("auth.verify_email"))
-            # Gmail is configured but the send failed (bad creds, offline,
-            # rate-limited, etc.) -- don't block registration over an
-            # email problem; fall through to creating the account now.
+
+            # Gmail is configured but the send failed -- a wrong app
+            # password, a Gmail rate limit, or a host that does not
+            # allow outbound SMTP. What happens next is now a
+            # deliberate choice rather than an accident.
+            #
+            # Creating the account anyway was the old behaviour, and on
+            # a deployment that MEANS to verify people it is the worst
+            # available outcome: a mistyped app password stops looking
+            # like "verification is broken" and starts looking like
+            # "verification quietly is not happening". Nobody notices
+            # until they wonder why unverified accounts exist.
+            current_app.logger.error(
+                "verification email to %s could not be sent -- check GMAIL_ADDRESS / "
+                "GMAIL_APP_PASSWORD (spaces removed) and whether this host allows "
+                "outbound SMTP on port 587",
+                email,
+            )
+            if current_app.config.get("REQUIRE_EMAIL_VERIFICATION", False):
+                flash(
+                    "We could not send your verification code right now, so your account "
+                    "was not created. Please try again in a few minutes -- if it keeps "
+                    "failing, contact us and we will sort it out.",
+                    "danger",
+                )
+                return render_template("auth/register.html", **_register_form_context(request.form))
+
             flash("Couldn't send a verification email right now, so your account was created directly.", "warning")
 
         _create_user_from_pending(pending)
@@ -332,7 +358,37 @@ def verify_email():
             return redirect(url_for("auth.register"))
 
         if not entered or entered != pending["code"]:
-            flash("Incorrect code -- please try again.", "danger")
+            # ATTEMPTS ARE CAPPED. A six-digit code is one chance in a
+            # million per guess, which is only protection if the number
+            # of guesses is bounded -- unbounded, an attacker can post
+            # guesses as fast as HTTP allows for the whole ten-minute
+            # window, and a million is not a large number at that rate.
+            #
+            # Burning the pending registration rather than locking a
+            # timer keeps it simple and costs an honest typist nothing
+            # but starting the form again.
+            max_attempts = int(current_app.config.get("EMAIL_VERIFICATION_MAX_ATTEMPTS", 5))
+            pending["attempts"] = int(pending.get("attempts", 0)) + 1
+            remaining = max_attempts - pending["attempts"]
+
+            if remaining <= 0:
+                session.pop(PENDING_SESSION_KEY, None)
+                current_app.logger.warning(
+                    "verification for %s abandoned after %d incorrect codes",
+                    pending["email"], pending["attempts"],
+                )
+                flash(
+                    "Too many incorrect codes. For your security that registration was "
+                    "cancelled -- please start again.",
+                    "danger",
+                )
+                return redirect(url_for("auth.register"))
+
+            session[PENDING_SESSION_KEY] = pending
+            flash(
+                f"Incorrect code -- {remaining} attempt{'s' if remaining != 1 else ''} left.",
+                "danger",
+            )
             return render_template("auth/verify_email.html", email=pending["email"])
 
         if User.query.filter_by(email=pending["email"]).first():
@@ -362,12 +418,34 @@ def resend_verification_code():
         flash("Start registration again.", "warning")
         return redirect(url_for("auth.register"))
 
+    # THROTTLED. A free Gmail account sends roughly 500 messages a day,
+    # and an unthrottled resend button spends that at whatever rate
+    # somebody can click -- or floods a stranger's inbox using your
+    # address, since the recipient is chosen by whoever filled in the
+    # registration form.
+    cooldown = int(current_app.config.get("EMAIL_VERIFICATION_RESEND_SECONDS", 60))
+    last_sent = pending.get("last_sent_at")
+    if last_sent:
+        waited = (datetime.utcnow() - datetime.fromisoformat(last_sent)).total_seconds()
+        if waited < cooldown:
+            flash(
+                f"A code was just sent. Please wait {int(cooldown - waited)} more second(s) "
+                f"before asking for another -- check your spam folder in the meantime.",
+                "warning",
+            )
+            return redirect(url_for("auth.verify_email"))
+
     ttl = int(current_app.config.get("EMAIL_VERIFICATION_CODE_TTL_MINUTES", 10))
     code = f"{secrets.randbelow(1_000_000):06d}"
     sent = email_service.send_verification_code(pending["email"], pending["full_name"], code)
     if sent:
         pending["code"] = code
         pending["expires_at"] = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat()
+        pending["last_sent_at"] = datetime.utcnow().isoformat()
+        # A fresh code deserves a fresh allowance of attempts -- but
+        # resending must not become a way to buy unlimited guesses at
+        # the OLD code, which is why the code itself is replaced above.
+        pending["attempts"] = 0
         session[PENDING_SESSION_KEY] = pending
         flash("A new code was sent to your email.", "success")
     else:

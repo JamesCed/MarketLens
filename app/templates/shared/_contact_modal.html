@@ -1,0 +1,119 @@
+{#
+  shared/_contact_modal.html
+  -----------------------------
+  The Contact Us dialog, included once from base.html so every
+  dashboard has it -- SME, LGU and Admin alike.
+
+  WHY A DIALOG RATHER THAN A BARE mailto: LINK.
+
+  The footer entry used to be the plain text "Contact Us" with nothing
+  behind it. Replacing it with a mailto: would technically work and
+  would still leave the two questions people actually have unanswered:
+  who is on the other end, and what should I put in the message. A
+  support inbox that receives "it's not working" from an address it
+  cannot place costs more time than it saves.
+
+  So the dialog says who to write to, what each kind of enquiry needs,
+  and prefills a subject and body for the common cases. The mailto:
+  link is still there -- it is the button inside.
+
+  It lives in base.html rather than in each dashboard because the same
+  dialog is reached from the SME footer, the LGU dashboard footer and
+  the Admin dashboard footer, and three copies would drift.
+
+  SUPPORT_EMAIL comes from app/config.py through the context processor
+  in app/__init__.py, so the address is written down once.
+#}
+<div class="modal fade" id="contactModal" tabindex="-1" aria-labelledby="contactModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="contactModalLabel">
+          <i class="bi bi-envelope-paper"></i> Contact Us
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body">
+        <p class="small mb-3">
+          MarketLens is maintained by the SME Market Entry Decision Support System team.
+          For any question, concern or report about this system, email us and we will
+          get back to you.
+        </p>
+
+        <div class="dss-contact-address mb-3">
+          <i class="bi bi-envelope-at dss-contact-icon" aria-hidden="true"></i>
+          <div>
+            <div class="text-muted" style="font-size:.72rem;">Our email address</div>
+            <a href="mailto:{{ SUPPORT_EMAIL }}" class="fw-semibold">{{ SUPPORT_EMAIL }}</a>
+          </div>
+        </div>
+
+        <h6 class="mb-2">What to write to us about</h6>
+        <dl class="row small mb-3">
+          <dt class="col-5">A figure looks wrong</dt>
+          <dd class="col-7">
+            A competitor count, population or saturation score that does not match what
+            you know on the ground. Tell us the barangay and the industry.
+          </dd>
+
+          <dt class="col-5">Access problems</dt>
+          <dd class="col-7">
+            You cannot sign in, your verification code never arrived, or your account has
+            the wrong role.
+          </dd>
+
+          <dt class="col-5">LGU data uploads</dt>
+          <dd class="col-7">
+            Your dataset was refused, or the figures did not change after uploading it.
+            Attach the file if you can &mdash; the error message names the row and column.
+          </dd>
+
+          <dt class="col-5">Anything else</dt>
+          <dd class="col-7">
+            Questions about how the recommendations are produced, or about the data
+            sources behind them.
+          </dd>
+        </dl>
+
+        {#
+          The prefilled subject and body exist so a reply is possible
+          without a round trip asking who is writing. Role and email
+          are the two things the team cannot look up from an ordinary
+          Gmail message, and both are already known here.
+        #}
+        <div class="alert alert-info small mb-0">
+          <i class="bi bi-info-circle"></i>
+          Please include your <strong>account email</strong> and, if it is about a
+          specific barangay, the <strong>barangay and industry</strong>. It saves a
+          round trip and we can answer properly the first time.
+        </div>
+      </div>
+
+      <div class="modal-footer justify-content-between">
+        <span class="text-muted" style="font-size:.75rem;">
+          {% if current_user.is_authenticated %}
+            Signed in as {{ current_user.email }} &middot; {{ current_user.role|upper }}
+          {% endif %}
+        </span>
+        <span>
+          <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal">Close</button>
+          {#
+            The signature line is urlencoded; the newlines around it
+            are written pre-encoded (%0D%0A) because Jinja cannot hold
+            a literal newline in an expression and `urlencode` would
+            turn one into %0A, which some mail clients drop. Encoding
+            only the variable part is what matters: it carries the
+            spaces, the @ and the parentheses that break an unencoded
+            mailto body.
+          #}
+          {%- set signature = 'Account: ' ~ current_user.email ~ ' (' ~ current_user.role ~ ')' -%}
+          <a class="btn btn-sm btn-primary"
+             href="mailto:{{ SUPPORT_EMAIL }}?subject={{ 'MarketLens enquiry'|urlencode }}{% if current_user.is_authenticated %}&amp;body=%0D%0A%0D%0A---%0D%0A{{ signature|urlencode }}{% endif %}">
+            <i class="bi bi-envelope"></i> Email us
+          </a>
+        </span>
+      </div>
+    </div>
+  </div>
+</div>

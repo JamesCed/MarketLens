@@ -277,3 +277,45 @@ def llm_status():
     else:
         payload["hint"] = "Open /admin/llm-status/probe to make a real test call."
     return jsonify(payload)
+
+
+# ------------------------------------------------------- email status
+@admin_bp.route("/email-status", methods=["GET"])
+@admin_bp.route("/email-status/probe", methods=["GET", "POST"], endpoint="email_probe")
+@role_required("Admin")
+def email_status():
+    """Answers "why is the verification code not arriving?" without
+    registering throwaway accounts and reading the host's logs.
+
+    The failure modes here are few and each has a different fix -- a
+    wrong app password, the account's normal password used by mistake,
+    a host that blocks outbound SMTP, Gmail's daily limit reached --
+    and until now they all produced the same silence, because the send
+    was wrapped in a bare `except: return False`.
+
+    /admin/email-status reports the configuration and the last
+    failure. /admin/email-status/probe authenticates against Gmail for
+    real and reports Gmail's own answer. The probe deliberately stops
+    after login and sends no message: a diagnostic that emails
+    somebody every time it runs is one nobody dares press.
+
+    NO SECRET IS RETURNED. The app password is reported as set/not-set
+    and its length -- a Gmail app password is exactly 16 characters
+    once the spaces are stripped, so a length of 19 is itself the
+    diagnosis, and the length alone is no use to anyone.
+    """
+    from flask import jsonify
+
+    from app.services import email_service
+
+    payload = {"status": email_service.status()}
+    if request.path.endswith("/probe"):
+        log_action("admin_email_probe")
+        payload["probe"] = email_service.probe()
+        payload["status"] = email_service.status()
+    else:
+        payload["hint"] = (
+            "Open /admin/email-status/probe to authenticate against Gmail for real "
+            "(no message is sent)."
+        )
+    return jsonify(payload)

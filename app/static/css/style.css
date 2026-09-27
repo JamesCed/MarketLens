@@ -1387,3 +1387,31 @@ body.dss-body {
   border-color: rgba(148, 163, 184, .35);
   background: rgba(148, 163, 184, .10);
 }
+
+/* =====================================================================
+   FOOTER LINK BUTTON  (shared/_footer.html)
+   =====================================================================
+   "Contact Us" opens a dialog, so it is a <button> rather than an <a>
+   with no destination. These undo the button defaults so it sits with
+   the other footer entries instead of looking like a stray control,
+   while keeping it a real, focusable, keyboard-reachable button. */
+.dss-footer-link {
+  border: 0; background: none; padding: 0;
+  color: #e5e7eb; font: inherit; font-size: inherit;
+  cursor: pointer; border-radius: .25rem;
+}
+.dss-footer-link:hover { color: #fff; text-decoration: underline; }
+.dss-footer-link:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
+
+/* The address block inside the Contact Us dialog. */
+.dss-contact-address {
+  display: flex; gap: .75rem; align-items: center;
+  padding: .75rem 1rem; border-radius: .6rem;
+  background: rgba(37, 99, 235, .07);
+  border: 1px solid rgba(37, 99, 235, .18);
+}
+.dss-contact-icon { font-size: 1.3rem; color: var(--dss-blue, #2563eb); }
+[data-bs-theme="dark"] .dss-contact-address {
+  background: rgba(96, 165, 250, .10);
+  border-color: rgba(96, 165, 250, .28);
+}

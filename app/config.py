@@ -235,17 +235,68 @@ class Config:
         "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
     ).strip().rstrip("/")
 
-    # ---------------- Optional: email verification code (SME/LGU self-registration) ----------------
+    # The address shown in the Contact Us dialog on every dashboard.
+    #
+    # Kept here rather than typed into the templates because it appears
+    # in three places (the contact dialog, the Support dialog's "getting
+    # help" note, and the mailto: link) and an address that is right in
+    # two of them is worse than one that is wrong in all three: nobody
+    # notices the stale one. Overridable per deployment, so a different
+    # city standing this system up does not have to edit templates.
+    SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", "smesystem2026@gmail.com")
+
+    # ------- Email verification code (SME/LGU self-registration) -------
     # Sent via Gmail SMTP using an "App Password" (see README "Getting a
-    # Gmail App Password"). If GMAIL_ADDRESS/GMAIL_APP_PASSWORD are left
-    # blank, app/services/email_service.py can't send anything, so
-    # auth_controller.py automatically skips verification and registers
-    # the account immediately (same as before this feature existed) --
-    # a missing/broken email setup never blocks anyone from registering.
-    GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
-    GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+    # Gmail App Password") -- NOT the account's normal password; Google
+    # only issues app passwords once 2-Step Verification is on.
+    #
+    # PASTE THE APP PASSWORD WITH THE SPACES REMOVED. Google shows it in
+    # four groups of four for readability. smtplib does not always
+    # tolerate them, and the resulting 535 looks identical to a wrong
+    # password, so _clean() below strips whitespace rather than leaving
+    # that to whoever fills in the deployment panel.
+    GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "").strip()
+    GMAIL_APP_PASSWORD = "".join(os.environ.get("GMAIL_APP_PASSWORD", "").split())
     GMAIL_SENDER_NAME = os.environ.get("GMAIL_SENDER_NAME", "SME Market Saturation DSS")
     EMAIL_VERIFICATION_CODE_TTL_MINUTES = int(os.environ.get("EMAIL_VERIFICATION_CODE_TTL_MINUTES", 10))
+
+    # IS VERIFICATION OPTIONAL OR MANDATORY?
+    #
+    # Historically it was always optional: if Gmail was unconfigured OR
+    # the send failed for any reason, the account was created anyway.
+    # That is the right default for a machine with no internet, and the
+    # WRONG behaviour on a public deployment that means to verify
+    # people -- because the failure mode is silent. A mistyped app
+    # password does not produce "verification is broken", it produces
+    # "verification quietly stopped happening", and nothing on screen
+    # distinguishes the two.
+    #
+    # true  -> a send failure blocks registration and says so. Nobody
+    #          gets an account without proving they own the inbox.
+    # false -> the old behaviour: fall back to creating the account.
+    #
+    # Defaults to ON whenever Gmail is configured, because configuring
+    # it is the act of saying you want verification. An installation
+    # with no Gmail settings is unaffected either way.
+    REQUIRE_EMAIL_VERIFICATION = _bool(
+        os.environ.get("REQUIRE_EMAIL_VERIFICATION"),
+        bool(os.environ.get("GMAIL_ADDRESS", "").strip()
+             and os.environ.get("GMAIL_APP_PASSWORD", "").strip()),
+    )
+
+    # How many wrong codes before the pending registration is thrown
+    # away. A six-digit code is one in a million per guess, which is
+    # only protection if the number of guesses is bounded -- without a
+    # cap, an attacker can post guesses as fast as HTTP allows for the
+    # whole TTL window. Five is enough for a person mistyping and
+    # nowhere near enough to search the space.
+    EMAIL_VERIFICATION_MAX_ATTEMPTS = int(os.environ.get("EMAIL_VERIFICATION_MAX_ATTEMPTS", 5))
+
+    # Minimum seconds between "resend code" requests. A free Gmail
+    # account can send roughly 500 messages a day, and an unthrottled
+    # resend button spends that quota -- or floods a stranger's inbox
+    # using your address -- at whatever rate someone can click.
+    EMAIL_VERIFICATION_RESEND_SECONDS = int(os.environ.get("EMAIL_VERIFICATION_RESEND_SECONDS", 60))
 
     # ---------------- AI forecasting engine defaults ----------------
     # These are also stored in the system_settings table so an Admin can

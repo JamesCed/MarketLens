@@ -150,13 +150,49 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
 
-      # Optional. Email verification for self-registration. Unset means
-      # registration completes immediately without a code, which is the
-      # behaviour from before that feature existed.
+      # ---- EMAIL OTP FOR SELF-REGISTRATION ----
+      # Leave both unset and registration completes immediately with no
+      # code, which is the behaviour from before the feature existed.
+      # Set them and every new SME/LGU sign-up must enter a 6-digit
+      # code emailed to the address they registered with.
+      #
+      #   GMAIL_ADDRESS      the sending account, e.g. smesystem2026@gmail.com
+      #   GMAIL_APP_PASSWORD a 16-character Google APP PASSWORD, NOT the
+      #                      account's normal password. Create one at
+      #                      myaccount.google.com/apppasswords (needs
+      #                      2-Step Verification turned on first).
+      #
+      # PASTE THE APP PASSWORD WITH THE SPACES REMOVED. Google shows it
+      # as four groups of four; smtplib does not reliably tolerate them
+      # and the resulting error is a bare 535 that looks exactly like a
+      # wrong password. app/config.py strips whitespace as a safety
+      # net, but paste it clean.
+      #
+      # Signed in as an Admin, /admin/email-status reports the
+      # configuration and the last failure, and
+      # /admin/email-status/probe authenticates against Gmail for real
+      # without sending anything. Neither ever prints the password.
       - key: GMAIL_ADDRESS
         sync: false
       - key: GMAIL_APP_PASSWORD
         sync: false
+
+      # Optional, all with sensible defaults:
+      #
+      #   GMAIL_SENDER_NAME                    the "From" name on the email
+      #   EMAIL_VERIFICATION_CODE_TTL_MINUTES  how long a code lasts (10)
+      #   EMAIL_VERIFICATION_MAX_ATTEMPTS      wrong codes before the pending
+      #                                        registration is cancelled (5)
+      #   EMAIL_VERIFICATION_RESEND_SECONDS    minimum gap between resends (60)
+      #   REQUIRE_EMAIL_VERIFICATION           true = a send failure blocks the
+      #                                        sign-up instead of quietly
+      #                                        creating an unverified account.
+      #                                        Defaults to TRUE whenever Gmail
+      #                                        is configured, because
+      #                                        configuring it is the act of
+      #                                        saying you want verification.
+      - key: GMAIL_SENDER_NAME
+        value: "MarketLens"
 
       # Deliberately ABSENT: GOOGLE_PLACES_API_KEY,
       # GOOGLE_GEOCODING_API_KEY, GOOGLE_MAPS_JS_API_KEY.
