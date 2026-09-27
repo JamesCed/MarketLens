@@ -220,6 +220,79 @@ def send_password_reset_code(to_email, to_name, code):
     return _send(to_email, to_name, f"Your {sender_name} password reset code: {code}", body)
 
 
+# =====================================================================
+# NOTIFICATION EMAILS (Settings -> Notifications)
+# =====================================================================
+# The four switches on the Notifications tab used to be stored and
+# nothing more, which is why three of them carried a "not sending yet"
+# badge. These are the senders that make them real.
+#
+# They are deliberately thin. Everything above -- the transport split,
+# the never-raises guard, the redaction, the diagnostics -- already
+# works and is already the thing that gets debugged when mail breaks;
+# an alert path with its own copy of that logic would be a second thing
+# to fix every time.
+#
+# WHAT IS SHARED, AND WHY IT IS SHARED
+# Every notification email ends with the same two lines: which switch
+# turns this kind of message off, and where to reach a human. An
+# automated email that does not say how to stop it is the definition of
+# spam, and a per-sender copy of that footer is how one of them ends up
+# without it.
+
+def _notification_footer(switch_label):
+    from flask import current_app
+
+    sender_name = current_app.config.get("GMAIL_SENDER_NAME", "SME Market Saturation DSS")
+    support = current_app.config.get("SUPPORT_EMAIL", "") or _from_address()[1]
+
+    lines = [
+        "",
+        "--",
+        f"You are receiving this because \"{switch_label}\" is switched on in your "
+        f"{sender_name} account. Turn it off under Settings > Notifications.",
+    ]
+    if support:
+        lines.append(f"Questions or a figure that looks wrong? Reply or write to {support}.")
+    return "\n".join(lines)
+
+
+def _send_notification(to_email, to_name, subject, body, switch_label):
+    """One notification email. True if a transport accepted it.
+
+    Returns False rather than raising when mail is not configured at
+    all, so a caller looping over a hundred recipients on a deployment
+    with no BREVO_API_KEY does a hundred cheap no-ops instead of a
+    hundred failed connections.
+    """
+    if not is_configured():
+        return False
+
+    greeting = f"Hi {to_name},\n\n" if to_name else ""
+    return _send(to_email, to_name, subject,
+                 greeting + body + "\n" + _notification_footer(switch_label))
+
+
+def send_market_alert(to_email, to_name, subject, body):
+    """"Alert me when saturation levels change" -- a barangay/industry
+    the reader follows has actually moved."""
+    return _send_notification(to_email, to_name, subject, body,
+                              "Alert me when saturation levels change")
+
+
+def send_recommendation_alert(to_email, to_name, subject, body):
+    """"Email notifications for new recommendations" -- a barangay has
+    entered the top opportunities for an industry they care about."""
+    return _send_notification(to_email, to_name, subject, body,
+                              "Email notifications for new recommendations")
+
+
+def send_trend_digest(to_email, to_name, subject, body):
+    """"Weekly market trend reports" -- the periodic city digest."""
+    return _send_notification(to_email, to_name, subject, body,
+                              "Weekly market trend reports")
+
+
 # ---------------------------------------------------------------------
 # DIAGNOSTICS
 # ---------------------------------------------------------------------
@@ -258,8 +331,12 @@ def _record_failure(exc, include_traceback=False):
     try:
         from flask import current_app
 
+        # Not "verification email failed" any more: the same transport
+        # now carries codes AND notification alerts, and a log line
+        # naming the wrong one sends whoever reads it looking in the
+        # wrong flow.
         current_app.logger.error(
-            "verification email failed: %s", _LAST_FAILURE["detail"],
+            "outgoing email failed: %s", _LAST_FAILURE["detail"],
             exc_info=include_traceback,
         )
     except Exception:  # pragma: no cover - no app context

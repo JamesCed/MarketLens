@@ -826,6 +826,89 @@ def compute_scores_batch(pairs, years_in_operation=0):
     return results
 
 
+def saturation_for_counts(requests_):
+    """Saturation for given competitor counts, WITHOUT touching the
+    database.
+
+    `requests_` is an iterable of (industry_type, location,
+    competitor_count). Returns a list of the same length holding a
+    float for each request that could be scored, and None for any
+    whose market_data or lgu_data row does not exist yet.
+
+    WHY THIS IS SEPARATE FROM compute_scores_batch()
+
+    Two differences, and both matter to the caller it was written for
+    -- market_alert_service, which asks "what WAS the saturation when
+    this barangay had 18 competitors instead of 30?"
+
+      1. IT NEVER CREATES A ROW. compute_scores_batch() falls back to
+         the per-pair path for anything missing, and that path creates
+         a market_data snapshot -- inventing a simulated competitor
+         count when no Places key is configured. That is right when
+         somebody asked for a forecast. It is wrong for a detector
+         whose job is to compare recorded states: it would write a new
+         state in the middle of measuring the old one, and then
+         measure what it had just written.
+
+      2. THE COUNT IS AN INPUT rather than something looked up. Every
+         other feature is held at the row's recorded values, so the
+         difference between two results is attributable to the
+         competitor count and nothing else -- which is exactly the
+         claim an alert makes.
+
+    This replaced inferring the previous saturation by ratio
+    (`now_saturation * was_count / now_count`). That inference assumed
+    the model responds linearly to the competitor count AND that the
+    scored count is the recorded one. Neither holds: a random forest is
+    a step function, not a line, and the reconciled cross-source count
+    can differ from market.competitor_count. Scoring both states
+    properly costs one extra row in a matrix that was being built
+    anyway.
+    """
+    requests_ = list(requests_)
+    if not requests_:
+        return []
+
+    industries = {industry for industry, _location, _count in requests_}
+    locations = {location for _industry, location, _count in requests_}
+
+    market_by_key = _latest_market_rows(industries, locations)
+    lgu_by_location = _lgu_rows(locations)
+
+    results = [None] * len(requests_)
+    resolved = []
+    for index, (industry, location, count) in enumerate(requests_):
+        market = market_by_key.get((industry, location))
+        lgu = lgu_by_location.get(location)
+        if market is not None and lgu is not None:
+            resolved.append((index, industry, market, lgu, count))
+
+    if not resolved:
+        return results
+
+    matrix = np.array([
+        build_feature_vector(market, lgu, 0, industry, competitor_count=count)
+        for _index, industry, market, lgu, count in resolved
+    ])
+
+    _load_models()
+    rf_model = _MODEL_CACHE["rf"]
+
+    if rf_model is None:
+        # No trained model on disk. Defer to the weighted-formula
+        # fallback rather than restating it, exactly as the batch
+        # scorer does.
+        for position, (index, _industry, _market, _lgu, _count) in enumerate(resolved):
+            saturation, _confidence, _version = _predict_saturation(list(matrix[position]))
+            results[index] = round(max(0.0, min(100.0, saturation)), 2)
+        return results
+
+    predictions = np.clip(rf_model.predict(matrix), 0.0, 100.0)
+    for position, (index, _industry, _market, _lgu, _count) in enumerate(resolved):
+        results[index] = round(float(predictions[position]), 2)
+    return results
+
+
 def _score_dict(industry_type, location, market, lgu, saturation_index, confidence_level,
                 model_version, competitor_count=None):
     """The one place the compute_scores() result shape is defined, so

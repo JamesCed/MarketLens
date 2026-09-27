@@ -580,3 +580,158 @@ def test_a_sane_roi_window_from_the_model_is_accepted(app, monkeypatch):
         written = llm_service.generate_opportunity_cards_json("Cafe", _city(), [_card()])
 
     assert written["Poblacion"]["roi_timeframe"] == "9-14 months"
+
+
+# ---------------------------------------------------------------------
+# THE KEY FORMAT DECIDES THE TRANSPORT
+# ---------------------------------------------------------------------
+# Google retired the `AIza` Standard key for the Gemini API -- unrestricted
+# ones began being rejected on 19 June 2026, the format was end-of-lifed
+# through September 2026 -- so an AI Studio key is now an `AQ.`-prefixed
+# auth key. That format is accepted on the NATIVE endpoint
+# (x-goog-api-key) and refused on the OpenAI-compatibility endpoint,
+# where the same key sent as `Authorization: Bearer` returns HTTP 400
+# "Multiple authentication credentials received" or a 401 calling the key
+# invalid.
+#
+# A deployment that sets LLM_PROVIDER=openai, points OPENAI_BASE_URL at
+# Gemini's /openai/ path and supplies an `AQ.` key is therefore
+# guaranteed to fail its first attempt on every single call. The key's
+# own prefix says which transport can carry it, so _provider_order()
+# corrects for it.
+
+def test_an_aq_key_is_sent_natively_rather_than_as_a_bearer_token(app):
+    """The correction, which is what makes an AQ. key work at all."""
+    from app.services.llm_service import _provider_order
+
+    with app.app_context():
+        app.config["LLM_PROVIDER"] = "openai"
+        app.config["OPENAI_API_KEY"] = "AQ.Ab0000000000000000000000000000"
+
+        assert _provider_order()[0] == "gemini"
+
+
+def test_a_real_openai_key_is_left_alone(app):
+    """Deliberately narrow. The point is to stop a guaranteed-failing
+    attempt, not to second-guess a configuration that works."""
+    from app.services.llm_service import _provider_order
+
+    with app.app_context():
+        app.config["LLM_PROVIDER"] = "openai"
+        app.config["OPENAI_API_KEY"] = "sk-proj-0000000000000000"
+
+        assert _provider_order()[0] == "openai"
+
+
+def test_an_explicitly_chosen_provider_is_never_overridden(app):
+    from app.services.llm_service import _provider_order
+
+    with app.app_context():
+        app.config["OPENAI_API_KEY"] = "AQ.Ab0000000000000000000000000000"
+        for provider in ("anthropic", "gemini"):
+            app.config["LLM_PROVIDER"] = provider
+            assert _provider_order()[0] == provider
+
+
+def test_an_unknown_provider_name_does_not_lose_every_fallback(app):
+    """A typo in LLM_PROVIDER used to put a non-existent generator at the
+    head of the list. Harmless in itself -- it is skipped -- but it also
+    meant the list held four entries for three generators, and the
+    "configured provider" reported in diagnostics was a name that does
+    not exist."""
+    from app.services.llm_service import _GENERATORS, _provider_order
+
+    with app.app_context():
+        app.config["LLM_PROVIDER"] = "gemeni"  # typo
+        app.config["OPENAI_API_KEY"] = "sk-proj-0000000000000000"
+
+        order = _provider_order()
+        assert set(order) == set(_GENERATORS)
+        assert len(order) == len(_GENERATORS)
+
+
+def test_every_generator_is_reachable_as_a_fallback(app):
+    """Whatever is configured, all three remain in the order. A provider
+    that drops out of the list is a key that can never be used."""
+    from app.services.llm_service import _GENERATORS, _provider_order
+
+    with app.app_context():
+        for provider in list(_GENERATORS) + ["", "nonsense"]:
+            app.config["LLM_PROVIDER"] = provider
+            app.config["OPENAI_API_KEY"] = "AQ.Ab0000000000000000000000000000"
+            assert set(_provider_order()) == set(_GENERATORS), provider
+
+
+# ---------------------------------------------------------------------
+# THE MODEL NAME
+# ---------------------------------------------------------------------
+# A 404 on a model name and a 401 on a key produce the same visible
+# symptom -- rule-based text with no explanation -- and the natural
+# response to both is to regenerate the key, which fixes only one.
+
+def test_the_default_model_is_not_the_name_that_does_not_exist(app):
+    """The default was `gemini-3-flash`, which Google does not serve:
+    the stable Flash line is numbered in tenths. That produced a 404 on
+    every call, indistinguishable from a bad key."""
+    from app.config import Config
+
+    assert Config.GEMINI_MODEL != "gemini-3-flash"
+    assert re.match(r"^gemini-\d+\.\d+-flash(-lite)?$", Config.GEMINI_MODEL), \
+        Config.GEMINI_MODEL
+
+
+def test_a_404_blames_the_model_not_the_key(app):
+    from app.services import llm_service
+
+    with app.app_context():
+        llm_service._begin_attempt()
+        llm_service._record_failure(
+            "gemini", "api_call",
+            "model=gemini-3-flash: HTTP 404: models/gemini-3-flash is not found "
+            "for API version v1beta",
+        )
+        hint = llm_service.last_failure()["hint"]
+
+        assert "MODEL NAME" in hint
+        assert "GEMINI_MODEL" in hint
+
+
+def test_a_bearer_rejection_points_at_the_provider_setting(app):
+    from app.services import llm_service
+
+    with app.app_context():
+        llm_service._begin_attempt()
+        llm_service._record_failure(
+            "openai", "api_call",
+            "HTTP 400: Multiple authentication credentials received. Please pass only one.",
+        )
+        hint = llm_service.last_failure()["hint"]
+
+        assert "LLM_PROVIDER=gemini" in hint
+        assert "OPENAI_BASE_URL" in hint
+
+
+def test_a_quota_failure_is_described_as_temporary(app):
+    """So nobody spends an afternoon rotating a key that was fine."""
+    from app.services import llm_service
+
+    with app.app_context():
+        llm_service._begin_attempt()
+        llm_service._record_failure("gemini", "api_call",
+                                    "HTTP 429: Quota exceeded for quota metric")
+        hint = llm_service.last_failure()["hint"]
+
+        assert "temporary" in hint.lower()
+
+
+def test_a_plain_missing_key_gets_no_misleading_hint(app):
+    """The default install. Not an incident, and not something to
+    attach troubleshooting advice to."""
+    from app.services import llm_service
+
+    with app.app_context():
+        llm_service._begin_attempt()
+        llm_service._record_failure("anthropic", "no_client",
+                                    "ANTHROPIC_API_KEY is not set")
+
+        assert "hint" not in llm_service.last_failure()

@@ -545,7 +545,35 @@ def process_upload(dataset_type, file_path, source, uploaded_by_user_id):
         return 0, "failed", str(exc)
 
     _clear_analytics_caches()
+    _run_alert_sweeps()
     return count, "success", None
+
+
+def _run_alert_sweeps():
+    """Tell whoever asked to be told that the numbers moved.
+
+    AFTER the commit and after the caches are cleared, in that order.
+    The sweep re-reads market_data and re-scores it, so running it
+    before the commit would compare the new data against itself and
+    find nothing; running it before the caches are cleared would have
+    it read the figures the upload just superseded.
+
+    Wrapped, because this is the upload's return path. run_market_alert_sweep
+    already promises not to raise, and this is the belt to that braces:
+    an import that succeeded must report success even if the alerting
+    behind it is broken, and a rolled-back session here would be
+    reported to the LGU user as a failed upload of data that is in fact
+    safely stored.
+    """
+    try:
+        from app.services.market_alert_service import run_all_alert_sweeps
+
+        run_all_alert_sweeps()
+    except Exception:  # pragma: no cover - defensive
+        from flask import current_app
+
+        current_app.logger.warning("could not run market alert sweep after upload",
+                                   exc_info=True)
 
 
 # How many bad rows to name before summarising. A file with 300

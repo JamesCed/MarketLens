@@ -128,6 +128,9 @@ def _record_failure(provider, stage, detail):
         "detail": _redact(detail),
         "at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     })
+    hint = _hint_for(_LAST_FAILURE["detail"])
+    if hint:
+        _LAST_FAILURE["hint"] = hint
     try:
         from flask import current_app
 
@@ -145,6 +148,48 @@ def _record_failure(provider, stage, detail):
         )
     except Exception:  # pragma: no cover - no app context
         pass
+
+
+def _hint_for(detail):
+    """Turn the provider's own error into the thing to go and change.
+
+    These are the failures that actually happen with this setup, and
+    each of them reads like something it is not. That is the whole
+    reason for translating them: a 404 on a model name and a 401 on a
+    key produce the same visible symptom -- rule-based text with no
+    explanation -- and the natural response to both is to regenerate the
+    key, which fixes only one of them.
+    """
+    lowered = (detail or "").lower()
+
+    if "404" in lowered or "is not found" in lowered or "not found for api version" in lowered:
+        return ("The MODEL NAME is wrong, not the key. Google serves the Flash line "
+                "numbered in tenths -- gemini-3.8-flash (newest), 3.7/3.6/3.5-flash, "
+                "gemini-3.5-flash-lite -- so a plain 'gemini-3-flash' is a 404. Set "
+                "GEMINI_MODEL (or OPENAI_MODEL, if you are on that provider) to an "
+                "exact current id.")
+
+    if "multiple authentication credentials" in lowered:
+        return ("An AQ.-format AI Studio key was sent as `Authorization: Bearer` to "
+                "Gemini's OpenAI-compatibility endpoint, which refuses it. Set "
+                "LLM_PROVIDER=gemini so the same key goes to the native endpoint as "
+                "`x-goog-api-key` instead, and clear OPENAI_BASE_URL.")
+
+    if "access_token_type_unsupported" in lowered:
+        return ("Google read the key as an OAuth token rather than an API key. Check "
+                "GEMINI_API_KEY holds the whole AQ.Ab... value with no trailing space, "
+                "and regenerate it in AI Studio if it still fails.")
+
+    if "401" in lowered or "unauthenticated" in lowered or "api key not valid" in lowered:
+        return ("The key was rejected. Confirm it is an AI Studio key for the Gemini "
+                "API (AQ.Ab... is the current format) and that it is in GEMINI_API_KEY "
+                "or OPENAI_API_KEY, copied whole.")
+
+    if "429" in lowered or "quota" in lowered or "rate limit" in lowered:
+        return ("The key's quota or rate limit is spent, so this is temporary. The "
+                "rule-based generator covers it until the window resets.")
+
+    return None
 
 
 def last_failure():
@@ -435,6 +480,50 @@ _GENERATORS = {
 }
 
 
+def _provider_order():
+    """Which generators to try, in order: the configured one first, then
+    the rest as fallbacks.
+
+    WITH ONE CORRECTION, AND IT IS NOT A WORKAROUND.
+
+    Google has retired the old `AIza` Standard keys for the Gemini API
+    -- unrestricted ones began being rejected on 19 June 2026 and the
+    format was end-of-lifed through September 2026 -- so an AI Studio
+    key is now an `AQ.`-prefixed auth key. That format is accepted on
+    Gemini's NATIVE endpoint (`x-goog-api-key`) and refused on its
+    OpenAI-compatibility endpoint, where the same key sent as
+    `Authorization: Bearer` returns either HTTP 400 "Multiple
+    authentication credentials received" or a 401 calling the key
+    invalid.
+
+    Which means the pairing LLM_PROVIDER=openai + OPENAI_BASE_URL
+    pointed at Gemini's /openai/ path + an `AQ.` key cannot ever work,
+    and every call spends a round trip finding that out again. The key's
+    own prefix says which transport can carry it, so the order is
+    corrected from the credential rather than leaving the deployment to
+    discover it in the logs.
+
+    Deliberately narrow: this only reorders when the configured provider
+    is `openai` AND the key is an `AQ.` one, i.e. exactly the
+    combination that is known-broken. A real OpenAI key, or an
+    explicitly chosen provider, is left alone -- the point is to stop
+    wasting a guaranteed-failing attempt, not to second-guess a
+    configuration that works.
+    """
+    from flask import current_app
+
+    provider = (current_app.config.get("LLM_PROVIDER") or "openai").strip().lower()
+    if provider not in _GENERATORS:
+        provider = "openai"
+
+    if provider == "openai":
+        key = (current_app.config.get("OPENAI_API_KEY") or "").strip()
+        if key.startswith("AQ."):
+            provider = "gemini"
+
+    return [provider] + [name for name in _GENERATORS if name != provider]
+
+
 def _strip_code_fence(raw_text):
     """Some models wrap their JSON in a ```json fence even when asked
     not to. Shared by both response parsers below."""
@@ -540,15 +629,12 @@ def generate_opportunity_cards_json(industry_type, city, cards):
     LLM is doing the writing, not the analysis: the numbers, the ranking
     and the ROI window are all computed before this is ever called.
     """
-    from flask import current_app
-
     if not cards:
         return {}
 
     _begin_attempt()
     prompt = _opportunity_batch_prompt(industry_type, city, cards)
-    provider = current_app.config.get("LLM_PROVIDER", "openai")
-    order = [provider] + [p for p in _GENERATORS if p != provider]
+    order = _provider_order()
 
     for name in order:
         generate = _GENERATORS.get(name)
@@ -605,13 +691,9 @@ def generate_recommendation_json(context):
     -- {headline, opportunity_type, summary, reasons, risks} -- or None
     if every provider is unavailable or every response was unusable.
     Never raises."""
-    from flask import current_app
-
     _begin_attempt()
     prompt = _prompt_for(context)
-
-    provider = current_app.config.get("LLM_PROVIDER", "openai")
-    order = [provider] + [p for p in _GENERATORS if p != provider]
+    order = _provider_order()
 
     for name in order:
         generate = _GENERATORS.get(name)
@@ -626,6 +708,64 @@ def generate_recommendation_json(context):
             return payload
         _record_failure(name, "parse",
                         f"response did not contain the required keys: {raw_text[:160]}")
+    return None
+
+
+def generate_alert_summary(prompt):
+    """One short piece of alert prose from the LLM, or None.
+
+    Used by market_alert_service for notification wording, and it goes
+    through THIS function rather than reaching into _GENERATORS itself
+    so that the alerts get exactly what the Recommendations page gets:
+
+      * the same provider order -- _provider_order(), including its
+        correction for `AQ.` keys -- so a deployment whose LLM_PROVIDER
+        is misconfigured but which has a usable key still produces real
+        AI text instead of quietly falling back to rule-based wording;
+      * the same _begin_attempt()/_record_failure() diagnostics, so
+        "why is my alert text rule-based?" is answerable from Admin >
+        LLM status, the same page that answers it for recommendations;
+      * the same response handling, including the code-fence strip.
+
+    Returns (summary, "llm:<provider>") or None. Never raises: an alert
+    whose wording could not be generated still has to go out in the
+    deterministic wording, and a dead API must never swallow the alert
+    itself.
+    """
+    import json
+
+    _begin_attempt()
+    order = _provider_order()
+
+    for name in order:
+        generate = _GENERATORS.get(name)
+        if generate is None:
+            continue
+        try:
+            raw_text = generate(prompt)
+        except Exception as exc:  # noqa: BLE001
+            _record_failure(name, "api_call", f"{type(exc).__name__}: {exc}")
+            continue
+        if not raw_text:
+            continue  # the generator already recorded why
+
+        try:
+            payload = json.loads(_strip_code_fence(raw_text))
+            summary = str(payload.get("summary") or "").strip()
+        except Exception:  # noqa: BLE001
+            # Not JSON. Accept the text as-is if it is plausibly a couple
+            # of sentences: unlike a recommendation card there is only
+            # one field wanted here, so a model that answered in plain
+            # prose has still answered.
+            summary = _strip_code_fence(raw_text)
+            if len(summary) > 700 or "{" in summary:
+                _record_failure(name, "parse",
+                                f"response was neither JSON nor short prose: {raw_text[:160]}")
+                continue
+
+        if summary:
+            return summary, f"llm:{name}"
+        _record_failure(name, "parse", f"response had no summary text: {raw_text[:160]}")
     return None
 
 

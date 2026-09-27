@@ -303,6 +303,26 @@
               <em>System Settings</em> &mdash; not per account, so it is read-only here.
             </p>
 
+            {#
+              Names the sender, so "is there even an address behind
+              this?" is answerable from the page. When no mail transport
+              is configured the switches still do something real -- the
+              bell on the right fills up either way -- and saying so is
+              better than an account with alerts on and no idea why no
+              email arrives.
+            #}
+            <p class="text-muted mb-3" style="font-size:.75rem;">
+              {% if email_configured and alert_sender %}
+                <i class="bi bi-envelope-check"></i>
+                Alert emails are sent from <strong>{{ alert_sender }}</strong>.
+                Every one of them is also kept in <em>Your notifications</em>, on the right.
+              {% else %}
+                <i class="bi bi-bell"></i>
+                Email is not configured on this deployment, so alerts appear in
+                <em>Your notifications</em> on the right rather than in your inbox.
+              {% endif %}
+            </p>
+
             <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save preferences</button>
           </div>
         </form>

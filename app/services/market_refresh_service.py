@@ -117,6 +117,26 @@ def refresh_batch(limit=MAX_BATCH):
         else:
             failed += 1
 
+    # Real competitor counts just replaced estimated ones, which is the
+    # other way the market "moves" without anybody uploading a file. The
+    # sweep has its own cooldown, so the UI looping through batch after
+    # batch produces one alert for the whole refresh rather than one per
+    # batch of 25.
+    #
+    # Only when something actually landed: a batch where every
+    # combination fell back to a simulated count has changed nothing
+    # worth telling anyone about.
+    if refreshed:
+        try:
+            from app.services.market_alert_service import run_all_alert_sweeps
+
+            run_all_alert_sweeps()
+        except Exception:  # pragma: no cover - defensive
+            from flask import current_app
+
+            current_app.logger.warning(
+                "could not run market alert sweep after Places refresh", exc_info=True)
+
     progress = get_progress()
     return {
         "requested": len(todo),

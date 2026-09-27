@@ -35,11 +35,12 @@ storing two preferences on it costs no rows at all, where a key/value
 table would cost one per user per setting.
 
 The section list is deliberately short. Every control here changes
-something real -- the theme is applied on the next page render, the
-alert switch is checked before an early-warning notification is
-created. A settings page whose switches do nothing is worse than no
-settings page, so there is no "email me digests" toggle: nothing in
-this app sends digests.
+something real -- the theme is applied on the next page render, and the
+notification switches are each checked by market_alert_service before
+anything is written or sent. A settings page whose switches do nothing
+is worse than no settings page, so the one switch that still has no
+sender behind it (the monthly newsletter, which would need a human to
+write it) says so on its own label rather than pretending.
 
 Also handles the (additive, see app/models/user.py) profile picture
 upload/removal for ALL THREE roles (SME, LGU, Admin) -- stored as a
@@ -76,23 +77,37 @@ SME_ONLY_SECTIONS = ("plans",)
 
 # The Notification Preferences switches, in the order they are shown.
 #
-#   (column, label, wired)
+#   (column, label, blurb, wired)
 #
 # `wired` records whether anything in this project ACTS on the
-# preference. Exactly one does today: saturation-change alerts are
-# checked before an early-warning notification is created. The other
-# three are saved faithfully and will be honoured the moment a sender
-# exists, but email_service.py can currently only send a registration
-# code and there is no scheduled job here -- so the page says so instead
-# of implying mail is going out. The flag is what drives that label, so
-# it cannot drift out of date silently.
+# preference -- it is what draws the "not sending yet" badge, so a
+# switch that does nothing cannot quietly look like one that works.
+#
+# THREE OF THESE JUST BECAME TRUE. app/services/market_alert_service.py
+# now detects real movement in the market and delivers it, in-app and by
+# email, through email_service:
+#
+#   notify_saturation_change -> run_market_alert_sweep(), warning half.
+#   notify_recommendations   -> run_market_alert_sweep(), opportunity
+#                               half: barangays that became LESS
+#                               saturated in an industry the account is
+#                               planning in.
+#   notify_weekly_trends     -> run_weekly_trend_digest(), at most once
+#                               a week and only when something moved.
+#
+# THE FOURTH IS STILL FALSE, AND DELIBERATELY STAYS FALSE. A monthly
+# newsletter is product news written by a person; there is no copy to
+# send and no author, and no amount of code changes that. Wiring it to
+# send an auto-generated "newsletter" would be worse than the badge --
+# it would make the honest label into a false one. So it keeps saying
+# "not sending yet", which is exactly what is true.
 NOTIFICATION_PREFS = (
     ("notify_recommendations", "Email notifications for new recommendations",
-     "When the AI surfaces new locations worth entering.", False),
+     "When a barangay in your industry becomes less saturated and worth a look.", True),
     ("notify_weekly_trends", "Weekly market trend reports",
-     "A digest of how saturation moved across the city.", False),
+     "A digest of how saturation moved -- at most weekly, and only when it moved.", True),
     ("notify_saturation_change", "Alert me when saturation levels change",
-     "Fires when a forecast crosses the saturation threshold.", True),
+     "When a market you follow moves, or a forecast crosses the saturation threshold.", True),
     ("notify_newsletter", "Monthly newsletter",
      "Product news and what changed in the data.", False),
 )
@@ -287,4 +302,25 @@ def settings():
         # system-wide value an Admin controls, not a per-account one, so
         # displaying it as an editable field here would be a lie.
         alert_threshold=SystemSetting.get_float("saturation_alert_threshold", 75.0),
+        # Which address the alert emails arrive from, and whether email
+        # is configured on this deployment at all.
+        #
+        # "Why does it say nothing is sending -- is there no sender?" was
+        # a fair question to have to ask, and the page could not answer
+        # it. Now it can: the sending address is named, and an account
+        # whose switches are on but whose deployment has no mail
+        # transport is told that in-app notifications still arrive,
+        # rather than being left to wonder where the email went.
+        **_alert_sender_context(),
     )
+
+
+def _alert_sender_context():
+    from app.services import email_service
+
+    try:
+        configured = email_service.is_configured()
+        sender = email_service._from_address()[1]
+    except Exception:  # pragma: no cover - defensive; Settings must render
+        configured, sender = False, ""
+    return {"email_configured": bool(configured), "alert_sender": sender}

@@ -216,18 +216,40 @@ def test_geocode_query_is_disambiguated_to_tarlac_city():
     assert "Tarlac City" in query and "Philippines" in query
 
 
-def test_geocoding_is_a_no_op_without_an_api_key(app):
+def test_geocoding_is_a_no_op_without_an_api_key(app, tmp_path):
     """No key must mean no network call and no invented coordinates for
     a location OUTSIDE the shipped 76 -- just an honest count of what is
     still unresolved. (The 76 real barangays never hit this path at all
-    -- they're answered from the static file, key or no key.)"""
+    -- they're answered from the static file, key or no key.)
+
+    THE instance_path LINE IS LOAD-BEARING, not tidiness. The geocode
+    cache is a real file under app.instance_path, and instance/ is
+    gitignored -- so it is empty on CI and on a fresh clone, and full on
+    the machine of anyone who has actually run the app against a live
+    Google key. Without the redirect this test reads that developer's
+    cache and fails on a name it never asked about, which is exactly how
+    it failed: `assert {'Balibago': ...} == {}`, Balibago being a real
+    location their own deployment had resolved and cached months
+    earlier. The code was right; the test was reading the developer's
+    filesystem.
+    """
     from app.services.geocoding_service import resolve_missing
 
-    cache, resolved, pending = resolve_missing(app, ["Not A Real Barangay", "Also Fake"], api_key="", limit=20)
+    app.instance_path = str(tmp_path)  # isolated cache file -- see above
+
+    names = ["Not A Real Barangay", "Also Fake"]
+    cache, resolved, pending = resolve_missing(app, names, api_key="", limit=20)
 
     assert resolved == 0
     assert pending == 2
     assert cache == {}
+
+    # The claim that actually matters, asserted about the names this
+    # call was given rather than about the cache as a whole: nothing was
+    # invented for either of them. This survives the cache being
+    # non-empty for unrelated reasons, which the assertion above does
+    # not.
+    assert all(name not in cache for name in names)
 
 
 # --------------------------------------------- startup data migration

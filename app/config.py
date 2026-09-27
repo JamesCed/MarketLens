@@ -230,7 +230,25 @@ class Config:
     # already has the key in the OpenAI slot keeps working after
     # changing nothing but LLM_PROVIDER.
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
-    GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash")
+    # THE MODEL ID HAS TO BE AN EXACT, CURRENT ONE. An unknown name is a
+    # 404 from the API, which looks in the logs exactly like a bad key
+    # and sends you off regenerating a credential that was never the
+    # problem.
+    #
+    # This default was "gemini-3-flash", which is NOT a model ID Google
+    # serves: `gemini-3-flash-preview` existed as a preview, and the
+    # stable line is numbered in tenths -- 3.5, 3.6, 3.7, 3.8. Checked
+    # against ai.google.dev/gemini-api/docs/models on 27 September 2026;
+    # the current stable Flash models are gemini-3.8-flash (newest),
+    # 3.7/3.6/3.5-flash, and gemini-3.5-flash-lite / 3.1-flash-lite.
+    # Everything on 2.0 is shut down and 2.5 is limited to accounts that
+    # already used it.
+    #
+    # 3.8 Flash is the default because the calls here are small and
+    # infrequent -- a few hundred tokens per recommendation or alert --
+    # so the quality of the writing is worth more than the difference in
+    # price. Set GEMINI_MODEL=gemini-3.5-flash-lite for the cheaper one.
+    GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
     GEMINI_BASE_URL = os.environ.get(
         "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
     ).strip().rstrip("/")
@@ -274,10 +292,31 @@ class Config:
     # looks like a code problem and is not.
     BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "").strip()
 
-    # Who the mail comes from. Defaults to GMAIL_ADDRESS so an existing
-    # setup keeps working; set it explicitly when the verified Brevo
-    # sender is a different address.
-    MAIL_FROM_ADDRESS = os.environ.get("MAIL_FROM_ADDRESS", "").strip()
+    # Who the mail comes from -- verification codes, password resets and
+    # the market alerts from market_alert_service.
+    #
+    # Resolution order, and the reason for each step:
+    #   1. MAIL_FROM_ADDRESS, when a deployment sets it. The verified
+    #      Brevo sender is sometimes a different address from the Gmail
+    #      account, and that case needs an explicit answer.
+    #   2. GMAIL_ADDRESS, so an install that predates the Brevo
+    #      transport keeps sending from exactly the address it always
+    #      did, with nothing to change.
+    #   3. SUPPORT_EMAIL -- the same address the Contact Us panel and
+    #      the footer already give out.
+    #
+    # Step 3 is the one that is new, and it is there because a
+    # BREVO_API_KEY with no GMAIL_ADDRESS used to resolve to no sender at
+    # all: every send was refused for a missing "from", which reads in
+    # the logs like a credential problem and is not one. Falling back to
+    # the support address also means alerts arrive from somewhere a
+    # reader can actually reply to, rather than from a no-reply nobody
+    # reads.
+    MAIL_FROM_ADDRESS = (
+        os.environ.get("MAIL_FROM_ADDRESS", "").strip()
+        or os.environ.get("GMAIL_ADDRESS", "").strip()
+        or SUPPORT_EMAIL
+    )
 
     # How long a password-reset code lasts. Longer than the sign-up
     # code because resetting a password often means going to find

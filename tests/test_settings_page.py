@@ -330,9 +330,9 @@ def test_all_four_notification_preferences_round_trip(app):
 
 
 def test_the_page_says_which_preferences_nothing_sends_yet(app):
-    """Three of the four have no sender in this project. A switch that
-    silently does nothing is worse than no switch, so the page has to
-    admit it."""
+    """Only the newsletter has no sender now that market_alert_service
+    exists. A switch that silently does nothing is worse than no switch,
+    so the page has to admit which one that is -- and only that one."""
     with app.app_context():
         _user(app)
         body = _client(app).get("/settings?section=notifications").get_data(as_text=True)
@@ -342,17 +342,41 @@ def test_the_page_says_which_preferences_nothing_sends_yet(app):
                       "Alert me when saturation levels change",
                       "Monthly newsletter"]:
             assert label in body, label
-        # Exactly three carry the caveat -- the saturation one is real.
-        assert body.count("not sending yet") == 3
+
+        # Exactly one carries the caveat: the monthly newsletter, which
+        # needs a person to write it. The other three now send.
+        assert body.count("not sending yet") == 1
+
+        # And it is attached to the newsletter specifically, not merely
+        # present somewhere on the page. Counting alone would pass if the
+        # badge moved to the wrong switch.
+        # The badge is rendered immediately after its own label, so the
+        # newsletter's label must be the one just before it.
+        newsletter_at = body.index("Monthly newsletter")
+        badge_at = body.index("not sending yet")
+        assert 0 < badge_at - newsletter_at < 400, \
+            "the 'not sending yet' badge is not the newsletter's"
 
 
-def test_only_the_saturation_preference_is_wired_to_anything(app):
-    """Guards the claim the UI makes. If a sender is built later, wire
-    it up and flip the flag -- this test will point at the label."""
+def test_every_preference_claiming_to_be_wired_has_a_sender(app):
+    """Guards the claim the UI makes, structurally.
+
+    The badge is drawn from the `wired` flag, and the flag is a hand-
+    maintained boolean -- exactly the kind of thing that goes stale. So
+    this does not hardcode a list: it asserts that the set of switches
+    the page presents as working is the same set market_alert_service
+    actually checks before it sends. Wire up a sender and forget the
+    flag, or flip the flag without a sender, and this fails.
+    """
     from app.controllers.profile_controller import NOTIFICATION_PREFS
+    from app.services.market_alert_service import _PREF_DEFAULTS
 
-    wired = [field for field, _l, _b, is_wired in NOTIFICATION_PREFS if is_wired]
-    assert wired == ["notify_saturation_change"]
+    wired = {field for field, _l, _b, is_wired in NOTIFICATION_PREFS if is_wired}
+    assert wired == set(_PREF_DEFAULTS)
+
+    unwired = {field for field, _l, _b, is_wired in NOTIFICATION_PREFS if not is_wired}
+    assert unwired == {"notify_newsletter"}, \
+        "a newly unwired preference needs its own 'not sending yet' badge"
 
 
 def test_mark_all_read_and_clear_read(app):
