@@ -194,7 +194,7 @@ changes as plain MySQL, for the ERD, are in `sql/2026-09_revisions.sql`.
 | **Direct competition**: the score is adjusted by how dense the plan's sub-category is (measured by Places or the LGU permit register); with no measurement it is left exactly as the industry score and labelled "estimated" | `app/services/subcategory_service.py`, table `subcategory_market_data` |
 | **Monthly revenue removed** from every form; the ROI window is now built from the model alone (column kept, no longer read) | `location_opportunity_service.estimate_roi_timeframe` |
 | **First-time walkthrough** (asks once; interactive, plain-language steps per role; replay from the sidebar) | `onboarding_controller.py`, `static/js/tour.js`, `tour_steps.js` |
-| **Community forum** with keyword filter + moderator/AI approval, reports, moderation queue | `forum_controller.py`, `services/forum_moderation.py` |
+| **Community on Discord**: not in the menu; the footer's "Community Forum" link (and any `/community` URL) opens the Discord invite in a new tab. The invite is set in Admin > System Settings (Discord invites only). The earlier in-app forum was removed in favour of Discord's own channels, roles and AutoMod | `community_controller.py`, `shared/_footer.html` |
 | **Interior look matches sign-in** (navy/cyan frame; prototype content colours unchanged; remove `dss-skin` from `<body>` in `base.html` to revert) | `static/css/style.css` (INTERIOR SKIN block) |
 | **Location by map** on Home (Pick on map), visible Industry type box, **Clear** | `static/js/location_picker.js`, `static/js/sme_search.js` |
 | **Saturation map**: cleaner text; barangay panel shows the top 3 industries there | `static/js/map.js`, `api_controller.barangay_detail` |

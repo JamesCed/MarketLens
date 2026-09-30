@@ -3,9 +3,9 @@
 // notification bell dropdown from GET /api/notifications.
 
 // Notification text is DATA, never markup. A notification can quote
-// something a person typed -- a forum post title, a moderator's reason
-// for rejecting it -- so interpolating n.message into innerHTML raw was
-// a stored-XSS hole: a post titled <img src=x onerror=...> would run
+// something a person typed -- a business plan's name, an admin's reason
+// for an action -- so interpolating n.message into innerHTML raw was
+// a stored-XSS hole: a name like <img src=x onerror=...> would run
 // script in the moderator's browser the moment they opened the bell.
 // Everything interpolated below goes through escapeHtml first.
 function escapeHtml(value) {

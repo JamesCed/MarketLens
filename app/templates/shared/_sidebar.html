@@ -51,12 +51,8 @@
       </a>
     {% endif %}
 
-    {# Every role can read and post; moderation is Admin-only and has
-       its own entry in the ADMIN section below. #}
-    <a class="dss-nav-link {{ 'active' if request.endpoint and request.endpoint.startswith('forum.') and request.endpoint != 'forum.moderation' }}"
-       href="{{ url_for('forum.index') }}" data-tour="nav-community">
-      <i class="bi bi-people-fill"></i> Community
-    </a>
+    {# Community is not a page in the menu: it is the project's Discord
+       server, opened from the "Community Forum" link in the footer. #}
 
     {% if current_user.is_lgu() or current_user.is_admin() %}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.government_upload' }}" href="{{ url_for('lgu.government_upload') }}" data-tour="nav-data-upload">
@@ -77,9 +73,6 @@
       </a>
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.datasets' }}" href="{{ url_for('admin.datasets') }}" data-tour="nav-datasets">
         <i class="bi bi-hdd-stack"></i> Datasets
-      </a>
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'forum.moderation' }}" href="{{ url_for('forum.moderation') }}" data-tour="nav-moderation">
-        <i class="bi bi-shield-exclamation"></i> Moderation
       </a>
       {# bi-sliders, not a second bi-gear: personal "Settings" sits a few
          rows below, and the same icon twice in one list reads as the

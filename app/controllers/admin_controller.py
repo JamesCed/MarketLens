@@ -249,8 +249,8 @@ def toggle_active(user_id):
 # point 2 in the module docstring. Archiving is the replacement: the
 # account can no longer sign in (User.is_active is False once
 # archived_at is set) and leaves the active list, but everything that
-# names it -- the audit trail, the datasets it uploaded, its forum posts
-# -- still resolves, and it can be restored exactly as it was.
+# names it -- the audit trail, the datasets it uploaded, its plans --
+# still resolves, and it can be restored exactly as it was.
 @admin_bp.route("/users/<int:user_id>/archive", methods=["POST"])
 @role_required("Admin")
 def archive_user(user_id):
@@ -725,8 +725,23 @@ def settings():
                 SystemSetting.set(key, value)
 
         SystemSetting.set("use_llm_recommendations", "true" if request.form.get("use_llm_recommendations") else "false")
+
+        # The Discord invite behind the footer's Community Forum link.
+        # Only a discord.gg / discord.com invite is accepted -- anything
+        # else would make /community an open redirect.
+        from app.controllers.community_controller import SETTING_KEY, is_valid_invite
+
+        invite = (request.form.get("community_invite_url") or "").strip()
+        invite_rejected = bool(invite) and not is_valid_invite(invite)
+        if invite and not invite_rejected:
+            SystemSetting.set(SETTING_KEY, invite)
+
         log_action("admin_update_settings")
-        flash("System settings updated.", "success")
+        if invite_rejected:
+            flash("Settings saved, except the community link: it must be a Discord invite "
+                  "such as https://discord.gg/yourcode.", "warning")
+        else:
+            flash("System settings updated.", "success")
         return redirect(url_for("admin.settings"))
 
     SystemSetting.ensure_defaults()

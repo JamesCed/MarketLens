@@ -19,8 +19,12 @@
       🌐 PSA Data Source
     </a>
     <span>📊 DTI-Verified</span>
-    {# Was a plain label that looked like a link and went nowhere. #}
-    <a href="{{ url_for('forum.index') }}" class="text-white text-decoration-none">💬 Community Forum</a>
+    {# The MarketLens community is a Discord server: this goes through
+       /community, which redirects to the invite set in Admin > System
+       Settings, and opens it in a new tab so MarketLens stays open. #}
+    <a href="{{ url_for('community.discord') }}" class="text-white text-decoration-none"
+       target="_blank" rel="noopener" data-tour="community-link"
+       title="Opens our Discord community in a new tab">💬 Community Forum <i class="bi bi-box-arrow-up-right small" aria-hidden="true"></i></a>
     <button type="button" class="dss-footer-link" data-bs-toggle="modal" data-bs-target="#contactModal">
       📞 Contact Us
     </button>

@@ -235,7 +235,7 @@ def test_client_side_output_is_escaped():
 def test_signed_in_pages_carry_the_skin_and_the_landing_does_not(app, two_plans):
     with app.app_context():
         client = _client(app)
-        for path in ("/home", "/settings", "/community/", "/recommendations"):
+        for path in ("/home", "/settings", "/saturation-map", "/recommendations"):
             page = client.get(path).get_data(as_text=True)
             assert '<body class="dss-body dss-skin">' in page, path
     landing = app.test_client().get("/login").get_data(as_text=True)

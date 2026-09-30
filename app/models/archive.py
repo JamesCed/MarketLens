@@ -28,8 +28,8 @@ TWO MIXINS, BECAUSE "ARCHIVED" MEANS TWO DIFFERENT THINGS
 User carries the first and deliberately not the second. An archived
 account must stop being able to sign in and must drop out of the
 active-user lists, but it must still RESOLVE: the audit trail names it,
-uploaded datasets name it as their uploader, and a forum post still has
-an author. Hiding archived users from every query would turn all of
+uploaded datasets name it as their uploader, and its plans still have
+an owner. Hiding archived users from every query would turn all of
 those into "unknown user". So for users, "archived" is enforced where it
 matters -- is_active and the admin list -- not globally.
 

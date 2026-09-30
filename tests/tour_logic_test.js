@@ -299,7 +299,7 @@ test("the SME tour covers the Home page anchors the Home page provides", () => {
     assert.ok(targets.some((t) => t.indexOf('[data-tour="' + a + '"]') !== -1), "no SME step targets " + a);
   });
   const pages = new Set(STEPS.SME.map((s) => s.page));
-  ["/home", "/saturation-map", "/trend-reports", "/recommendations", "/community/", "/settings"].forEach((p) => {
+  ["/home", "/saturation-map", "/trend-reports", "/recommendations", "/settings"].forEach((p) => {
     assert.ok(pages.has(p), "SME tour never visits " + p);
   });
 });

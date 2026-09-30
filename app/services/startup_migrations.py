@@ -160,7 +160,7 @@ def _add_missing_user_columns():
 
 def _create_missing_tables():
     """Create any table a model defines that this database does not have
-    yet -- subcategory_market_data, the forum tables.
+    yet -- subcategory_market_data, for instance.
 
     Only on a database that is already initialised (it has a `user`
     table). A brand-new database is left entirely to seed.py's

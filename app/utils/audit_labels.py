@@ -75,7 +75,8 @@ ACTION_META = {
     "export_barangay_seed_csv": ("Downloaded the barangay seed dataset", "Data export"),
     "export_audit_log": ("Exported the audit trail", "Audit review"),
 
-    # --- community forum
+    # --- community forum (retired: the community moved to Discord; kept
+    #     so audit rows written while the forum existed still read well)
     "forum_post_created": ("Posted in the community forum", "Community participation"),
     "forum_comment_created": ("Commented in the community forum", "Community participation"),
     "forum_post_approved": ("Approved a community post", "Content moderation"),

@@ -71,6 +71,19 @@
     </div>
   </div>
 
+  <div class="dss-card mb-4">
+    <h6 class="mb-3">Community (Discord)</h6>
+    <label class="form-label" for="communityInvite">Discord invite link</label>
+    <input type="url" id="communityInvite" name="community_invite_url" class="form-control"
+           placeholder="https://discord.gg/yourcode" pattern="https://(discord\.gg|(www\.)?discord\.com/invite)/.+"
+           value="{{ settings['community_invite_url'].setting_value if 'community_invite_url' in settings else '' }}">
+    <div class="form-text">
+      The <strong>Community Forum</strong> link at the bottom of every dashboard opens this invite in a new tab.
+      Use an invite that never expires (Discord: Invite People &rarr; Edit invite link &rarr; Expire after: Never).
+      Only a <code>discord.gg</code> or <code>discord.com/invite</code> link is accepted.
+    </div>
+  </div>
+
   <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Settings</button>
 </form>
 {% endblock %}

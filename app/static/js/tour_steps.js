@@ -57,8 +57,6 @@
     "/saturation-map": "Saturation Map",
     "/trend-reports": "Trend Reports",
     "/recommendations": "Recommendations",
-    "/community/": "Community",
-    "/community/moderation": "Moderation",
     "/settings": "Settings",
     "/lgu/dashboard": "LGU Dashboard",
     "/lgu/government-data-upload": "Gov't Data Upload",
@@ -75,9 +73,6 @@
     "yourself — that's the best way to learn. You can leave anytime with Exit tour.";
   const PHONE_MENU_TIP = "On a phone, tap the ☰ button at the top left to open this menu.";
   const REPLAY_TIP = "You can replay this tour anytime from Take the tour in the sidebar.";
-  // The Community page's own "Write a post" button (the header one comes
-  // first in the page, ahead of the empty-state copy).
-  const WRITE_A_POST = '.forum-page a.btn-primary[href*="/community/new"]';
   const MAP_CLICK = {
     // The list of barangays on the right counts too: for someone who
     // finds the map fiddly, picking a name is the same action.
@@ -113,7 +108,6 @@
         "Saturation Map — how crowded each barangay is",
         "Trend Reports — how the market has changed over time",
         "Recommendations — where we suggest you open, and why",
-        "Community — ask other business owners",
         "Settings — your account and your saved plans",
       ],
       how: "Click a name to open that page. The highlighted one is the page you're on now. " + PHONE_MENU_TIP,
@@ -258,6 +252,19 @@
         "For the full explanation, open the Recommendations page.",
     },
     {
+      id: "sme-community",
+      page: "/home",
+      target: '[data-tour="community-link"]',
+      placement: "top",
+      title: "Our community on Discord",
+      what:
+        "Want to ask other business owners in Tarlac City? The MarketLens community is a Discord server, " +
+        "with a room for each kind of business, permits questions, and tips.",
+      how:
+        "Click Community Forum at the bottom of this page. Discord opens in a new tab, so MarketLens stays " +
+        "open here. You'll need a free Discord account the first time.",
+    },
+    {
       id: "sme-saturation-map",
       page: "/saturation-map",
       target: "#dss-map",
@@ -319,18 +326,6 @@
       how: "Press Save to My Plans on any card to keep it as a new plan — it then appears in the plan bar on Home.",
     },
     {
-      id: "sme-community",
-      page: "/community/",
-      target: WRITE_A_POST,
-      title: "Community",
-      what:
-        "A place to ask questions and swap tips with other business owners in Tarlac City. Posts are " +
-        "grouped by topic in the list on the left.",
-      how:
-        "Press Write a post to ask a question, or open someone's post to reply and help them. New posts " +
-        "are checked first, to keep the space safe and respectful.",
-    },
-    {
       id: "sme-settings",
       page: "/settings",
       target: "#settingsNav",
@@ -369,7 +364,7 @@
         "Saturation Map — see which barangays are crowded",
         "Trend Reports — see how the market is changing",
         "Recommendations — where to open, and why",
-        "Community — ask other business owners",
+        "Community Forum (bottom of Home) — our Discord community",
         "Settings — edit your plans and choose your notices",
         "The bell at the top — your messages from MarketLens",
       ],
@@ -403,7 +398,6 @@
         "LGU Dashboard — the whole city at a glance",
         "Saturation Map — how crowded each barangay is",
         "Trend Reports — how the market has changed",
-        "Community — talk with business owners",
         "Gov't Data Upload — add the city's official records",
         "Settings — your account",
       ],
@@ -441,6 +435,15 @@
       title: "All barangays",
       what: "Every barangay, with the number of businesses on file, so you can spot crowded and underserved areas.",
       how: "Type in the filter box to find a barangay quickly.",
+    },
+    {
+      id: "lgu-community",
+      page: "/lgu/dashboard",
+      target: '[data-tour="community-link"]',
+      placement: "top",
+      title: "Our community on Discord",
+      what: "Business owners ask questions and share tips on the MarketLens Discord server — a good place for the city to answer them.",
+      how: "Click Community Forum at the bottom of the dashboard. Discord opens in a new tab.",
     },
     {
       id: "lgu-upload",
@@ -502,14 +505,6 @@
       how: "Use Select Period to look back at an earlier month. Export / Print Report makes a copy for meetings.",
     },
     {
-      id: "lgu-community",
-      page: "/community/",
-      target: WRITE_A_POST,
-      title: "Community",
-      what: "Where business owners ask questions and share tips — and where the city can answer them.",
-      how: "Open a post to reply, or press Write a post to share an update. New posts are checked first, to keep the space safe.",
-    },
-    {
       id: "lgu-settings",
       page: "/settings",
       target: "#settingsNav",
@@ -530,7 +525,7 @@
         "Gov't Data Upload — add official records (use the template)",
         "Saturation Map — see which barangays are crowded",
         "Trend Reports — see how the market is changing",
-        "Community — answer business owners' questions",
+        "Community Forum (bottom of the dashboard) — our Discord community",
         "Settings — your account and notices",
       ],
       how: REPLAY_TIP,
@@ -566,7 +561,6 @@
         "Manage Users — accounts and who can sign in",
         "Audit Trail — who did what, and when",
         "Datasets — the data behind every score",
-        "Moderation — community posts waiting for review",
         "System Settings — how the forecasting engine behaves",
       ],
       how: "Click a name to open that page. " + PHONE_MENU_TIP,
@@ -654,19 +648,6 @@
       how: "Press Restore, and give a reason, to put a row back into use. The scores pick it up on the next page load.",
     },
     {
-      id: "admin-moderation",
-      page: "/community/moderation",
-      target: ".forum-mod-tabs",
-      placement: "bottom",
-      title: "Moderation",
-      what:
-        "New community posts and comments that need a look wait here, along with anything members have " +
-        "reported — so nothing rude, misleading or unsafe reaches other users.",
-      how:
-        "Open each tab and read what's waiting, then Approve it or Reject it. Rejecting asks for a reason, " +
-        "and the writer is told what you decided and why.",
-    },
-    {
       id: "admin-system-settings",
       page: "/admin/settings",
       target: ".dss-main form .dss-card",
@@ -689,8 +670,7 @@
         "Manage Users — suspend, archive and restore accounts (with a reason)",
         "Audit Trail — who did what, when, where and why",
         "Datasets — archive and restore data rows",
-        "Moderation — review community posts",
-        "System Settings — tune the forecasting engine",
+        "System Settings — tune the forecasting engine, and set the Discord community link",
       ],
       how: REPLAY_TIP,
     },

@@ -88,7 +88,7 @@ def create_app(config_name=None):
     from app.controllers.admin_controller import admin_bp
     from app.controllers.profile_controller import profile_bp
     from app.controllers.api_controller import api_bp
-    from app.controllers.forum_controller import forum_bp
+    from app.controllers.community_controller import community_bp
     from app.controllers.onboarding_controller import onboarding_bp
 
     app.register_blueprint(auth_bp)
@@ -97,7 +97,8 @@ def create_app(config_name=None):
     app.register_blueprint(admin_bp)
     app.register_blueprint(profile_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
-    app.register_blueprint(forum_bp)
+    # The community is on Discord: /community redirects to the invite.
+    app.register_blueprint(community_bp)
     app.register_blueprint(onboarding_bp)
 
     # ---- template globals ----

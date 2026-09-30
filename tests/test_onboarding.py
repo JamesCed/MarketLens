@@ -305,11 +305,13 @@ def test_the_sidebar_has_take_the_tour(app):
 
 
 @pytest.mark.parametrize("role, expected", [
+    # No Community entry: the community is the Discord server, opened
+    # from the footer (see tests/test_community_discord.py).
     ("SME", ["nav-home", "nav-saturation-map", "nav-trend-reports", "nav-recommendations",
-             "nav-community", "nav-settings"]),
-    ("LGU", ["nav-lgu-dashboard", "nav-saturation-map", "nav-trend-reports", "nav-community",
+             "nav-settings"]),
+    ("LGU", ["nav-lgu-dashboard", "nav-saturation-map", "nav-trend-reports",
              "nav-data-upload", "nav-settings"]),
-    ("Admin", ["nav-admin-dashboard", "nav-users", "nav-audit", "nav-datasets", "nav-moderation",
+    ("Admin", ["nav-admin-dashboard", "nav-users", "nav-audit", "nav-datasets",
                "nav-system-settings", "nav-settings"]),
 ])
 def test_the_sidebar_links_carry_tour_anchors(app, role, expected):

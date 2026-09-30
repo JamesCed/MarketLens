@@ -32,14 +32,12 @@ DEFAULT_SETTINGS = {
     ),
     "places_calls_today": ("0", "Live Google Places lookups spent so far today (maintained by the app)"),
     "places_calls_day": ("", "The date places_calls_today refers to (maintained by the app)"),
-    # Community forum: may the AI publish a post that passed every content
-    # filter without waiting for a human moderator? Posts the filter
-    # flagged, and anything the AI is unsure about, always wait for a
-    # person regardless. See app/services/forum_moderation.py.
-    "forum_ai_moderation": (
-        "true",
-        "true = the AI may publish clean community posts without waiting for a moderator; "
-        "false = every post waits for an administrator's approval",
+    # The community is the project's Discord server; the footer's
+    # "Community Forum" link opens this invite. See
+    # app/controllers/community_controller.py.
+    "community_invite_url": (
+        "https://discord.gg/4EBtST2Bk",
+        "Invite link to the MarketLens Discord community (opened by the footer's Community Forum link)",
     ),
     "use_llm_recommendations": (
         "true",
