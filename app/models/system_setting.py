@@ -32,6 +32,15 @@ DEFAULT_SETTINGS = {
     ),
     "places_calls_today": ("0", "Live Google Places lookups spent so far today (maintained by the app)"),
     "places_calls_day": ("", "The date places_calls_today refers to (maintained by the app)"),
+    # Community forum: may the AI publish a post that passed every content
+    # filter without waiting for a human moderator? Posts the filter
+    # flagged, and anything the AI is unsure about, always wait for a
+    # person regardless. See app/services/forum_moderation.py.
+    "forum_ai_moderation": (
+        "true",
+        "true = the AI may publish clean community posts without waiting for a moderator; "
+        "false = every post waits for an administrator's approval",
+    ),
     "use_llm_recommendations": (
         "true",
         "true = use an LLM (GPT-4o-mini via OpenRouter, or Claude, see LLM_PROVIDER/OPENAI_* in .env) to write "

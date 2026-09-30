@@ -32,6 +32,11 @@ from app.models.plan_save import PlanSave
 from app.models.audit_log import AuditLog
 from app.models.system_setting import SystemSetting
 from app.models.industry_migration_log import IndustryMigrationLog
+from app.models.subcategory_market_data import SubcategoryMarketData
+# Community forum tables (channels, posts, comments, reports). Imported
+# for its side effect of registering the models with SQLAlchemy; the
+# forum code imports them from app.models.forum directly.
+from app.models import forum as _forum  # noqa: F401
 
 __all__ = [
     "User",
@@ -44,4 +49,5 @@ __all__ = [
     "AuditLog",
     "SystemSetting",
     "IndustryMigrationLog",
+    "SubcategoryMarketData",
 ]

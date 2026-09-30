@@ -55,14 +55,26 @@ def get_places_recap_watermark():
         return 0
 
 
-# Additive columns on `user` that a database created by an older version
-# will not have. db.create_all() adds them to a NEW database but never
-# alters an existing table, so without this an upgraded install dies on
-# the first query with "Unknown column 'user.theme'".
+# Additive columns that a database created by an older version will not
+# have. db.create_all() adds them to a NEW database but never alters an
+# existing table, so without this an upgraded install dies on the first
+# query with "Unknown column 'user.theme'" (or 'lgu_data.archived_at',
+# or 'sme_profile.subcategory', ...).
 #
-# {column: (SQLite DDL, MySQL DDL)} -- the two backends this project
-# targets. The syntax happens to match for these three, but keeping the
-# pair explicit gives a column that DOES need to differ somewhere to go.
+# {table: {column: (SQLite DDL, MySQL DDL)}} -- the two backends this
+# project targets. The syntax happens to match for most of these, but
+# keeping the pair explicit gives a column that DOES need to differ
+# somewhere to go.
+#
+# Every entry is NULLable or has a DEFAULT, deliberately: adding a NOT
+# NULL column with no default to a table that already has rows fails on
+# MySQL and is meaningless on SQLite.
+_ARCHIVE_COLUMNS = {
+    "archived_at": ("DATETIME NULL", "DATETIME NULL"),
+    "archived_by": ("INTEGER NULL", "INT NULL"),
+    "archive_reason": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
+}
+
 _USER_COLUMNS = {
     "profile_picture": ("TEXT NULL", "LONGTEXT NULL"),
     "theme": ("VARCHAR(10) NOT NULL DEFAULT 'light'", "VARCHAR(10) NOT NULL DEFAULT 'light'"),
@@ -70,11 +82,47 @@ _USER_COLUMNS = {
     "notify_weekly_trends": ("BOOLEAN NOT NULL DEFAULT 0", "TINYINT(1) NOT NULL DEFAULT 0"),
     "notify_saturation_change": ("BOOLEAN NOT NULL DEFAULT 1", "TINYINT(1) NOT NULL DEFAULT 1"),
     "notify_newsletter": ("BOOLEAN NOT NULL DEFAULT 0", "TINYINT(1) NOT NULL DEFAULT 0"),
+    # First-time walkthrough state -- see User.onboarding_state.
+    "onboarding_state": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
+    # Archive instead of delete -- see app/models/archive.py.
+    **_ARCHIVE_COLUMNS,
+}
+
+_ADDITIVE_COLUMNS = {
+    "user": _USER_COLUMNS,
+    "lgu_data": dict(_ARCHIVE_COLUMNS),
+    "market_data": dict(_ARCHIVE_COLUMNS),
+    # Broader business parameters -- see app/models/sme_profile.py.
+    "sme_profile": {
+        "subcategory": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
+        "product_offering": ("TEXT NULL", "TEXT NULL"),
+        "innovation_idea": ("TEXT NULL", "TEXT NULL"),
+        "offering_details": ("TEXT NULL", "TEXT NULL"),
+    },
+    # The five W's -- see app/models/audit_log.py.
+    "audit_logs": {
+        "actor_name": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
+        "actor_role": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
+        "target_type": ("VARCHAR(50) NULL", "VARCHAR(50) NULL"),
+        "target_id": ("VARCHAR(50) NULL", "VARCHAR(50) NULL"),
+        "target_label": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
+        "http_method": ("VARCHAR(10) NULL", "VARCHAR(10) NULL"),
+        "route": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
+        "user_agent": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
+        "reason": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
+    },
 }
 
 
-def _add_missing_user_columns():
-    """ALTER TABLE `user` for any additive column it is missing.
+def _quote(table, dialect):
+    # `user` is a reserved word on both backends, so every table name is
+    # quoted rather than special-casing that one.
+    return f"`{table}`" if dialect == "mysql" else f'"{table}"'
+
+
+def _add_missing_columns():
+    """ALTER TABLE for every additive column any existing table is
+    missing. Returns {table: [columns added]}.
 
     Reads the live column list first rather than firing the DDL and
     catching a duplicate-column error: a failed statement aborts the
@@ -84,24 +132,51 @@ def _add_missing_user_columns():
     from sqlalchemy import inspect, text
 
     inspector = inspect(db.engine)
-    if "user" not in inspector.get_table_names():
-        return []          # brand-new database -- create_all() handles it
+    tables = set(inspector.get_table_names())
+    if "user" not in tables:
+        return {}          # brand-new database -- create_all() handles it
 
-    existing = {col["name"] for col in inspector.get_columns("user")}
     dialect = db.engine.dialect.name
-    added = []
-
-    for column, (sqlite_ddl, mysql_ddl) in _USER_COLUMNS.items():
-        if column in existing:
-            continue
-        ddl = mysql_ddl if dialect == "mysql" else sqlite_ddl
-        with db.engine.begin() as conn:
-            conn.execute(text(f'ALTER TABLE "user" ADD COLUMN {column} {ddl}'
-                              if dialect != "mysql"
-                              else f"ALTER TABLE `user` ADD COLUMN {column} {ddl}"))
-        added.append(column)
-
+    added = {}
+    for table, columns in _ADDITIVE_COLUMNS.items():
+        if table not in tables:
+            continue       # created whole by _create_missing_tables()
+        existing = {col["name"] for col in inspector.get_columns(table)}
+        for column, (sqlite_ddl, mysql_ddl) in columns.items():
+            if column in existing:
+                continue
+            ddl = mysql_ddl if dialect == "mysql" else sqlite_ddl
+            with db.engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {_quote(table, dialect)} ADD COLUMN {column} {ddl}"))
+            added.setdefault(table, []).append(column)
     return added
+
+
+def _add_missing_user_columns():
+    """Kept for anything still calling it by its old name: the user
+    table's share of _add_missing_columns()."""
+    return _add_missing_columns().get("user", [])
+
+
+def _create_missing_tables():
+    """Create any table a model defines that this database does not have
+    yet -- subcategory_market_data, the forum tables.
+
+    Only on a database that is already initialised (it has a `user`
+    table). A brand-new database is left entirely to seed.py's
+    create_all(), exactly as before, so this cannot change what a fresh
+    install looks like. checkfirst=True makes it a no-op for every table
+    that already exists; it never alters one.
+    """
+    from sqlalchemy import inspect
+
+    tables = set(inspect(db.engine).get_table_names())
+    if "user" not in tables:
+        return []
+    missing = [t for t in db.metadata.sorted_tables if t.name not in tables]
+    for table in missing:
+        table.create(bind=db.engine, checkfirst=True)
+    return [t.name for t in missing]
 
 
 def _retire_system_theme():
@@ -130,9 +205,16 @@ def run_startup_migrations(app):
     run on the next successful start."""
     with app.app_context():
         try:
-            added = _add_missing_user_columns()
-            if added:
-                app.logger.info("Added missing user columns: %s", ", ".join(added))
+            created = _create_missing_tables()
+            if created:
+                app.logger.info("Created missing tables: %s", ", ".join(created))
+        except Exception:  # noqa: BLE001 -- see docstring
+            db.session.rollback()
+
+        try:
+            added = _add_missing_columns()
+            for table, columns in added.items():
+                app.logger.info("Added missing %s columns: %s", table, ", ".join(columns))
         except Exception:  # noqa: BLE001 -- see docstring
             db.session.rollback()
 

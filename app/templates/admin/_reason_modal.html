@@ -1,0 +1,50 @@
+{#
+  admin/_reason_modal.html
+  --------------------------
+  ONE dialog for every action that needs a reason -- suspend, activate,
+  archive, restore -- on both the Users and the Datasets pages.
+
+  The button that opens it says what it is for, in data- attributes:
+
+    data-bs-toggle="modal" data-bs-target="#reasonModal"
+    data-action="<url to POST to>"
+    data-title="Archive account"      data-subject="juan@example.com"
+    data-note="They won't be able to sign in."
+    data-verb="Archive"               data-tone="danger"
+
+  static/js/admin.js copies those into the dialog as it opens. One
+  dialog rather than one per row: a table of 200 accounts would
+  otherwise carry 800 hidden forms.
+
+  Why a dialog and not confirm()/prompt(): the reason is the WHY in the
+  audit trail, and a browser prompt gives it a one-line box, no hint of
+  what is expected, and no way to say "that is too short" before the
+  page reloads. The server checks the length again regardless -- the
+  minlength here is a courtesy, not the guard.
+#}
+<div class="modal fade" id="reasonModal" tabindex="-1" aria-labelledby="reasonModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="POST" action="#" data-reason-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title" id="reasonModalTitle" data-reason-title>Give a reason</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="fw-semibold mb-1 text-break" data-reason-subject></p>
+          <p class="text-muted small mb-3" data-reason-note></p>
+          <label for="reasonText" class="form-label">Reason</label>
+          <textarea class="form-control" id="reasonText" name="reason" rows="3"
+                    required minlength="{{ min_reason_length }}" maxlength="255"
+                    placeholder="e.g. Duplicate account, requested by the owner"></textarea>
+          <div class="form-text">Saved to the audit trail. At least {{ min_reason_length }} characters.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" data-reason-submit>Confirm</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

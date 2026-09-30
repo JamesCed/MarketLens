@@ -18,9 +18,9 @@ the AI engine (app/ml/constants.py) has an "other" bucket for anything
 typed outside them.
 """
 
-from datetime import date, datetime
+from datetime import date
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify, session
 from flask_login import current_user
 
 from app.extensions import db
@@ -102,12 +102,60 @@ def _forecast_predates_lgu_data(forecast):
     return forecast.forecast_date < dataset["upload_date"]
 
 
+HOME_PLAN_SESSION_KEY = "home_plan_id"
+
+
+def _selected_home_plan(profiles):
+    """The plan the Home page is showing -- the "choice bar" selection.
+
+    ?plan=<id> picks one and remembers it in the session, so coming back
+    to Home (from the map, from Settings) keeps showing the plan the
+    owner chose instead of snapping back to the newest one. An id that
+    is not one of THIS user's plans is ignored, never trusted. With no
+    choice made, the newest plan is shown, as before.
+    """
+    if not profiles:
+        return None
+    by_id = {p.sme_id: p for p in profiles}
+    remembered = session.get(HOME_PLAN_SESSION_KEY)
+
+    requested = request.args.get("plan", type=int)
+    if requested in by_id:
+        if requested != remembered:
+            session[HOME_PLAN_SESSION_KEY] = requested
+            chosen = by_id[requested]
+            log_action("select_plan", details=f"{chosen.industry_type} @ {chosen.location}", target=chosen)
+        return by_id[requested]
+    if remembered in by_id:
+        return by_id[remembered]
+    return profiles[0]
+
+
+def _latest_forecasts_by_plan(profiles):
+    """{sme_id: newest ForecastResult} for every plan, in ONE query --
+    the choice bar shows each plan's market score, and a latest_forecast()
+    call per plan would be one round trip each."""
+    ids = [p.sme_id for p in profiles]
+    if not ids:
+        return {}
+    latest = {}
+    rows = (
+        ForecastResult.query.filter(ForecastResult.sme_id.in_(ids))
+        .order_by(ForecastResult.forecast_date.desc(), ForecastResult.forecast_id.desc())
+        .all()
+    )
+    for row in rows:
+        latest.setdefault(row.sme_id, row)
+    return latest
+
+
 @sme_bp.route("/home")
 @role_required("SME")
 def home():
     profiles = current_user.sme_profiles.order_by(SmeProfile.sme_id.desc()).all()
     locations = BARANGAY_NAMES
-    default_location = profiles[0].location if profiles else (locations[0] if locations else "Poblacion")
+    selected_plan = _selected_home_plan(profiles)
+    default_location = selected_plan.location if selected_plan else (locations[0] if locations else "Poblacion")
 
     # One quick, EPHEMERAL score per industry type (no forecast_result
     # write -- see compute_scores docstring) for the SME's own/default
@@ -136,14 +184,16 @@ def home():
             "subtitle": display["subtitle"],
         })
 
-    # Featured forecast (most recent plan) for the "Forecast &
-    # Recommendations" panel -- generated on first visit if the SME's
-    # newest profile has never actually been forecast yet.
+    # Featured forecast (the SELECTED plan) for the "Forecast &
+    # Recommendations" panel -- generated on first visit if that plan
+    # has never actually been forecast yet.
+    latest_by_plan = _latest_forecasts_by_plan(profiles)
     featured_forecast = None
-    if profiles:
-        featured_forecast = profiles[0].latest_forecast()
+    if selected_plan is not None:
+        featured_forecast = latest_by_plan.get(selected_plan.sme_id)
         if featured_forecast is None:
-            featured_forecast = generate_forecast_for_profile(profiles[0])
+            featured_forecast = generate_forecast_for_profile(selected_plan)
+            latest_by_plan[selected_plan.sme_id] = featured_forecast
         elif _forecast_predates_lgu_data(featured_forecast):
             # An LGU upload has landed since this forecast was written,
             # so its numbers -- and the recommendation text quoting
@@ -152,7 +202,8 @@ def home():
             # permits and the output changes" true on the page the SME
             # actually lands on, rather than only after they happen to
             # edit their plan.
-            featured_forecast = generate_forecast_for_profile(profiles[0])
+            featured_forecast = generate_forecast_for_profile(selected_plan)
+            latest_by_plan[selected_plan.sme_id] = featured_forecast
 
     featured_industry_type = (
         featured_forecast.input_industry_type if featured_forecast else FEATURED_BUSINESS_TYPES[0]
@@ -184,9 +235,23 @@ def home():
 
     has_lgu_data = has_active_lgu_data()
 
+    # The choice bar: every plan with its own market score, so the owner
+    # can compare plans at a glance and switch without re-entering any.
+    plan_choices = []
+    for profile in profiles:
+        latest = latest_by_plan.get(profile.sme_id)
+        plan_choices.append({
+            "profile": profile,
+            "viability_score": latest.viability_score if latest else None,
+            "cluster_label": latest.cluster_label if latest else None,
+            "selected": selected_plan is not None and profile.sme_id == selected_plan.sme_id,
+        })
+
     return render_template(
         "sme/home.html",
         profiles=profiles,
+        selected_plan=selected_plan,
+        plan_choices=plan_choices,
         business_types=BUSINESS_TYPES,
         business_stages=BUSINESS_STAGES,
         locations=locations,
@@ -205,52 +270,34 @@ def home():
 @sme_bp.route("/home/analyze", methods=["POST"])
 @role_required("SME")
 def analyze():
-    """The "Input Parameters" form: create a new SmeProfile and run the
-    AI forecasting engine on it immediately (see
-    generate_forecast_for_profile)."""
-    business_name = request.form.get("business_name", "").strip()
-    industry_type = request.form.get("industry_type", "").strip()
-    location = request.form.get("location", "").strip()
-    startup_capital = request.form.get("startup_capital", type=float) or 0
-    business_stage = request.form.get("business_stage", "startup")
-    employee_count = request.form.get("employee_count", type=int)
-    monthly_revenue_est = request.form.get("monthly_revenue_est", type=float)
-    registration_date_raw = request.form.get("registration_date", "")
+    """The "Add New Plan" dialog: create a new SmeProfile and run the AI
+    forecasting engine on it immediately (see
+    generate_forecast_for_profile).
 
-    if not business_name or not industry_type or not location:
-        flash("Please provide a business name, industry type, and location.", "danger")
+    Parsing is plan_params.parse_plan_form() -- the same parser the
+    sign-up wizard and the Settings Edit form use, so the three cannot
+    disagree about what a plan is (monthly revenue included: none of
+    them collects it any more)."""
+    from app.services.plan_params import apply_plan_data, parse_plan_form
+
+    data, errors = parse_plan_form(request.form)
+    if errors:
+        for message in errors:
+            flash(message, "danger")
         return redirect(url_for("sme.home"))
 
-    if business_stage not in BUSINESS_STAGES:
-        business_stage = "startup"
-
-    registration_date = None
-    if registration_date_raw:
-        try:
-            registration_date = datetime.strptime(registration_date_raw, "%Y-%m-%d").date()
-        except ValueError:
-            registration_date = None
-    if business_stage == "existing" and registration_date is None:
-        registration_date = date.today()
-
-    profile = SmeProfile(
-        user_id=current_user.user_id,
-        business_name=business_name,
-        industry_type=industry_type,
-        location=location,
-        startup_capital=startup_capital,
-        registration_date=registration_date,
-        employee_count=employee_count,
-        business_stage=business_stage,
-        monthly_revenue_est=monthly_revenue_est,
-    )
+    profile = apply_plan_data(SmeProfile(user_id=current_user.user_id), data)
     db.session.add(profile)
     db.session.commit()
 
     generate_forecast_for_profile(profile)
-    log_action("run_forecast", details=f"{industry_type} @ {location}")
+    log_action("run_forecast", details=f"{profile.industry_type} @ {profile.location}", target=profile)
+    # Select it now, so landing on it is not also logged as a switch.
+    session[HOME_PLAN_SESSION_KEY] = profile.sme_id
     flash("Forecast generated -- see your results below.", "success")
-    return redirect(url_for("sme.home"))
+    # Land on the plan just made, so the choice bar, the map and the
+    # forecast panel all show it rather than whichever plan was selected.
+    return redirect(url_for("sme.home", plan=profile.sme_id))
 
 
 @sme_bp.route("/home/plans/<int:sme_id>/update", methods=["POST"])
@@ -263,39 +310,32 @@ def update_plan(sme_id):
 
     The form also has a real action= pointing here, so with scripting
     off the submit still saves; the visitor just sees the JSON."""
+    from app.services.plan_params import apply_plan_data, parse_plan_form
+
     profile = SmeProfile.query.get_or_404(sme_id)
     if profile.user_id != current_user.user_id:
         abort(403)
 
-    business_name = request.form.get("business_name", "").strip()
-    industry_type = request.form.get("industry_type", "").strip()
-    location = request.form.get("location", "").strip()
-    business_stage = request.form.get("business_stage", profile.business_stage)
-    startup_capital = request.form.get("startup_capital", type=float)
-    employee_count = request.form.get("employee_count", type=int)
-    monthly_revenue_est = request.form.get("monthly_revenue_est", type=float)
+    form = request.form.copy()  # a mutable MultiDict; getlist() still works
+    # A missing stage picker means "unchanged", not "reset to startup".
+    if not form.get("business_stage"):
+        form["business_stage"] = profile.business_stage or "startup"
 
-    if not business_name or not industry_type or not location:
-        return jsonify({"success": False, "error": "Business name, industry type, and location are required."}), 400
+    data, errors = parse_plan_form(form, keep_industry=profile.industry_type)
+    if errors:
+        return jsonify({"success": False, "error": " ".join(errors)}), 400
 
-    if business_stage not in BUSINESS_STAGES:
-        business_stage = profile.business_stage
+    # Keep a registration date the form did not send, rather than
+    # re-dating an existing business to today on every edit.
+    if not form.get("registration_date") and profile.registration_date and data["business_stage"] == "existing":
+        data["registration_date"] = profile.registration_date.isoformat()
 
-    profile.business_name = business_name
-    profile.industry_type = industry_type
-    profile.location = location
-    profile.business_stage = business_stage
-    profile.startup_capital = startup_capital or 0
-    profile.employee_count = employee_count
-    profile.monthly_revenue_est = monthly_revenue_est
-    if business_stage == "existing" and not profile.registration_date:
-        profile.registration_date = date.today()
-
+    apply_plan_data(profile, data)
     db.session.commit()
     # Re-run the AI engine so the Home page's featured forecast reflects
-    # the edited industry/location/capital immediately.
+    # the edited industry/location/sub-category immediately.
     generate_forecast_for_profile(profile)
-    log_action("update_plan", details=f"sme_id={profile.sme_id} -> {industry_type}@{location}")
+    log_action("update_plan", details=f"-> {profile.industry_type} @ {profile.location}", target=profile)
 
     return jsonify({"success": True, "plan": profile.to_dict()})
 
@@ -415,11 +455,10 @@ def recommendations():
             "population": get_real_population(profile.location),
             "competition_level": competition_level_label(competitor_count),
             # Same AI-derived ROI window the location cards use -- built
-            # from this forecast's own saturation/viability output, not a
-            # flat capital/revenue division. See estimate_roi_timeframe().
+            # from this forecast's own saturation/viability output. See
+            # estimate_roi_timeframe().
             "roi": estimate_roi_timeframe(
                 latest.viability_score, latest.saturation_index, None, None,
-                profile.startup_capital, profile.monthly_revenue_est,
             ),
         })
 
@@ -551,10 +590,17 @@ def save_recommended_location():
         # Carried over from the plan this was scored against, so the new
         # plan is forecast on the same parameters the card showed.
         startup_capital=source.startup_capital if source else 0,
-        monthly_revenue_est=source.monthly_revenue_est if source else None,
         employee_count=source.employee_count if source else None,
         business_stage="startup",
     )
+    if source is not None and source.industry_type == industry_type:
+        # Same business, different barangay: what they sell, how they
+        # differ and their menu travel with it. (A different industry
+        # would make the old sub-category meaningless, so it is not.)
+        profile.subcategory = source.subcategory
+        profile.product_offering = source.product_offering
+        profile.innovation_idea = source.innovation_idea
+        profile.offering_details = source.offering_details
     db.session.add(profile)
     db.session.commit()
 
@@ -563,7 +609,7 @@ def save_recommended_location():
         db.session.add(PlanSave(user_id=current_user.user_id, forecast_result_id=forecast.forecast_id))
         db.session.commit()
 
-    log_action("save_recommended_location", f"{industry_type} in {location}")
+    log_action("save_recommended_location", f"{industry_type} in {location}", target=profile)
     flash(f"Saved to My Plans: {profile.business_name}.", "success")
     return redirect(url_for("sme.recommendations", sme_id=source.sme_id if source else None))
 

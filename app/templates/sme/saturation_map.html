@@ -16,13 +16,17 @@
      type them from memory. -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
       crossorigin="anonymous" referrerpolicy="no-referrer">
+<!-- Layout for the legend, caption and "About this map's data" note
+     below the map. Page-specific, so it lives here rather than in the
+     site-wide style.css. -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/map.css') }}">
 {% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <div>
     <h4 class="mb-0">Interactive Saturation Map</h4>
-    <p class="text-muted small mb-0">Choropleth view of Tarlac City: every barangay shaded by its real, AI-scored saturation tier (or real population density). Click any barangay to focus on just that one.</p>
+    <p class="text-muted small mb-0">See how crowded each Tarlac City barangay is for the industry you pick.</p>
   </div>
   <!-- The search bar + industry filter, grouped in the card header area
        requested in the reference screenshot. -->
@@ -71,89 +75,107 @@
           </div>
         </div>
       </div>
-      <!-- The legend IS the filter: click a tier to show/hide those
-           zones on the map. Counts update with the selected industry. -->
-      <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
-        <span class="text-muted small">Click a tier to show/hide it on the map</span>
-        <div class="btn-group btn-group-sm">
-          <button type="button" class="btn btn-outline-secondary" id="tierShowAll">Show All</button>
-          <button type="button" class="btn btn-outline-secondary" id="tierHideAll">Hide All</button>
+      {#
+        LEGEND. One compact row under the map. The saturation legend IS
+        the tier filter (click a colour to hide/show those zones; counts
+        follow the selected industry), and its "all / none" links sit in
+        the same row so they hide with it when the overlay switches to
+        population density, where there is nothing to filter. Every id
+        and data-attribute here is read by static/js/map.js.
+      #}
+      <div class="dss-map-legend" id="saturationLegend">
+        <div class="dss-map-legend-items" role="group" aria-label="Show or hide saturation levels">
+          <span class="dss-map-legend-label">Show:</span>
+          <button type="button" class="dss-tier-toggle" data-tier-filter="Saturated" aria-pressed="true" title="Show or hide High Saturation">
+            <span class="dss-legend-swatch" style="background:#b91c1c"></span>High Saturation
+            <span class="badge bg-light text-dark ms-1" data-tier-count="Saturated">0</span>
+          </button>
+          <button type="button" class="dss-tier-toggle" data-tier-filter="High" aria-pressed="true" title="Show or hide Moderate">
+            <span class="dss-legend-swatch" style="background:#f97316"></span>Moderate
+            <span class="badge bg-light text-dark ms-1" data-tier-count="High">0</span>
+          </button>
+          <button type="button" class="dss-tier-toggle" data-tier-filter="Moderate" aria-pressed="true" title="Show or hide Low-Moderate">
+            <span class="dss-legend-swatch" style="background:#fde047"></span>Low-Moderate
+            <span class="badge bg-light text-dark ms-1" data-tier-count="Moderate">0</span>
+          </button>
+          <button type="button" class="dss-tier-toggle" data-tier-filter="Low" aria-pressed="true" title="Show or hide High Opportunity">
+            <span class="dss-legend-swatch" style="background:#22c55e"></span>High Opportunity
+            <span class="badge bg-light text-dark ms-1" data-tier-count="Low">0</span>
+          </button>
+        </div>
+        <div class="dss-map-legend-actions">
+          <button type="button" class="btn btn-link btn-sm" id="tierShowAll">Show all</button>
+          <span aria-hidden="true">&middot;</span>
+          <button type="button" class="btn btn-link btn-sm" id="tierHideAll">Hide all</button>
         </div>
       </div>
-      <div class="d-flex justify-content-around small mt-2 flex-wrap gap-2" id="saturationLegend">
-        <button type="button" class="dss-tier-toggle" data-tier-filter="Saturated" aria-pressed="true">
-          <span class="dss-legend-swatch" style="background:#b91c1c"></span>High Saturation
-          <span class="badge bg-light text-dark ms-1" data-tier-count="Saturated">0</span>
-        </button>
-        <button type="button" class="dss-tier-toggle" data-tier-filter="High" aria-pressed="true">
-          <span class="dss-legend-swatch" style="background:#f97316"></span>Moderate
-          <span class="badge bg-light text-dark ms-1" data-tier-count="High">0</span>
-        </button>
-        <button type="button" class="dss-tier-toggle" data-tier-filter="Moderate" aria-pressed="true">
-          <span class="dss-legend-swatch" style="background:#fde047"></span>Low-Moderate
-          <span class="badge bg-light text-dark ms-1" data-tier-count="Moderate">0</span>
-        </button>
-        <button type="button" class="dss-tier-toggle" data-tier-filter="Low" aria-pressed="true">
-          <span class="dss-legend-swatch" style="background:#22c55e"></span>High Opportunity
-          <span class="badge bg-light text-dark ms-1" data-tier-count="Low">0</span>
-        </button>
+      <div class="dss-map-legend" id="densityLegend" hidden>
+        <div class="dss-map-legend-items">
+          <span class="dss-map-legend-label">People per km&sup2;:</span>
+          <span class="dss-map-legend-item"><span class="dss-legend-swatch" style="background:#c7d2fe"></span>Low</span>
+          <span class="dss-map-legend-item"><span class="dss-legend-swatch" style="background:#818cf8"></span>Moderate</span>
+          <span class="dss-map-legend-item"><span class="dss-legend-swatch" style="background:#6366f1"></span>High</span>
+          <span class="dss-map-legend-item"><span class="dss-legend-swatch" style="background:#3730a3"></span>Very high</span>
+        </div>
       </div>
-      <div class="d-flex justify-content-center small mt-2 flex-wrap gap-3" id="densityLegend" hidden>
-        <span><span class="dss-legend-swatch" style="background:#c7d2fe"></span>Low density</span>
-        <span><span class="dss-legend-swatch" style="background:#818cf8"></span>Moderate density</span>
-        <span><span class="dss-legend-swatch" style="background:#6366f1"></span>High density</span>
-        <span><span class="dss-legend-swatch" style="background:#3730a3"></span>Very high density</span>
-        <span class="text-muted">(real 2024 PSA people/km&sup2; -- see barangay detail panel for the exact figure)</span>
-      </div>
-      <div class="small text-center mt-2" id="coordStatus"></div>
-      <p class="text-muted small text-center mt-2 mb-1">Click a barangay to isolate it (map, search, or the list on the right); double-click it again -- or click "Show All" -- to bring back every barangay.</p>
+
+      {# One short caption instead of three paragraphs. The first sentence
+         says what the shading means, so there is one per overlay and
+         map.js shows the one that matches (data-overlay-caption). The
+         restore instructions are not repeated here: the banner above the
+         map explains them, with a button, whenever a barangay is
+         isolated. #}
+      <p class="dss-map-caption">
+        <span data-overlay-caption="saturation">Shading shows how crowded the chosen industry is in each barangay.</span>
+        <span data-overlay-caption="population" hidden>Shading shows how many people live per km&sup2; (2024 PSA census).</span>
+        Click a barangay for details.
+      </p>
+
       {#
         DATA PROVENANCE AND LIMITATIONS, stated on the page rather than
-        buried in a document nobody opens. Written to be accurate in
+        buried in a document nobody opens -- but folded away, so it no
+        longer reads as a wall of text above the fold. Still accurate in
         both directions: it does not claim the figures are more solid
         than they are, and it does not dismiss the parts that are
-        genuinely measured.
+        genuinely measured. The long-form detail is in Reference/DATASETS.md
+        (sources), app/services/places_service.py (simulated fallback) and
+        app/services/choropleth_service.py (boundaries).
+        A native <details>, not a Bootstrap collapse: it opens even if
+        the Bootstrap script is blocked, and needs no JavaScript.
       #}
-      <p class="text-muted small mt-0 mb-2">
-        <strong>How accurate is this?</strong> Partly measured, partly modelled &mdash; and the map
-        labels which is which. Competitor counts for a barangay this system has actually queried
-        are real businesses returned by the Google Places API. Population and population density
-        are the real 2024 PSA census figures. Everything else is an <em>estimate</em>: where no
-        live lookup has been made for an (industry &times; barangay) pair, the count is generated
-        from the surrounding data so the model still has something to score, and it is flagged as
-        estimated wherever it appears.
-      </p>
-      <p class="text-muted small mt-0 mb-2">
-        <strong>Why synthetic data is used at all.</strong> There is no real-time feed of business
-        registrations for Tarlac City, and a complete sweep of all 20 industries across all 76
-        barangays is thousands of billable API calls &mdash; beyond the scope of a student project.
-        So the gaps are filled with generated figures. That is a deliberate trade: it makes the
-        system complete enough to demonstrate and evaluate end to end, while every generated value
-        is replaced by a real one the moment that combination is actually fetched. The design
-        improves as real data accumulates rather than needing to be rebuilt.
-        <strong>Treat the shaded map as an indication of where to look, not as a survey.</strong>
-      </p>
-      <p class="text-muted small mt-0 mb-2">
-        <strong>About the boundaries.</strong> The bold blue outline is Tarlac City's real
-        administrative border. The lines <em>inside</em> it are not: no per-barangay boundary
-        dataset is published for Tarlac City, only point coordinates, so each shaded cell is the
-        area closer to that barangay's own surveyed coordinate than to any other's
-        (see <code>app/services/choropleth_service.py</code>). A cell's internal edge is therefore
-        a computed approximation; its outer edge stops exactly at the real city border. Per-barangay
-        figures in the detail panel and location list are exact regardless. Household income is not
-        published per barangay in the Philippines (see <code>Reference/DATASETS.md</code>), which is
-        why population density is the sociodemographic overlay offered here.
-      </p>
-      <p class="text-muted text-center mt-2 mb-0" style="font-size:.75rem;">
-        Base map &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
-        contributors, licensed under the
-        <a href="https://opendatacommons.org/licenses/odbl/" target="_blank" rel="noopener">Open Database License (ODbL)</a>
-        &mdash; city border data from the same source.
-        Map rendering by <a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a> (BSD-2-Clause).
-        Business listing data from the Google Places API, &copy; Google &mdash; shown with the
-        &ldquo;powered by Google&rdquo; attribution required when Places data is displayed outside a
-        Google map. Only aggregate counts are retained; no Google place records are stored.
-      </p>
+      <details class="dss-map-about">
+        <summary>About this map's data</summary>
+        <ul>
+          <li><strong>Measured:</strong> business counts looked up on Google Places or uploaded by
+            the LGU (DTI permits), and population from the 2024 PSA census.</li>
+          <li><strong>Estimated:</strong> any other count is filled in from nearby data so every
+            barangay can still be scored. Estimated industry counts are marked <em>(est.)</em> in
+            the barangay details.</li>
+          <li><strong>Why estimates:</strong> Tarlac City has no live business registry, and checking
+            all 20 industries in all 76 barangays would take thousands of paid Google calls. An
+            estimate is replaced once the real count is fetched.</li>
+          <li><strong>Boundaries:</strong> the bold blue line is the real city border. The lines
+            inside it are approximations &mdash; no official barangay boundary map is published, so
+            each area is drawn around that barangay's real location.</li>
+          <li><strong>How to use it:</strong> as a guide to where to look, not a survey.</li>
+        </ul>
+      </details>
+
+      {# Required credits, kept on one small line: OpenStreetMap (ODbL)
+         for the tiles and city border, Leaflet for rendering, and the
+         Google attribution required wherever Places-derived counts are
+         shown outside a Google map (the map also carries Google's own
+         "Powered by Google" mark in its top-left corner). #coordStatus
+         is filled in by map.js. #}
+      <div class="dss-map-footnote">
+        <span id="coordStatus"></span>
+        <span>
+          Map &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+          contributors (<a href="https://opendatacommons.org/licenses/odbl/" target="_blank" rel="noopener">ODbL</a>)
+          &middot; <a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a>
+          &middot; Business counts powered by Google (Places API; counts only, no place records stored)
+        </span>
+      </div>
     </div>
   </div>
 

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Recommendations{% endblock %}
+{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel %}
 
 {% block content %}
 <div class="mb-4">
@@ -19,7 +20,7 @@
        locations it would put forward -- NOT every barangay it scored,
        and not the SME's own saved plans. See RECOMMENDABLE_TIERS in
        app/services/location_opportunity_service.py. -->
-  <div class="row g-3 mb-4">
+  <div class="row g-3 mb-4" data-tour="rec-summary">
     <div class="col-md-4">
       <div class="dss-rec-stat-card dss-rec-stat-high">
         <div class="d-flex align-items-center gap-3 mb-2">
@@ -83,7 +84,13 @@
           <div class="d-flex gap-3 small text-muted flex-wrap">
             <span><i class="bi bi-geo-alt"></i> {{ profile.location }}</span>
             <span class="badge bg-primary-subtle text-primary-emphasis">{{ profile.industry_type }}</span>
+            {% if profile.subcategory and profile.subcategory != 'other' %}
+              <span class="badge bg-light text-dark border">{{ profile.subcategory_label }}</span>
+            {% endif %}
           </div>
+          {% if profile.product_offering %}
+            <div class="small text-muted mt-1"><i class="bi bi-basket"></i> {{ profile.product_offering }}</div>
+          {% endif %}
         </div>
         <div class="text-end">
           <div class="text-muted small">Viability Score</div>
@@ -93,9 +100,10 @@
 
       {% if rec.headline %}<p class="fw-semibold mb-2">{{ rec.headline }}</p>{% endif %}
       {% if rec.summary %}<p class="text-muted small mb-3">{{ rec.summary }}</p>{% endif %}
+      {{ subcategory_compare(rec) }}
 
       <!-- Key Metrics -- real, derived figures (no fabricated ranges):
-           your own capital & revenue estimate, this barangay's real
+           your own capital, the model's ROI window, this barangay's real
            PSA population, and a competition level derived from the
            actual (Places API or seeded) competitor count. -->
       <div class="row row-cols-2 row-cols-md-4 g-3 mb-4 p-3 bg-light rounded">
@@ -141,6 +149,20 @@
         </div>
       </div>
 
+      {{ innovation_panel(rec) }}
+      {% if profile.offering_items %}
+        <details class="dss-subplan mt-3">
+          <summary><i class="bi bi-list-ul"></i> Your price list ({{ profile.offering_items|length }} item{{ 's' if profile.offering_items|length != 1 }})</summary>
+          <table class="table table-sm small mb-0 mt-2">
+            <tbody>
+              {% for it in profile.offering_items %}
+                <tr><td>{{ it.item }}</td><td class="text-end">{{ '₱{:,.2f}'.format(it.price) if it.price is not none else '—' }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+      {% endif %}
+
       <div class="d-flex gap-2 border-top pt-3 mt-4">
         <a class="btn btn-outline-primary flex-fill" href="{{ url_for('sme.saturation_map') }}?industry_type={{ profile.industry_type|urlencode }}">
           <i class="bi bi-map"></i> View on Map
@@ -176,7 +198,7 @@
        app/services/location_opportunity_service.py.
        =============================================================== -->
   {% if opportunities %}
-  <div class="dss-card mb-4">
+  <div class="dss-card mb-4" data-tour="rec-other-locations">
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
       <div>
         <h5 class="mb-1"><i class="bi bi-compass"></i> Where else could you open this?</h5>
@@ -264,8 +286,7 @@
           <div class="text-muted small mb-1"><i class="bi bi-graph-up-arrow"></i> ROI Timeframe</div>
           <div class="fw-bold">{{ opp.roi_timeframe }}</div>
           <div class="text-muted" style="font-size:.68rem;">
-            {% if opp.roi_basis == 'plan' %}your capital &amp; revenue, adjusted by this barangay's AI saturation score
-            {% else %}from the AI viability score (add a revenue estimate to refine){% endif %}
+            estimated from this barangay's AI viability and saturation scores
           </div>
         </div>
         <div>

@@ -15,9 +15,13 @@ clearly-flagged simulated estimate, if none exists yet).
 """
 
 from app.extensions import db
+from app.models.archive import HiddenWhenArchived
 
 
-class MarketData(db.Model):
+class MarketData(HiddenWhenArchived, db.Model):
+    # Archived rather than deleted -- see app/models/archive.py. Deleting
+    # used to CASCADE through forecast_result.market_id and silently remove
+    # every forecast ever built on the row.
     __tablename__ = "market_data"
 
     market_id = db.Column(db.Integer, primary_key=True)

@@ -1,37 +1,118 @@
 {% extends "base.html" %}
+{% import "admin/_audit_macros.html" as audit with context %}
 {% block title %}Audit Trail{% endblock %}
 
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
 {% block content %}
-<h4 class="mb-3"><i class="bi bi-journal-text"></i> Audit Trail</h4>
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-journal-text"></i> Audit Trail</h4>
+    <div class="dss-meta">Who did what, when, where and why. Times are Philippine time ({{ tz_label }}).</div>
+  </div>
+  <a href="{{ url_for('admin.export_audit_log', **active_filters) }}" class="btn btn-outline-primary btn-sm">
+    <i class="bi bi-download"></i> Export CSV
+  </a>
+</div>
+
+<form method="GET" action="{{ url_for('admin.audit_log') }}" class="dss-card dss-filter-bar mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-xl">
+      <label class="form-label" for="f-q">Search</label>
+      <input type="search" class="form-control form-control-sm" id="f-q" name="q" value="{{ filters.q }}"
+             placeholder="Name, email, record, details or reason">
+    </div>
+    <div class="col-6 col-md-3 col-xl-2">
+      <label class="form-label" for="f-role">Role</label>
+      <select class="form-select form-select-sm" id="f-role" name="role">
+        <option value="">Any role</option>
+        {% for value, label in role_choices %}
+        <option value="{{ value }}" {{ 'selected' if filters.role == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-3 col-xl-2">
+      <label class="form-label" for="f-action">Action</label>
+      <select class="form-select form-select-sm" id="f-action" name="action">
+        <option value="">Any action</option>
+        {% for value, label in action_choices %}
+        <option value="{{ value }}" {{ 'selected' if filters.action == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-3 col-xl-2">
+      <label class="form-label" for="f-from">From</label>
+      <input type="date" class="form-control form-control-sm" id="f-from" name="date_from" value="{{ filters.date_from }}">
+    </div>
+    <div class="col-6 col-md-3 col-xl-2">
+      <label class="form-label" for="f-to">To</label>
+      <input type="date" class="form-control form-control-sm" id="f-to" name="date_to" value="{{ filters.date_to }}">
+    </div>
+    <div class="col-12 col-xl-auto d-flex gap-2">
+      <button type="submit" class="btn btn-primary btn-sm flex-fill"><i class="bi bi-funnel"></i> Filter</button>
+      {% if active_filters %}
+      <a href="{{ url_for('admin.audit_log') }}" class="btn btn-outline-secondary btn-sm flex-fill">Clear</a>
+      {% endif %}
+    </div>
+  </div>
+</form>
 
 <div class="dss-card">
+  <div class="dss-meta mb-2">
+    {% if pagination.total %}
+      Showing {{ (pagination.page - 1) * pagination.per_page + 1 }}&ndash;{{ (pagination.page - 1) * pagination.per_page + entries|length }}
+      of {{ pagination.total }} {{ 'entry' if pagination.total == 1 else 'entries' }}{{ ' matching your filters' if active_filters }}.
+    {% endif %}
+  </div>
   <div class="table-responsive">
-    <table class="table table-sm">
-      <thead><tr><th>When</th><th>User</th><th>Action</th><th>Details</th><th>IP</th></tr></thead>
-      <tbody>
-        {% for log in pagination.items %}
+    <table class="table table-sm dss-admin-table dss-audit-table">
+      <thead>
         <tr>
-          <td class="text-muted small">{{ log.created_at.strftime('%b %d, %Y %I:%M %p') }}</td>
-          <td>{{ log.user.email if log.user else 'system' }}</td>
-          <td><span class="badge bg-light text-dark">{{ log.action }}</span></td>
-          <td class="small text-muted">{{ log.details or '' }}</td>
-          <td class="small text-muted">{{ log.ip_address or '' }}</td>
+          <th class="dss-col-who"><span class="dss-w">Who<small>Account and role</small></span></th>
+          <th class="dss-col-what"><span class="dss-w">What<small>Action and record</small></span></th>
+          <th class="dss-col-when"><span class="dss-w">When<small>Date and time</small></span></th>
+          <th class="dss-col-where"><span class="dss-w">Where<small>IP, page and device</small></span></th>
+          <th class="dss-col-why"><span class="dss-w">Why<small>Reason given</small></span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in entries %}
+        <tr>
+          <td class="dss-col-who">{{ audit.who(e) }}</td>
+          <td class="dss-col-what">{{ audit.what(e) }}</td>
+          <td class="dss-col-when">{{ audit.when(e) }}</td>
+          <td class="dss-col-where">{{ audit.where(e) }}</td>
+          <td class="dss-col-why">{{ audit.why(e) }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="5" class="text-center text-muted py-4">No audit records yet.</td></tr>
+        <tr><td colspan="5" class="text-center text-muted py-4">
+          {{ 'No entries match these filters.' if active_filters else 'No audit records yet.' }}
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 
   {% if pagination.pages > 1 %}
-  <nav>
-    <ul class="pagination pagination-sm justify-content-center mb-0">
-      {% for p in range(1, pagination.pages + 1) %}
-      <li class="page-item {{ 'active' if p == pagination.page }}">
-        <a class="page-link" href="{{ url_for('admin.audit_log', page=p) }}">{{ p }}</a>
+  <nav class="mt-3" aria-label="Audit trail pages">
+    <ul class="pagination pagination-sm justify-content-center flex-wrap mb-0">
+      <li class="page-item {{ 'disabled' if not pagination.has_prev }}">
+        <a class="page-link" href="{{ url_for('admin.audit_log', page=pagination.prev_num, **active_filters) if pagination.has_prev else '#' }}">&laquo;</a>
       </li>
+      {% for p in pagination.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+        {% if p is none %}
+        <li class="page-item disabled"><span class="page-link">&hellip;</span></li>
+        {% else %}
+        <li class="page-item {{ 'active' if p == pagination.page }}">
+          <a class="page-link" href="{{ url_for('admin.audit_log', page=p, **active_filters) }}">{{ p }}</a>
+        </li>
+        {% endif %}
       {% endfor %}
+      <li class="page-item {{ 'disabled' if not pagination.has_next }}">
+        <a class="page-link" href="{{ url_for('admin.audit_log', page=pagination.next_num, **active_filters) if pagination.has_next else '#' }}">&raquo;</a>
+      </li>
     </ul>
   </nav>
   {% endif %}

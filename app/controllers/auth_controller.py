@@ -34,17 +34,27 @@ one, so an account created without a plan lands on an empty app.
 LGU accounts skip that step entirely -- an LGU official is planning for
 the city, not running a business, and has no SmeProfile.
 
-EMAIL VERIFICATION (SME/LGU self-registration only -- optional):
-when Gmail is configured (see app/services/email_service.py and
-GMAIL_ADDRESS/GMAIL_APP_PASSWORD in .env), register() does NOT create
+EMAIL VERIFICATION (SME/LGU self-registration only):
+when a mail transport is configured (Brevo over HTTPS or Gmail over
+SMTP -- see app/services/email_service.py), register() does NOT create
 the User row immediately. Instead it stashes the validated form data
 (with the password already hashed -- the raw password is never held
 onto) plus a 6-digit code in the session, emails the code, and sends
 the visitor to verify_email() to confirm they own that inbox before
-the account is actually created. If Gmail is NOT configured, or
-sending the email fails for any reason, registration falls back to
-creating the account immediately, exactly as it did before this
-feature existed -- a missing/broken email setup never blocks sign-ups.
+the account is actually created.
+
+WHAT HAPPENS WHEN THE SEND FAILS depends on REQUIRE_EMAIL_VERIFICATION
+(app/config.py), which defaults to ON whenever a transport is
+configured -- configuring one is the act of saying you want
+verification. With it on, a failed send blocks the account and says so.
+With it off, or with no transport configured at all, registration falls
+back to creating the account immediately, so a deployment that never
+set up mail is never blocked by it.
+
+The earlier behaviour was always to fall back. That was changed because
+it failed in the worst direction: a mistyped app password did not
+produce "verification is broken", it produced "verification quietly
+stopped happening", on a deployment that looked healthy.
 """
 
 import secrets
@@ -74,85 +84,15 @@ BUSINESS_STAGES = ["startup", "existing"]
 def _collect_business_params(form):
     """Pull the first business plan out of the registration form.
 
-    Returns (data, errors). `data` is JSON-serialisable on purpose -- it
-    is stashed in the session between submitting the form and verifying
-    the email, and a `date` object would not survive that round trip, so
-    registration_date is carried as an ISO string.
-
-    Only the three fields the forecasting engine cannot work without are
-    required: the business needs a name to appear in "My Plans", and an
-    industry and a location because those two ARE the query the AI
-    answers. Capital, headcount and revenue sharpen the ROI estimate but
-    have documented fallbacks, so demanding them would block a sign-up
-    over numbers a new entrepreneur may not have yet.
+    Returns (data, errors). Delegates to app/services/plan_params.py,
+    the one parser every plan form shares, so a plan entered at sign-up
+    is validated exactly like one added later from Home or edited in
+    Settings. `data` is JSON-safe on purpose: it is held in the session
+    until the email code is confirmed.
     """
-    errors = []
+    from app.services.plan_params import parse_plan_form
 
-    business_name = (form.get("business_name") or "").strip()
-    industry_type = (form.get("industry_type") or "").strip()
-    location = (form.get("location") or "").strip()
-    business_stage = (form.get("business_stage") or "startup").strip().lower()
-
-    if not business_name:
-        errors.append("Business name is required.")
-    if not industry_type:
-        errors.append("Please choose an industry type.")
-    elif industry_type not in BUSINESS_TYPES:
-        errors.append("That industry type is not one of the options.")
-    if not location:
-        errors.append("Please give the barangay or location you are planning for.")
-    if business_stage not in BUSINESS_STAGES:
-        business_stage = "startup"
-
-    def _number(field, label, cast):
-        raw = (form.get(field) or "").strip()
-        if raw == "":
-            return None
-        try:
-            value = cast(raw)
-        except (TypeError, ValueError):
-            errors.append(f"{label} must be a number.")
-            return None
-        if value < 0:
-            errors.append(f"{label} cannot be negative.")
-            return None
-        return value
-
-    startup_capital = _number("startup_capital", "Startup capital", float)
-    employee_count = _number("employee_count", "Employee count", int)
-    monthly_revenue_est = _number("monthly_revenue_est", "Estimated monthly revenue", float)
-
-    registration_date = None
-    raw_date = (form.get("registration_date") or "").strip()
-    if raw_date:
-        try:
-            parsed = datetime.strptime(raw_date, "%Y-%m-%d").date()
-        except ValueError:
-            errors.append("Registration date must be a real date.")
-            parsed = None
-        else:
-            if parsed > date.today():
-                errors.append("Registration date cannot be in the future.")
-                parsed = None
-        registration_date = parsed.isoformat() if parsed else None
-
-    # An existing business with no date given is dated today, matching
-    # sme_controller.analyze(); years_in_operation() then reads 0 rather
-    # than crashing on a null.
-    if business_stage == "existing" and registration_date is None and not errors:
-        registration_date = date.today().isoformat()
-
-    data = {
-        "business_name": business_name,
-        "industry_type": industry_type,
-        "location": location,
-        "business_stage": business_stage,
-        "startup_capital": startup_capital,
-        "employee_count": employee_count,
-        "monthly_revenue_est": monthly_revenue_est,
-        "registration_date": registration_date,
-    }
-    return data, errors
+    return parse_plan_form(form)
 
 
 def _create_user_from_pending(pending):
@@ -189,24 +129,16 @@ def _create_user_from_pending(pending):
         # The existence check guards the one way a duplicate could appear:
         # a double-submitted verification form, or a retried request,
         # calling this twice for the same account.
-        raw_date = business.get("registration_date")
-        profile = SmeProfile(
-            user_id=user.user_id,
-            business_name=business["business_name"],
-            industry_type=business["industry_type"],
-            location=business["location"],
-            startup_capital=business.get("startup_capital") or 0,
-            registration_date=date.fromisoformat(raw_date) if raw_date else None,
-            employee_count=business.get("employee_count"),
-            business_stage=business.get("business_stage", "startup"),
-            monthly_revenue_est=business.get("monthly_revenue_est"),
-        )
+        from app.services.plan_params import apply_plan_data
+
+        profile = apply_plan_data(SmeProfile(user_id=user.user_id), business)
         db.session.add(profile)
         db.session.commit()
         log_action(
             "create_plan",
             details=f"First plan from sign-up: {profile.industry_type} @ {profile.location}",
             user_id=user.user_id,
+            target=profile,
         )
         # No forecast is run here on purpose. Scoring loads the trained
         # model and can hit the Places API, which would make the visitor
@@ -221,12 +153,23 @@ def _register_form_context(form=None):
     """Everything auth/register.html needs to redraw itself, including
     after a validation error -- the dropdowns AND whatever the visitor
     had already typed, so a mistake in step 3 never wipes step 2."""
+    from app.ml.subcategories import as_client_payload
+
+    offering_items = []
+    if form is not None and hasattr(form, "getlist"):
+        # Redraw the optional price list rows the visitor had typed.
+        prices = form.getlist("offering_price")
+        for i, name in enumerate(form.getlist("offering_item")):
+            if (name or "").strip():
+                offering_items.append({"item": name, "price": prices[i] if i < len(prices) else ""})
     return {
         "form": form if form is not None else {},
         "business_types": BUSINESS_TYPES,
         "locations": BARANGAY_NAMES,
         "business_stages": BUSINESS_STAGES,
         "today": date.today().isoformat(),
+        "subcategories": as_client_payload(),
+        "offering_items": offering_items,
     }
 
 

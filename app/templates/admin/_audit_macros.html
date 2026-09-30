@@ -1,0 +1,58 @@
+{#
+  admin/_audit_macros.html
+  --------------------------
+  How one audit entry's five W's are drawn -- shared by the Audit Trail
+  page and the dashboard's recent-activity list, so the two can never
+  show the same row differently.
+
+  Every macro takes a presented entry (admin_controller._present_entry),
+  in which the fallbacks for rows written before the five-W columns
+  existed have already been applied. A dash here means "not recorded",
+  never "empty".
+
+  Import WITH context (tz_label comes from the admin blueprint's
+  context processor):  {% import "admin/_audit_macros.html" as audit with context %}
+#}
+
+{% macro role_badge(role) -%}
+  {%- if role -%}
+  <span class="badge bg-{{ 'dark' if role=='Admin' else ('primary' if role=='SME' else 'success') }}">{{ role|upper }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro who(e) -%}
+  <div>{{ e.who_name }} {{ role_badge(e.who_role) }}</div>
+  {% if e.who_email %}<div class="dss-meta text-break">{{ e.who_email }}{% if e.who_archived %} &middot; archived{% endif %}</div>{% endif %}
+{%- endmacro %}
+
+{% macro target(e) -%}
+  {%- if e.target_type or e.target_label -%}
+    {{ e.target_type or 'Record' }}{% if e.target_id %} #{{ e.target_id }}{% endif %}{% if e.target_label %} &middot; {{ e.target_label }}{% endif %}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro what(e) -%}
+  <div title="{{ e.action }}">{{ e.what }}</div>
+  {% set t = target(e) %}
+  {% if t %}<div class="dss-meta text-break">{{ t }}</div>{% endif %}
+  {% if e.details %}<div class="dss-meta text-break">{{ e.details }}</div>{% endif %}
+{%- endmacro %}
+
+{% macro when(e) -%}
+  {% if e.when %}
+  <div>{{ e.when.strftime('%b %d, %Y') }}</div>
+  <div class="dss-meta">{{ e.when.strftime('%I:%M:%S %p') }} {{ tz_label }}</div>
+  {% else %}<span class="dss-meta">&mdash;</span>{% endif %}
+{%- endmacro %}
+
+{% macro where(e) -%}
+  <div>{{ e.ip or '—' }}</div>
+  {% if e.method or e.route %}<div class="dss-meta text-break"><code>{{ e.method or '' }} {{ e.route or '' }}</code></div>{% endif %}
+  {% if e.device %}<div class="dss-meta" title="{{ e.user_agent }}">{{ e.device }}</div>{% endif %}
+{%- endmacro %}
+
+{% macro why(e) -%}
+  {% if e.why %}
+    <span class="text-break {{ '' if e.why_is_stated else 'dss-why-default' }}">{{ e.why }}</span>
+  {% else %}<span class="dss-meta">&mdash;</span>{% endif %}
+{%- endmacro %}

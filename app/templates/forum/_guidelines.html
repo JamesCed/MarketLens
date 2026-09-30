@@ -1,0 +1,21 @@
+{#
+  forum/_guidelines.html
+  ------------------------
+  The rules, in four lines a busy shop owner will actually read. Shown
+  beside the New Post form (where it matters) and on the feed. The same
+  rules are given to the AI pre-screen, in fuller form, in
+  services/forum_moderation.COMMUNITY_GUIDELINES.
+#}
+{% set _gid = guidelines_id|default("forumGuidelinesTitle") %}
+<aside class="dss-card forum-guidelines" aria-labelledby="{{ _gid }}">
+  <h2 class="h6 mb-2" id="{{ _gid }}"><i class="bi bi-heart" aria-hidden="true"></i> Community guidelines</h2>
+  <ul class="mb-2">
+    <li><strong>Be respectful.</strong> No insults or bad words.</li>
+    <li><strong>No scams or selling schemes.</strong> No investment offers or recruiting.</li>
+    <li><strong>No personal info.</strong> Don't share phone numbers or addresses, yours or anyone's.</li>
+    <li><strong>Stay on business topics.</strong> Questions, tips and local news are all welcome.</li>
+  </ul>
+  <p class="small text-muted mb-0">
+    Posts are checked before they appear, so yours may take a little while to show up.
+  </p>
+</aside>

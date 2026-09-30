@@ -75,6 +75,12 @@ def create_app(config_name=None):
     # ---- models must be imported before create_all()/migrations run ----
     from app import models  # noqa: F401
 
+    # Archived market_data / lgu_data rows are invisible to every
+    # ordinary query from here on -- see app/models/archive.py.
+    from app.models.archive import install_archive_filter
+
+    install_archive_filter()
+
     # ---- blueprints (controllers) ----
     from app.controllers.auth_controller import auth_bp
     from app.controllers.sme_controller import sme_bp
@@ -82,6 +88,8 @@ def create_app(config_name=None):
     from app.controllers.admin_controller import admin_bp
     from app.controllers.profile_controller import profile_bp
     from app.controllers.api_controller import api_bp
+    from app.controllers.forum_controller import forum_bp
+    from app.controllers.onboarding_controller import onboarding_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(sme_bp)
@@ -89,13 +97,23 @@ def create_app(config_name=None):
     app.register_blueprint(admin_bp)
     app.register_blueprint(profile_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(forum_bp)
+    app.register_blueprint(onboarding_bp)
 
     # ---- template globals ----
+    # "Wholesale and Retail Trade; Repair of Motor Vehicles and
+    # Motorcycles" does not fit on a plan chip; templates shorten it the
+    # same way the rest of the app does.
+    from app.ml.constants import short_industry_label
+
+    app.jinja_env.globals["short_industry"] = short_industry_label
+
     @app.context_processor
     def inject_globals():
         from flask_login import current_user
         from app.models import Notification
         from app.ml.constants import BUSINESS_TYPES
+        from app.ml.subcategories import as_client_payload as plan_subcategories
 
         unread_count = 0
         if current_user.is_authenticated:
@@ -108,6 +126,9 @@ def create_app(config_name=None):
             # and profile_controller doesn't otherwise pass
             # business_types to the template.
             "ALL_BUSINESS_TYPES": BUSINESS_TYPES,
+            # The sub-category table for the plan forms (sign-up, Home's
+            # Add New Plan, Settings' Edit) -- see shared/_plan_fields.html.
+            "PLAN_SUBCATEGORIES": plan_subcategories(),
             # The Contact Us dialog is reachable from every dashboard,
             # so its address has to be available on every page.
             "SUPPORT_EMAIL": app.config.get("SUPPORT_EMAIL", ""),

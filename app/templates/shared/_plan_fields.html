@@ -1,0 +1,112 @@
+{#
+  shared/_plan_fields.html
+  --------------------------
+  The broader business parameters, as macros, used by all three places a
+  plan is entered: the sign-up wizard (auth/register.html), the Home
+  page's Add New Plan dialog, and the Edit form in Settings > Business
+  Preferences. One copy of the markup, driven by one script
+  (static/js/plan_form.js), so the three forms cannot drift apart --
+  which is exactly how "monthly revenue" had survived in one form after
+  being dropped from another.
+
+  Each macro takes a `prefix` so the same fields can appear more than
+  once on a page (Settings renders an Edit form per plan) with unique
+  ids for their <label for="..."> links.
+
+  The container that holds a plan's fields must carry data-plan-form,
+  its industry <select> data-plan-industry; the script does the rest.
+
+  `small=True` renders the compact variant the Settings Edit form uses
+  (form-control-sm, small labels) so the fields match their neighbours.
+#}
+
+{% macro _label_cls(small) %}form-label{{ ' small mb-1' if small }}{% endmacro %}
+
+{% macro subcategory_field(prefix, industry, selected, subcategories, small=False) -%}
+  {% set options = subcategories.get(industry, []) if industry else [] %}
+  <label class="{{ _label_cls(small) }}" for="{{ prefix }}-subcategory">
+    What kind of business? <span class="text-muted fw-normal">(sub-category)</span>
+  </label>
+  <select id="{{ prefix }}-subcategory" name="subcategory" class="form-select{{ ' form-select-sm' if small }}" data-plan-subcategory
+          {{ 'disabled' if not options }}>
+    {% if not options %}
+      <option value="">Choose an industry first</option>
+    {% else %}
+      {% for opt in options %}
+        <option value="{{ opt.key }}" data-examples="{{ opt.examples }}"
+                {{ 'selected' if opt.key == selected }}>{{ opt.label }}</option>
+      {% endfor %}
+    {% endif %}
+  </select>
+  <div class="form-text" data-plan-subcategory-hint>
+    {# Filled in by plan_form.js from the chosen option's examples. #}
+    This lets the system count your <strong>direct</strong> competitors &mdash; the businesses
+    selling what you sell &mdash; not the whole industry.
+  </div>
+{%- endmacro %}
+
+
+{% macro offering_field(prefix, value, small=False) -%}
+  <label class="{{ _label_cls(small) }}" for="{{ prefix }}-offering">
+    What will you sell or serve? <span class="text-muted fw-normal">(optional, but recommended)</span>
+  </label>
+  <textarea id="{{ prefix }}-offering" name="product_offering" class="form-control{{ ' form-control-sm' if small }}" rows="2" maxlength="500"
+            placeholder="e.g. Freshly baked pandesal, ensaymada and cheese bread, sold 5am to 10am">{{ value or '' }}</textarea>
+{%- endmacro %}
+
+
+{% macro innovation_field(prefix, value, small=False) -%}
+  <label class="{{ _label_cls(small) }}" for="{{ prefix }}-innovation">
+    What makes your business different? <span class="text-muted fw-normal">(optional)</span>
+  </label>
+  <textarea id="{{ prefix }}-innovation" name="innovation_idea" class="form-control{{ ' form-control-sm' if small }}" rows="2" maxlength="1000"
+            placeholder="e.g. Malunggay and ube pandesal, delivered door-to-door before 6am">{{ value or '' }}</textarea>
+  <div class="form-text">
+    <i class="bi bi-stars"></i> The AI reads this and tells you how much it could help you stand out.
+    It never changes the market score itself.
+  </div>
+{%- endmacro %}
+
+
+{% macro subplan_field(prefix, items) -%}
+  {#
+    The optional "sub-plan": a menu or price list. Collapsed by default
+    and plainly labelled optional -- the client wanted it available for a
+    clearer view of the plan, not demanded of someone who has not priced
+    anything yet.
+  #}
+  <details class="dss-subplan" {{ 'open' if items }}>
+    <summary>
+      <i class="bi bi-list-ul"></i> Sub-plan: menu or price list
+      <span class="text-muted small">(optional &mdash; for a clearer and more accurate view of your plan)</span>
+    </summary>
+    <div class="pt-2" data-plan-items>
+      <div class="dss-subplan-row dss-subplan-head small text-muted" aria-hidden="true">
+        <span>Item or service</span><span>Price (&#8369;)</span><span></span>
+      </div>
+      {% for it in (items or []) %}
+        <div class="dss-subplan-row" data-plan-item>
+          <input type="text" name="offering_item" class="form-control form-control-sm" maxlength="80"
+                 value="{{ it.item }}" aria-label="Item or service">
+          <input type="number" name="offering_price" class="form-control form-control-sm" min="0" step="0.01"
+                 value="{{ it.price if it.price is not none else '' }}" aria-label="Price in pesos">
+          <button type="button" class="btn btn-sm btn-link text-danger" data-plan-remove-item
+                  aria-label="Remove this item"><i class="bi bi-x-lg"></i></button>
+        </div>
+      {% endfor %}
+      <template data-plan-item-template>
+        <div class="dss-subplan-row" data-plan-item>
+          <input type="text" name="offering_item" class="form-control form-control-sm" maxlength="80"
+                 placeholder="e.g. Pandesal (10 pcs)" aria-label="Item or service">
+          <input type="number" name="offering_price" class="form-control form-control-sm" min="0" step="0.01"
+                 placeholder="30" aria-label="Price in pesos">
+          <button type="button" class="btn btn-sm btn-link text-danger" data-plan-remove-item
+                  aria-label="Remove this item"><i class="bi bi-x-lg"></i></button>
+        </div>
+      </template>
+      <button type="button" class="btn btn-sm btn-outline-secondary mt-1" data-plan-add-item>
+        <i class="bi bi-plus-lg"></i> Add an item
+      </button>
+    </div>
+  </details>
+{%- endmacro %}

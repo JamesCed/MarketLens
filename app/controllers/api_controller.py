@@ -26,7 +26,7 @@ from flask_login import login_required, current_user
 
 from app.extensions import db
 from app.models import LguData, MarketData, Notification, SystemSetting, SmeProfile
-from app.ml.constants import BUSINESS_TYPES, DETAIL_PANEL_SECTIONS
+from app.ml.constants import BUSINESS_TYPES, short_industry_label
 from app.ml.seed_data import BARANGAY_NAMES
 from app.services.response_cache import cached_on_data
 from app.services.forecasting_service import compute_scores, compute_scores_batch
@@ -453,16 +453,70 @@ def quarterly_performance():
     )
 
 
+# How many industries the barangay detail panel ranks. Three is what the
+# client asked for: enough to show what a barangay is known for, short
+# enough to read at a glance on the Home page's small map popup.
+TOP_INDUSTRIES_LIMIT = 3
+
+
+def _top_industries(location_rows, limit=TOP_INDUSTRIES_LIMIT):
+    """The `limit` industries with the most businesses in one barangay,
+    most first, as [{industry, label, count, is_estimated}].
+
+    `location_rows` is {industry_type: row} taken from
+    trend_analytics_service.latest_market_data_by_key(), so each count is
+    the SAME reconciled figure (max of Google Places and the LGU/DTI
+    permit register, see forecasting_service.reconciled_competitor_counts)
+    that the scoring engine, Trend Reports and the LGU dashboard use --
+    the panel can never quote a different number for the same barangay.
+
+    WHY THIS REPLACED THE FIXED FOOD / SERVICE / RETAIL ROWS. Those three
+    sections were hard-coded from the storyboard, so a barangay whose
+    biggest sector is, say, Manufacturing showed three small numbers and
+    hid the one that mattered. Ranking by count shows what is actually
+    there.
+
+    `is_estimated` is True when the winning count did not come from a
+    real source (a live Google Places lookup or an LGU/DTI upload) --
+    i.e. it is a generated placeholder, which the page must say. The
+    list of real sources is the reconciliation's own, imported rather
+    than retyped, so a source added there is automatically trusted here.
+
+    Zero counts are left out (an industry with no businesses is not a
+    "top" industry), and ties are broken by name so the order is stable
+    between refreshes.
+    """
+    from app.services.forecasting_service import _COMPETITOR_SOURCES
+
+    ranked = []
+    for industry, row in location_rows.items():
+        count = int(row.competitor_count or 0)
+        if count <= 0:
+            continue
+        # A reconciled row names the source that supplied the winning
+        # figure; a plain row (no Places/DTI figure at all) only has its
+        # own source, which is by definition not a real one.
+        source = getattr(row, "competitor_source", None) or row.source
+        ranked.append(
+            {
+                "industry": industry,
+                "label": short_industry_label(industry),
+                "count": count,
+                "is_estimated": source not in _COMPETITOR_SOURCES,
+            }
+        )
+    ranked.sort(key=lambda item: (-item["count"], item["industry"]))
+    return ranked[:limit]
+
+
 @api_bp.route("/barangay-detail")
 @login_required
 def barangay_detail():
-    """Powers the Saturation Map's detail panel: Total Businesses /
-    Food / Service / Retail Industry counts (real market_data.
-    competitor_count per industry, fetched live via the Google Places
-    API (New) -- see app/services/places_service.py), real 2024 PSA
-    Population, this industry's own AI Density/Saturation Score, and
-    short Recommended Actions text -- all for ONE barangay, matching
-    the redesigned map's reference screenshot layout."""
+    """Powers the barangay detail panel (Saturation Map) and the info
+    popup on the Home page's mini map: Total Businesses, the barangay's
+    TOP industries by business count (see _top_industries), real 2024
+    PSA Population, this industry's own AI Saturation Score, and short
+    Recommended Actions text -- all for ONE barangay."""
     from app.services.trend_analytics_service import latest_market_data_by_key
     from app.ml.seed_data import get_real_population, get_barangay_profile
 
@@ -477,16 +531,6 @@ def barangay_detail():
         industry: row for (industry, loc), row in latest_market_data_by_key().items() if loc == location
     }
     total_businesses = sum(int(r.competitor_count or 0) for r in location_rows.values())
-    def _section_count(key):
-        """Competitor count for one of the three named PSIC sections the
-        detail panel breaks out -- see constants.DETAIL_PANEL_SECTIONS."""
-        section = DETAIL_PANEL_SECTIONS[key]
-        row = location_rows.get(section)
-        return int(row.competitor_count or 0) if row is not None else 0
-
-    food_count = _section_count("food")
-    service_count = _section_count("service")
-    retail_count = _section_count("retail")
 
     if scores["cluster_label"] in ("Low", "Moderate"):
         actions = [
@@ -509,9 +553,7 @@ def barangay_detail():
             "competitor_count": scores["competitor_count"],
             "confidence_level": scores["confidence_level"],
             "total_businesses": total_businesses,
-            "food_count": food_count,
-            "service_count": service_count,
-            "retail_count": retail_count,
+            "top_industries": _top_industries(location_rows),
             "population": get_real_population(location),
             # A FIXED, real per-barangay figure (people/km2) -- unlike
             # every other number in this response, it must never change

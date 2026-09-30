@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Write a post{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/forum.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="forum-page">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb small mb-2">
+      <li class="breadcrumb-item"><a href="{{ url_for('forum.index') }}">Community</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Write a post</li>
+    </ol>
+  </nav>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <form method="POST" action="{{ url_for('forum.new_post') }}" class="dss-card forum-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <h1 class="h4 mb-3"><i class="bi bi-pencil-square" aria-hidden="true"></i> Write a post</h1>
+
+        {# BLOCKED: nothing was saved. Say what to change, keep their text. #}
+        {% if blocked %}
+          <div class="alert alert-warning" role="alert">
+            <strong><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> We couldn't post this yet.</strong>
+            <ul class="mb-1 mt-1">{% for line in blocked %}<li>{{ line }}</li>{% endfor %}</ul>
+            <div class="small">Your text is still below. Make the change and press <strong>Submit</strong> again.</div>
+          </div>
+        {% endif %}
+        {% if errors %}
+          <div class="alert alert-danger" role="alert">
+            <ul class="mb-0">{% for line in errors %}<li>{{ line }}</li>{% endfor %}</ul>
+          </div>
+        {% endif %}
+
+        <div class="mb-3">
+          <label for="postChannel" class="form-label fw-semibold">Channel</label>
+          <select class="form-select" id="postChannel" name="channel" required>
+            <option value="" {{ 'selected' if not form.channel }}>Choose where your post belongs…</option>
+            {% for c in channels %}
+              <option value="{{ c.slug }}" {{ 'selected' if form.channel == c.slug }}>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label for="postTitle" class="form-label fw-semibold">Title</label>
+          <input type="text" class="form-control" id="postTitle" name="title" value="{{ form.title }}" required
+                 minlength="{{ limits.title_min }}" maxlength="{{ limits.title_max }}"
+                 data-forum-count="titleCount"
+                 placeholder="e.g. Where can I buy affordable food packaging in Tarlac City?">
+          <div class="form-text">A short question or summary. <span class="forum-count" id="titleCount" aria-live="polite"></span></div>
+        </div>
+
+        <div class="mb-3">
+          <label for="postBody" class="form-label fw-semibold">Your post</label>
+          <textarea class="form-control" id="postBody" name="body" rows="8" required
+                    minlength="{{ limits.body_min }}" maxlength="{{ limits.body_max }}"
+                    data-forum-count="bodyCount"
+                    placeholder="Share the details. What do you want to know, or what would you like to share?">{{ form.body }}</textarea>
+          <div class="form-text"><span class="forum-count" id="bodyCount" aria-live="polite"></span></div>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <a href="{{ url_for('forum.index') }}" class="btn btn-outline-secondary">Cancel</a>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-send" aria-hidden="true"></i>
+            {{ 'Post now' if current_user.is_admin() else 'Submit' }}
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div class="col-lg-4">
+      {% include "forum/_guidelines.html" %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/forum.js') }}"></script>
+{% endblock %}

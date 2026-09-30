@@ -267,7 +267,7 @@ def live_fetch_enabled():
 
 
 def search_competitors_detailed(location, industry_type, api_key=None, max_results=0,
-                                exclude_micro=True):
+                                exclude_micro=True, search_term=None):
     """
     The full-detail version of search_competitors() (which is a thin
     wrapper over this one). Returns a dict:
@@ -325,7 +325,10 @@ def search_competitors_detailed(location, industry_type, api_key=None, max_resul
     limit = int(max_results or 0)
     unlimited = limit <= 0
 
-    query = f"{_search_term_for(industry_type)} in {location}, Tarlac City"
+    # search_term overrides the section-level term: the sub-category
+    # direct-competitor count asks for "bakery OR bakeshop" rather than
+    # every food business (see app/services/subcategory_service.py).
+    query = f"{search_term or _search_term_for(industry_type)} in {location}, Tarlac City"
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": api_key,

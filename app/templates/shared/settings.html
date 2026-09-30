@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Settings{% endblock %}
+{% from "shared/_plan_fields.html" import subcategory_field, offering_field, innovation_field, subplan_field %}
 
 {#
   shared/settings.html
@@ -166,13 +167,16 @@
               <div class="min-w-0">
                 <div class="fw-bold" data-field="business_name">{{ p.business_name }}</div>
                 <div class="text-muted small" data-field="summary">
-                  {{ p.industry_type }} &middot; {{ p.location }} &middot; {{ p.business_stage|capitalize }}
+                  {{ p.industry_type }}{% if p.subcategory and p.subcategory != 'other' %} &middot; {{ p.subcategory_label }}{% endif %}
+                  &middot; {{ p.location }} &middot; {{ p.business_stage|capitalize }}
                 </div>
                 <div class="text-muted small" data-field="figures">
                   Capital: &#8369;{{ '{:,.0f}'.format(p.startup_capital or 0) }}
                   &middot; Employees: {{ p.employee_count if p.employee_count is not none else '—' }}
-                  &middot; Est. Revenue: &#8369;{{ '{:,.0f}'.format(p.monthly_revenue_est or 0) }}
+                  {% if p.offering_items %}&middot; Price list: {{ p.offering_items|length }} item(s){% endif %}
                 </div>
+                <div class="text-muted small text-truncate" data-field="offering" style="max-width: 36rem;"
+                     {{ 'hidden' if not p.product_offering }}>{{ p.product_offering or '' }}</div>
               </div>
               <div class="d-flex gap-2 flex-shrink-0">
                 <button type="button" class="btn btn-sm btn-outline-primary dss-plan-edit-btn"><i class="bi bi-pencil"></i> Edit</button>
@@ -180,7 +184,7 @@
               </div>
             </div>
 
-            <form class="dss-plan-edit-form mt-2" method="POST"
+            <form class="dss-plan-edit-form mt-2" method="POST" data-plan-form
                   action="{{ url_for('sme.update_plan', sme_id=p.sme_id) }}" hidden>
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <div class="row g-2">
@@ -191,7 +195,7 @@
                 </div>
                 <div class="col-md-6">
                   <label class="form-label small mb-1" for="plan-industry-{{ p.sme_id }}">Industry</label>
-                  <select class="form-select form-select-sm" id="plan-industry-{{ p.sme_id }}" name="industry_type">
+                  <select class="form-select form-select-sm" id="plan-industry-{{ p.sme_id }}" name="industry_type" data-plan-industry>
                     {#
                       A plan saved under an industry name the current
                       list no longer contains (the taxonomy has been
@@ -211,6 +215,9 @@
                   </select>
                 </div>
                 <div class="col-md-6">
+                  {{ subcategory_field('plan-' ~ p.sme_id, p.industry_type, p.subcategory, PLAN_SUBCATEGORIES, small=True) }}
+                </div>
+                <div class="col-md-6">
                   <label class="form-label small mb-1" for="plan-location-{{ p.sme_id }}">Location</label>
                   <input type="text" id="plan-location-{{ p.sme_id }}" class="form-control form-control-sm"
                          name="location" value="{{ p.location }}" required>
@@ -222,23 +229,26 @@
                     <option value="existing" {{ 'selected' if p.business_stage == 'existing' else '' }}>Existing</option>
                   </select>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-6">
                   <label class="form-label small mb-1" for="plan-capital-{{ p.sme_id }}">Startup capital (&#8369;)</label>
                   <input type="number" min="0" step="1000" id="plan-capital-{{ p.sme_id }}"
                          class="form-control form-control-sm" name="startup_capital"
                          value="{{ p.startup_capital if p.startup_capital is not none else '' }}">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-6">
                   <label class="form-label small mb-1" for="plan-employees-{{ p.sme_id }}">Employees</label>
                   <input type="number" min="0" step="1" id="plan-employees-{{ p.sme_id }}"
                          class="form-control form-control-sm" name="employee_count"
                          value="{{ p.employee_count if p.employee_count is not none else '' }}">
                 </div>
-                <div class="col-md-4">
-                  <label class="form-label small mb-1" for="plan-revenue-{{ p.sme_id }}">Est. monthly revenue (&#8369;)</label>
-                  <input type="number" min="0" step="1000" id="plan-revenue-{{ p.sme_id }}"
-                         class="form-control form-control-sm" name="monthly_revenue_est"
-                         value="{{ p.monthly_revenue_est if p.monthly_revenue_est is not none else '' }}">
+                <div class="col-12">
+                  {{ offering_field('plan-' ~ p.sme_id, p.product_offering, small=True) }}
+                </div>
+                <div class="col-12">
+                  {{ innovation_field('plan-' ~ p.sme_id, p.innovation_idea, small=True) }}
+                </div>
+                <div class="col-12">
+                  {{ subplan_field('plan-' ~ p.sme_id, p.offering_items) }}
                 </div>
               </div>
               <div class="mt-2 d-flex gap-2">
@@ -531,6 +541,10 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{% if current_user.is_sme() %}
+<script>window.DSS_SUBCATEGORIES = {{ PLAN_SUBCATEGORIES|tojson }};</script>
+<script src="{{ url_for('static', filename='js/plan_form.js') }}"></script>
+{% endif %}
 <script>
 (function () {
   const nav   = document.getElementById("settingsNav");
@@ -585,12 +599,15 @@
     const peso = (n) => "₱" + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
     const STAGE = { startup: "Startup", existing: "Existing" };
 
+    // The message can quote what the owner typed (a price list item
+    // name, say), so it goes in as text, never as markup.
     function showAlert(message, kind) {
       if (!alertBox) return;
       alertBox.innerHTML =
         '<div class="alert alert-' + (kind || "danger") +
-        ' alert-dismissible fade show py-2 small" role="alert">' + message +
+        ' alert-dismissible fade show py-2 small" role="alert"><span></span>' +
         '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>';
+      alertBox.querySelector("span").textContent = message;
     }
 
     // Only the three summary lines change after a save, so they are
@@ -603,11 +620,18 @@
         if (el) el.textContent = text;
       };
       set("business_name", plan.business_name);
-      set("summary", plan.industry_type + " · " + plan.location + " · " +
+      const sub = plan.subcategory && plan.subcategory !== "other" ? " · " + plan.subcategory_label : "";
+      set("summary", plan.industry_type + sub + " · " + plan.location + " · " +
                      (STAGE[plan.business_stage] || plan.business_stage));
+      const items = (plan.offering_items || []).length;
       set("figures", "Capital: " + peso(plan.startup_capital) +
                      " · Employees: " + (plan.employee_count ?? "—") +
-                     " · Est. Revenue: " + peso(plan.monthly_revenue_est));
+                     (items ? " · Price list: " + items + " item(s)" : ""));
+      const offering = row.querySelector('[data-field="offering"]');
+      if (offering) {
+        offering.textContent = plan.product_offering || "";
+        offering.hidden = !plan.product_offering;
+      }
     }
 
     listBox.querySelectorAll(".dss-plan-row").forEach((row) => {

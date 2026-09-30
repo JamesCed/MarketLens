@@ -1,12 +1,17 @@
 {% extends "base.html" %}
+{% import "admin/_audit_macros.html" as audit with context %}
 {% block title %}Admin Dashboard{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
 
 {% block content %}
 <h4 class="mb-1"><i class="bi bi-shield-check"></i> Admin Dashboard</h4>
 <p class="text-muted small mb-4">System-wide monitoring and quick links to every Admin Module function.</p>
 
 <div class="row g-3 mb-4">
-  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Users</div><div class="fs-3">{{ stats.total_users }}</div></div></div>
+  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Users</div><div class="fs-3">{{ stats.total_users }}</div><div class="dss-meta">+ {{ stats.archived_users }} archived</div></div></div>
   <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">SME Accounts</div><div class="fs-3">{{ stats.sme_users }}</div></div></div>
   <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">LGU Accounts</div><div class="fs-3">{{ stats.lgu_users }}</div></div></div>
   <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Forecasts Run</div><div class="fs-3">{{ stats.total_forecasts }}</div></div></div>
@@ -23,23 +28,28 @@
 </div>
 
 <div class="dss-card">
-  <h6 class="mb-3">Recent Activity (Audit Trail)</h6>
+  <h6 class="mb-2">Recent Activity (Audit Trail)</h6>
   {% if recent_activity %}
-  <div class="table-responsive">
-    <table class="table table-sm">
-      <thead><tr><th>When</th><th>User</th><th>Action</th><th>Details</th></tr></thead>
-      <tbody>
-        {% for log in recent_activity %}
-        <tr>
-          <td class="text-muted small">{{ log.created_at.strftime('%b %d, %Y %I:%M %p') }}</td>
-          <td>{{ log.user.email if log.user else 'system' }}</td>
-          <td><span class="badge bg-light text-dark">{{ log.action }}</span></td>
-          <td class="small text-muted">{{ log.details or '' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  {#
+    One line per entry for WHO and WHAT, one quiet line for WHEN, WHERE
+    and WHY -- the whole five W's without the full table's width.
+  #}
+  <ul class="dss-activity">
+    {% for e in recent_activity %}
+    {% set t = audit.target(e) %}
+    <li>
+      <div>
+        <strong class="fw-semibold">{{ e.who_name }}</strong> {{ audit.role_badge(e.who_role) }}
+        <span class="ms-1">{{ e.what }}</span>{% if t %}<span class="dss-meta"> &middot; {{ t }}</span>{% endif %}
+      </div>
+      <div class="dss-meta">
+        {{ e.when.strftime('%b %d, %I:%M %p') if e.when else '—' }} {{ tz_label }}
+        &middot; {{ e.ip or 'no IP' }}{% if e.device %} ({{ e.device }}){% endif %}
+        {% if e.why %}&middot; <span class="{{ '' if e.why_is_stated else 'fst-italic' }}">{{ e.why }}</span>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
   <a href="{{ url_for('admin.audit_log') }}" class="small">View full audit trail &raquo;</a>
   {% else %}
   <p class="text-muted">No activity recorded yet.</p>

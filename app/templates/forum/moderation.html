@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% import "forum/_macros.html" as m with context %}
+{% block title %}Moderation{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/forum.css') }}">
+{% endblock %}
+
+{#
+  One item in any of the three queues. Everything a moderator needs to
+  decide sits on the card -- who, where, when, the full text, what the
+  filter found, what the AI thought, and (for reported items) what
+  members said -- so no decision needs a second page.
+#}
+{% macro mod_item(kind, item, reports) %}
+  {% set post = item if kind == 'post' else item.post %}
+  <div class="dss-card forum-mod-item mb-3" id="mod-{{ kind }}-{{ item.id }}">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+      <div class="forum-meta">
+        <span class="fw-semibold">{{ item.author.name }}</span> {{ m.role_badge(item.author) }}
+        <span class="text-muted">({{ item.author.email }})</span>
+        <span aria-hidden="true">&middot;</span>
+        <span><i class="bi bi-{{ post.channel.icon }}" aria-hidden="true"></i> {{ post.channel.name }}</span>
+        <span aria-hidden="true">&middot;</span>
+        {{ m.when(item.created_at) }}
+      </div>
+      {% if item.status == 'approved' %}
+        <span class="badge text-bg-success">Published</span>
+      {% else %}
+        {{ m.status_badge(item) }}
+      {% endif %}
+    </div>
+
+    {% if kind == 'post' %}
+      <h2 class="h6 mb-2">{{ item.title }}</h2>
+    {% else %}
+      <div class="small text-muted mb-1">Comment on
+        <a href="{{ url_for('forum.post', post_id=post.id) }}">{{ post.title }}</a></div>
+    {% endif %}
+    <div class="forum-mod-body forum-body">{{ forum_text(item.body) }}</div>
+
+    <dl class="forum-mod-checks">
+      <div><dt>Filter</dt><dd>{{ m.flag_badges(item) }}</dd></div>
+      <div><dt>AI</dt><dd>{{ m.ai_badge(item) }}</dd></div>
+    </dl>
+
+    {% if reports %}
+      <div class="forum-report-list">
+        <div class="fw-semibold small mb-1"><i class="bi bi-flag-fill" aria-hidden="true"></i>
+          {{ reports|length }} report{{ '' if reports|length == 1 else 's' }}</div>
+        <ul class="mb-0">
+          {% for r in reports %}
+            <li><strong>{{ r.reason_label }}</strong>{% if r.note %}: {{ r.note }}{% endif %}
+              <span class="text-muted">&mdash; {{ r.reporter.name }}, {{ m.when(r.created_at) }}</span></li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    <div class="forum-actions">
+      {% set subject = item.title if kind == 'post' else 'Comment by ' ~ item.author.name %}
+      <form method="POST" action="{{ url_for('forum.moderate', kind=kind, item_id=item.id, action='approve') }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="{{ url_for('forum.moderation', tab=tab) }}">
+        <button type="submit" class="btn btn-sm btn-success">
+          <i class="bi bi-check-lg" aria-hidden="true"></i> {{ 'Keep it' if reports else 'Approve' }}
+        </button>
+      </form>
+      {% if reports %}
+        <button type="button" class="btn btn-sm btn-outline-danger"
+                data-bs-toggle="modal" data-bs-target="#forumReasonModal"
+                data-action="{{ url_for('forum.moderate', kind=kind, item_id=item.id, action='remove') }}"
+                data-title="Remove this {{ kind }}" data-verb="Remove" data-subject="{{ subject }}">
+          <i class="bi bi-trash" aria-hidden="true"></i> Remove
+        </button>
+      {% else %}
+        <button type="button" class="btn btn-sm btn-outline-danger"
+                data-bs-toggle="modal" data-bs-target="#forumReasonModal"
+                data-action="{{ url_for('forum.moderate', kind=kind, item_id=item.id, action='reject') }}"
+                data-title="Reject this {{ kind }}" data-verb="Reject" data-subject="{{ subject }}">
+          <i class="bi bi-x-lg" aria-hidden="true"></i> Reject
+        </button>
+      {% endif %}
+      {% if kind == 'post' %}
+        <a class="btn btn-sm btn-link ms-auto" href="{{ url_for('forum.post', post_id=item.id) }}">Open post</a>
+      {% endif %}
+    </div>
+  </div>
+{% endmacro %}
+
+{% block content %}
+<div class="forum-page">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1"><i class="bi bi-shield-exclamation" aria-hidden="true"></i> Community moderation</h1>
+      <p class="text-muted mb-0">Approve what's helpful, reject what breaks the guidelines. Authors are told what you decide and why.</p>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('forum.index') }}"><i class="bi bi-people-fill" aria-hidden="true"></i> Go to Community</a>
+  </div>
+
+  {# ---------------- AI pre-screen switch ---------------- #}
+  {% set ai_active = ai_setting and llm_enabled %}
+  <div class="dss-card forum-ai-card mb-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <div class="fw-semibold"><i class="bi bi-robot" aria-hidden="true"></i> AI pre-screen:
+        {% if ai_active %}<span class="text-success">On</span>{% else %}<span class="text-muted">Off</span>{% endif %}
+      </div>
+      <div class="small text-muted">
+        {% if ai_active %}
+          Posts the filter finds nothing wrong with are checked by AI. If it agrees they're fine, they're published
+          straight away. Everything else waits here for you. The AI never rejects anything by itself.
+        {% elif ai_setting and not llm_enabled %}
+          Switched on here, but the AI engine is turned off in System Settings, so every new post waits for a moderator.
+        {% else %}
+          Every new post waits here for a moderator, like a Facebook group with post approval turned on.
+        {% endif %}
+      </div>
+    </div>
+    <form method="POST" action="{{ url_for('forum.moderation_ai') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="enabled" value="{{ '0' if ai_setting else '1' }}">
+      <button type="submit" class="btn btn-sm {{ 'btn-outline-secondary' if ai_setting else 'btn-outline-primary' }}">
+        {{ 'Turn off' if ai_setting else 'Turn on' }}
+      </button>
+    </form>
+  </div>
+
+  {# ---------------- queues ---------------- #}
+  <ul class="nav nav-underline forum-mod-tabs" role="tablist">
+    {% for key, label, count in [
+         ('posts', 'Pending posts', pending_posts|length),
+         ('comments', 'Pending comments', pending_comments|length),
+         ('reported', 'Reported', reported_items|length)] %}
+      <li class="nav-item" role="presentation">
+        <button class="nav-link {{ 'active' if tab == key }}" id="tab-{{ key }}" data-bs-toggle="tab"
+                data-bs-target="#pane-{{ key }}" type="button" role="tab" aria-controls="pane-{{ key }}"
+                aria-selected="{{ 'true' if tab == key else 'false' }}">
+          {{ label }} <span class="badge rounded-pill {{ 'text-bg-warning' if count else 'text-bg-secondary' }} ms-1">{{ count }}</span>
+        </button>
+      </li>
+    {% endfor %}
+  </ul>
+
+  <div class="tab-content">
+    <div class="tab-pane fade {{ 'show active' if tab == 'posts' }}" id="pane-posts" role="tabpanel" aria-labelledby="tab-posts">
+      {% for p in pending_posts %}
+        {{ mod_item('post', p, []) }}
+      {% else %}
+        <div class="dss-card text-center text-muted forum-empty"><i class="bi bi-check2-circle" aria-hidden="true"></i> No posts waiting. All caught up!</div>
+      {% endfor %}
+    </div>
+
+    <div class="tab-pane fade {{ 'show active' if tab == 'comments' }}" id="pane-comments" role="tabpanel" aria-labelledby="tab-comments">
+      {% for c in pending_comments %}
+        {{ mod_item('comment', c, []) }}
+      {% else %}
+        <div class="dss-card text-center text-muted forum-empty"><i class="bi bi-check2-circle" aria-hidden="true"></i> No comments waiting. All caught up!</div>
+      {% endfor %}
+    </div>
+
+    <div class="tab-pane fade {{ 'show active' if tab == 'reported' }}" id="pane-reported" role="tabpanel" aria-labelledby="tab-reported">
+      <p class="small text-muted">
+        Anything reported by {{ reports_to_hide }} different members is hidden automatically until you decide.
+        <strong>Keep it</strong> puts it back and clears the reports; <strong>Remove</strong> takes it down.
+      </p>
+      {% for kind, item in reported_items %}
+        {{ mod_item(kind, item, reports_by_item.get((kind, item.id), [])) }}
+      {% else %}
+        <div class="dss-card text-center text-muted forum-empty"><i class="bi bi-check2-circle" aria-hidden="true"></i> Nothing has been reported.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% include "forum/_reason_modal.html" %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/forum.js') }}"></script>
+{% endblock %}

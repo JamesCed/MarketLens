@@ -14,6 +14,10 @@
 //   DSS_SME_BUSINESS_TYPES -- array of suggested industry types
 //   DSS_FORECAST_URL       -- GET /api/forecast
 //   DSS_SATURATION_MAP_URL -- link target for "View on Saturation Map"
+//
+// Also wires the Clear button (#smeSearchClear) and takes a location
+// chosen in the "Pick on map" dialog (a dss:location-picked event from
+// location_picker.js).
 
 (function () {
   const form = document.getElementById("smeSearchForm");
@@ -22,6 +26,16 @@
   const suggestionsBox = document.getElementById("smeSearchSuggestions");
   const resultsBox = document.getElementById("smeSearchResults");
   if (!form || !input) return;
+
+  const clearButton = document.getElementById("smeSearchClear");
+
+  // Anything that goes into innerHTML below is escaped first: the
+  // location is whatever was typed, echoed back by the API.
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
 
   const KNOWN_LOCATIONS = window.DSS_SME_LOCATIONS || [];
   const KNOWN_LOCATIONS_LOWER = KNOWN_LOCATIONS.map((l) => l.toLowerCase());
@@ -108,7 +122,7 @@
 
     suggestionsBox.hidden = false;
     suggestionsBox.innerHTML = matches
-      .map((loc) => `<button type="button" class="list-group-item list-group-item-action dss-search-suggestion">${loc}</button>`)
+      .map((loc) => `<button type="button" class="list-group-item list-group-item-action dss-search-suggestion">${escapeHtml(loc)}</button>`)
       .join("");
     suggestionsBox.querySelectorAll(".dss-search-suggestion").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -128,7 +142,7 @@
   function renderError(message) {
     if (!resultsBox) return;
     resultsBox.hidden = false;
-    resultsBox.innerHTML = `<div class="alert alert-warning small mt-2 mb-0">${message}</div>`;
+    resultsBox.innerHTML = `<div class="alert alert-warning small mt-2 mb-0">${escapeHtml(message)}</div>`;
   }
 
   function renderResult(scores, matchedKnown) {
@@ -139,24 +153,25 @@
       : "No seed data on file for this exact location -- showing an AI estimate based on dataset averages.";
     const mapUrl = `${window.DSS_SATURATION_MAP_URL}?location=${encodeURIComponent(scores.location)}&industry_type=${encodeURIComponent(scores.industry_type)}`;
 
+    const e = escapeHtml;
     resultsBox.hidden = false;
     resultsBox.innerHTML = `
       <div class="dss-card mt-2 text-start">
         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
           <div>
-            <h6 class="mb-0"><i class="bi bi-geo-alt-fill text-primary"></i> ${scores.location}</h6>
-            <div class="text-muted small">${scores.industry_type}</div>
+            <h6 class="mb-0"><i class="bi bi-geo-alt-fill text-primary"></i> ${e(scores.location)}</h6>
+            <div class="text-muted small">${e(scores.industry_type)}</div>
           </div>
-          <span class="dss-stat-pill ${pill}">${scores.cluster_label} Saturation</span>
+          <span class="dss-stat-pill ${pill}">${e(scores.cluster_label)} Saturation</span>
         </div>
         <div class="row small text-center mt-3 g-2">
-          <div class="col-3"><div class="fs-5 fw-bold">${scores.viability_score}/10</div><div class="text-muted">Viability</div></div>
-          <div class="col-3"><div class="fs-5 fw-bold">${scores.saturation_index}%</div><div class="text-muted">Saturation</div></div>
-          <div class="col-3"><div class="fs-5 fw-bold">${scores.competitor_count}</div><div class="text-muted">Competitors</div></div>
-          <div class="col-3"><div class="fs-5 fw-bold">${scores.confidence_level}%</div><div class="text-muted">Confidence</div></div>
+          <div class="col-3"><div class="fs-5 fw-bold">${e(scores.viability_score)}/10</div><div class="text-muted">Viability</div></div>
+          <div class="col-3"><div class="fs-5 fw-bold">${e(scores.saturation_index)}%</div><div class="text-muted">Saturation</div></div>
+          <div class="col-3"><div class="fs-5 fw-bold">${e(scores.competitor_count)}</div><div class="text-muted">Competitors</div></div>
+          <div class="col-3"><div class="fs-5 fw-bold">${e(scores.confidence_level)}%</div><div class="text-muted">Confidence</div></div>
         </div>
         <p class="text-muted small mt-2 mb-2">${dataNote}</p>
-        <a class="btn btn-sm btn-outline-primary" href="${mapUrl}">
+        <a class="btn btn-sm btn-outline-primary" href="${e(mapUrl)}">
           <i class="bi bi-map"></i> View on Saturation Map
         </a>
       </div>`;
@@ -189,6 +204,28 @@
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
+    runSearch();
+  });
+
+  // Clear: empty the box, put the industry back to the chosen plan's,
+  // and drop the result card. Nothing saved is touched.
+  if (clearButton) {
+    clearButton.addEventListener("click", () => {
+      input.value = "";
+      if (industrySelect) industrySelect.value = industrySelect.dataset.default || industrySelect.options[0].value;
+      hideSuggestions();
+      if (resultsBox) {
+        resultsBox.hidden = true;
+        resultsBox.innerHTML = "";
+      }
+      input.focus();
+    });
+  }
+
+  // The "Pick on map" dialog (location_picker.js) hands its choice here.
+  document.addEventListener("dss:location-picked", (e) => {
+    if (!e.detail || e.detail.target !== "search") return;
+    input.value = e.detail.name;
     runSearch();
   });
   input.addEventListener("input", () => renderSuggestions(input.value));

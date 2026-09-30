@@ -1,0 +1,85 @@
+{#
+  forum/_macros.html
+  --------------------
+  Small pieces shared by the forum pages. Every piece of member-written
+  text goes through Jinja's autoescape ({{ }}) or forum_text(), which
+  escapes first and only then adds <br> for line breaks -- nothing here
+  uses |safe on user content.
+#}
+
+{# The role next to a name. SME is most people, so it carries no badge;
+   an LGU officer's answer about permits carries weight worth showing,
+   and "Moderator" tells people who they are talking to. Colours match
+   the Manage Users page. #}
+{% macro role_badge(user) -%}
+  {%- if user and user.role == 'Admin' -%}
+    <span class="badge text-bg-dark forum-role">Moderator</span>
+  {%- elif user and user.role == 'LGU' -%}
+    <span class="badge text-bg-success forum-role">LGU</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro when(dt) -%}
+  <time datetime="{{ dt.isoformat() if dt else '' }}" title="{{ forum_time(dt) }}">{{ forum_ago(dt) }}</time>
+{%- endmacro %}
+
+{# Status, in words a non-technical member reads correctly at a glance. #}
+{% macro status_badge(item) -%}
+  {%- if item.status == 'pending' -%}
+    <span class="badge text-bg-warning forum-status"><i class="bi bi-hourglass-split" aria-hidden="true"></i> Waiting for approval</span>
+  {%- elif item.status == 'rejected' -%}
+    <span class="badge text-bg-secondary forum-status"><i class="bi bi-x-circle" aria-hidden="true"></i> Not approved</span>
+  {%- elif item.status == 'removed' -%}
+    <span class="badge text-bg-danger forum-status"><i class="bi bi-slash-circle" aria-hidden="true"></i> Removed</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro flag_badges(item) -%}
+  {%- for flag in item.flag_list -%}
+    <span class="badge rounded-pill forum-flag">{{ flag_label(flag) }}</span>
+  {%- else -%}
+    <span class="text-muted small">Nothing found</span>
+  {%- endfor -%}
+{%- endmacro %}
+
+{% macro ai_badge(item) -%}
+  {%- if item.ai_verdict == 'approve' -%}
+    <span class="badge text-bg-success">AI: looks fine</span>
+  {%- elif item.ai_verdict == 'review' -%}
+    <span class="badge text-bg-warning">AI: unsure</span>
+  {%- elif item.ai_verdict == 'reject' -%}
+    <span class="badge text-bg-danger">AI: breaks the rules</span>
+  {%- else -%}
+    <span class="text-muted small">Not checked by AI</span>
+  {%- endif -%}
+  {%- if item.ai_reason %} <span class="small">{{ item.ai_reason }}</span>{% endif -%}
+{%- endmacro %}
+
+{# One post in the feed. #}
+{% macro post_card(post, comment_count) -%}
+  <article class="dss-card forum-post-card{{ ' forum-is-pending' if post.status == 'pending' }}">
+    <div class="forum-meta">
+      <a class="forum-channel-chip" href="{{ url_for('forum.channel', slug=post.channel.slug) }}">
+        <i class="bi bi-{{ post.channel.icon }}" aria-hidden="true"></i> {{ post.channel.name }}
+      </a>
+      <span aria-hidden="true">&middot;</span>
+      <span>{{ post.author.name }}</span> {{ role_badge(post.author) }}
+      <span aria-hidden="true">&middot;</span>
+      {{ when(post.created_at) }}
+    </div>
+    <h2 class="forum-post-title">
+      <a href="{{ url_for('forum.post', post_id=post.id) }}">{{ post.title }}</a>
+    </h2>
+    {% if post.status == 'pending' %}
+      <p class="forum-pending-note">
+        {{ status_badge(post) }}
+        <span>Only you can see this until a moderator approves it.</span>
+      </p>
+    {% endif %}
+    <p class="forum-excerpt">{{ post.body|truncate(220) }}</p>
+    <div class="forum-stats">
+      <span><i class="bi bi-hand-thumbs-up" aria-hidden="true"></i> {{ post.helpful_count }} found this helpful</span>
+      <span><i class="bi bi-chat" aria-hidden="true"></i> {{ comment_count or 0 }} comment{{ '' if comment_count == 1 else 's' }}</span>
+    </div>
+  </article>
+{%- endmacro %}

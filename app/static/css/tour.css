@@ -1,0 +1,353 @@
+/* app/static/css/tour.css
+   ------------------------
+   The first-time walkthrough (static/js/tour.js) and the "Is this your
+   first time here?" prompt (templates/shared/_onboarding.html).
+
+   Dressed like the sign-in page -- navy and cyan, the same card shadow
+   and button shape -- so the tour feels like part of MarketLens rather
+   than a plug-in bolted on top. Every colour below is one of style.css's
+   own variables; the tokens here only give them tour-specific names, and
+   dark mode works by re-pointing those names, exactly as style.css does.
+
+   Written for people who are not used to web apps: nothing smaller than
+   16px, buttons at least 44px tall (a comfortable thumb target), and
+   strong contrast -- body text is --ml-ink, not a pale grey.
+
+   Stacking: Bootstrap's dialogs sit at 1055 and its tooltips at 1080.
+   The tour sits above both (the new-plan step explains an OPEN dialog,
+   so it has to be drawn over it), and below the flash toasts at 2000,
+   which are short-lived and should still be readable. */
+
+.dss-tour,
+.dss-tour-prompt {
+  --tour-surface: var(--ml-surface);
+  --tour-surface-2: var(--ml-surface-2);
+  --tour-ink: var(--ml-ink);
+  --tour-muted: var(--ml-body);
+  --tour-line: var(--ml-line);
+  --tour-label: var(--ml-navy);
+  --tour-accent: var(--ml-cyan);
+  --tour-accent-strong: var(--ml-cyan-600);
+  --tour-focus: var(--ml-cyan-700);
+  --tour-success: var(--dss-green);
+  /* The same near-black the phone menu's backdrop uses (style.css
+     .dss-nav-backdrop), a little stronger so the lit-up element stands
+     out clearly. */
+  --tour-dim: rgba(8, 15, 24, .62);
+  --tour-z: 1085;
+}
+[data-bs-theme="dark"] .dss-tour,
+[data-bs-theme="dark"] .dss-tour-prompt {
+  /* Navy headings vanish on the dark card; cyan is the brand's other
+     colour and reads clearly there. */
+  --tour-label: var(--ml-cyan);
+  --tour-focus: var(--ml-cyan);
+}
+
+.dss-tour[hidden],
+.dss-tour [hidden],
+.dss-tour-prompt[hidden],
+.dss-tour-prompt [hidden] { display: none !important; }
+
+/* =====================================================================
+   The spotlight
+   =====================================================================
+   One transparent box over the element; its enormous shadow is what
+   dims the rest of the page. pointer-events:none so it never gets in
+   the way -- the invisible .dss-tour-block pieces around it are what
+   catch clicks on the dimmed page. */
+.dss-tour-spot {
+  position: fixed;
+  z-index: var(--tour-z);
+  pointer-events: none;
+  border-radius: 12px;
+  box-shadow: 0 0 0 3px var(--tour-accent), 0 0 0 200vmax var(--tour-dim);
+  transition: top .25s ease, left .25s ease, width .25s ease, height .25s ease;
+}
+/* No element to light up: dim everything, draw no ring. */
+.dss-tour-spot.is-empty { box-shadow: 0 0 0 200vmax var(--tour-dim); }
+
+/* A "try it" step: the ring breathes, to say "this one -- click it". */
+.dss-tour.is-interactive .dss-tour-spot { animation: dss-tour-pulse 1.6s ease-in-out infinite; }
+@keyframes dss-tour-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--tour-accent), 0 0 0 200vmax var(--tour-dim); }
+  50%      { box-shadow: 0 0 0 7px var(--tour-accent), 0 0 0 200vmax var(--tour-dim); }
+}
+
+.dss-tour-block {
+  position: fixed;
+  z-index: calc(var(--tour-z) + 1);
+  background: transparent;
+}
+
+/* =====================================================================
+   The card
+   ===================================================================== */
+.dss-tour-card {
+  position: fixed;
+  z-index: calc(var(--tour-z) + 2);
+  top: 16px;
+  left: 16px;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  /* No bottom padding: the button row below supplies it, so that row
+     can pin itself to the very bottom edge (see [data-part="nav"]). */
+  padding: 1.2rem 1.35rem 0;
+  background: var(--tour-surface);
+  color: var(--tour-ink);
+  border: 1px solid var(--tour-line);
+  border-top: 4px solid var(--tour-accent);
+  border-radius: 1rem;
+  /* The sign-in card's shadow (.ml-auth-card). */
+  box-shadow: 0 30px 60px -24px rgba(0, 0, 0, .55), 0 2px 10px rgba(0, 0, 0, .14);
+  font-size: 1rem;
+  line-height: 1.55;
+  transition: top .25s ease, left .25s ease;
+}
+.dss-tour-card:focus { outline: none; }
+
+.dss-tour-progress {
+  display: flex; align-items: center; gap: .75rem;
+  margin-bottom: .55rem;
+}
+.dss-tour-count { font-size: 1rem; font-weight: 600; color: var(--tour-muted); white-space: nowrap; }
+.dss-tour-bar {
+  flex: 1; height: 6px; border-radius: 999px;
+  background: var(--tour-line); overflow: hidden;
+}
+.dss-tour-bar-fill {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--ml-cyan), var(--ml-cyan-600));
+  border-radius: inherit;
+  transition: width .3s ease;
+}
+
+.dss-tour-title {
+  margin: 0 0 .35rem;
+  font-size: 1.3rem; font-weight: 700; line-height: 1.3;
+  color: var(--tour-ink);
+}
+/* tour.js focuses the title on every step so a screen reader starts
+   there. It is not a control (tabindex=-1, not in the Tab order), so no
+   ring: after a page load Chrome would otherwise draw one around the
+   heading, which reads as a stray box. The buttons keep theirs. */
+.dss-tour-title:focus,
+.dss-tour-title:focus-visible { outline: none; }
+
+.dss-tour-section { margin-top: .7rem; }
+.dss-tour-label {
+  margin: 0 0 .15rem;
+  font-size: 1rem; font-weight: 700;
+  color: var(--tour-label);
+}
+.dss-tour-text { margin: 0; font-size: 1rem; color: var(--tour-ink); }
+.dss-tour-list { margin: .45rem 0 0; padding-left: 1.2rem; font-size: 1rem; }
+.dss-tour-list li { margin-bottom: .2rem; }
+
+/* "Try it: ..." -- the instruction for a hands-on step. A tinted panel
+   with the brand cyan down the side, so it cannot be mistaken for more
+   explanation to read. */
+.dss-tour-try,
+.dss-tour-success {
+  display: flex; align-items: flex-start; gap: .55rem;
+  margin: .9rem 0 0; padding: .7rem .85rem;
+  border-radius: .65rem;
+  font-size: 1rem; color: var(--tour-ink);
+}
+.dss-tour-try {
+  background: rgba(92, 207, 234, .14);
+  border-left: 4px solid var(--tour-accent-strong);
+}
+.dss-tour-try i { color: var(--tour-accent-strong); font-size: 1.15rem; line-height: 1.4; }
+/* Green is carried by the border and the tick, not by the text -- green
+   text on white is too faint to read comfortably. */
+.dss-tour-success {
+  background: rgba(22, 163, 74, .10);
+  border-left: 4px solid var(--tour-success);
+}
+.dss-tour-success i { color: var(--tour-success); font-size: 1.15rem; line-height: 1.4; }
+
+.dss-tour-note { margin: .8rem 0 0; font-size: 1rem; color: var(--tour-muted); }
+
+.dss-tour-confirm {
+  margin: 1rem 0 1.1rem; padding: .85rem;
+  border-radius: .65rem;
+  background: var(--tour-surface-2);
+  border: 1px solid var(--tour-line);
+}
+.dss-tour-confirm-text { margin: 0; font-size: 1rem; }
+
+/* ---------------- Buttons ----------------
+   The sign-in page's .ml-btn shape. Not .ml-btn itself: its outline and
+   ghost variants are white-on-navy, made for the dark landing page. */
+.dss-tour-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+  margin-top: 1rem;
+}
+.dss-tour-spacer { flex: 1 1 auto; }
+
+/* The Back / Next row stays pinned to the bottom of the card when the
+   text is long enough to scroll -- which on a phone, with the card
+   docked, is most steps. Someone who does not think to scroll inside a
+   box must still be able to see the button that moves them on. */
+.dss-tour-card > [data-part="nav"] {
+  position: sticky;
+  bottom: 0;
+  margin: 1rem -1.35rem 0;
+  padding: .75rem 1.35rem 1.1rem;
+  background: var(--tour-surface);
+  box-shadow: 0 -10px 14px -14px rgba(0, 0, 0, .35);
+}
+
+.dss-tour-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .45rem;
+  min-height: 44px;
+  padding: .55rem 1.1rem;
+  border: 1.5px solid transparent; border-radius: .65rem;
+  font: inherit; font-size: 1rem; font-weight: 600; line-height: 1.2;
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease;
+}
+.dss-tour-btn:active { transform: translateY(1px); }
+.dss-tour-btn:disabled { opacity: .6; cursor: default; }
+.dss-tour-btn:focus-visible { outline: 3px solid var(--tour-focus); outline-offset: 2px; }
+
+.dss-tour-btn-primary {
+  background: linear-gradient(135deg, var(--ml-cyan) 0%, var(--ml-cyan-600) 100%);
+  color: var(--ml-navy);
+  box-shadow: 0 10px 26px -12px rgba(92, 207, 234, .85);
+}
+.dss-tour-btn-primary:hover { box-shadow: 0 14px 32px -12px rgba(92, 207, 234, 1); }
+
+.dss-tour-btn-ghost {
+  background: transparent;
+  border-color: var(--tour-line);
+  color: var(--tour-ink);
+}
+.dss-tour-btn-ghost:hover { border-color: var(--tour-accent-strong); background: var(--tour-surface-2); }
+
+/* "Exit tour": always there, never shouting. Underlined so it still
+   reads as something you can press. */
+.dss-tour-btn-link {
+  padding-left: .25rem; padding-right: .25rem;
+  background: none;
+  color: var(--tour-muted);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.dss-tour-btn-link:hover { color: var(--tour-ink); }
+
+/* A click on the dimmed page: a small shake so it is clear where to look. */
+.dss-tour-card.is-nudged { animation: dss-tour-nudge .5s ease; }
+@keyframes dss-tour-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+/* ---------------- Paused / message: a corner card, page usable ---------------- */
+.dss-tour.is-paused .dss-tour-spot,
+.dss-tour.is-paused .dss-tour-block { display: none; }
+.dss-tour.is-paused .dss-tour-card {
+  top: auto; left: auto; right: 16px; bottom: 16px;
+  width: min(380px, calc(100vw - 32px));
+}
+
+/* ---------------- Phones: dock the card at the bottom ----------------
+   tour.js adds .is-docked below 640px. A card beside the element does
+   not fit on a narrow screen, and a card floating over the middle would
+   hide the very thing it is describing. Docked, the element is scrolled
+   into the space above it. */
+.dss-tour-card.is-docked {
+  top: auto; left: 0; right: 0; bottom: 0;
+  width: 100%;
+  max-height: 56vh;
+  border-radius: 1rem 1rem 0 0;
+  border-left: 0; border-right: 0; border-bottom: 0;
+}
+.dss-tour-card.is-docked > [data-part="nav"] {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+.dss-tour.is-paused .dss-tour-card.is-docked { right: 0; bottom: 0; width: 100%; }
+.dss-tour-card.is-docked .dss-tour-actions .dss-tour-btn-primary,
+.dss-tour-card.is-docked .dss-tour-actions .dss-tour-btn-ghost { flex: 1 1 auto; }
+
+/* =====================================================================
+   "Is this your first time here?"
+   ===================================================================== */
+.dss-tour-prompt {
+  position: fixed; inset: 0;
+  z-index: calc(var(--tour-z) + 5);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  background: rgba(8, 15, 24, .7);
+  overflow-y: auto;
+}
+html.dss-tour-prompt-open { overflow: hidden; }
+
+.dss-tour-prompt-card {
+  width: min(560px, 100%);
+  margin: auto;
+  background: var(--tour-surface);
+  color: var(--tour-ink);
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 30px 60px -24px rgba(0, 0, 0, .55), 0 2px 10px rgba(0, 0, 0, .14);
+  animation: dss-tour-rise .3s ease both;
+}
+@keyframes dss-tour-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* The navy band is the sign-in page's backdrop in miniature. */
+.dss-tour-prompt-head {
+  padding: 1.4rem 1.5rem 1.25rem;
+  background: linear-gradient(155deg, var(--ml-navy) 0%, var(--ml-navy-700) 100%);
+  color: #fff;
+}
+.dss-tour-prompt-head .ml-eyebrow { margin-top: 1rem; font-size: 1rem; }
+
+.dss-tour-prompt-body { padding: 1.4rem 1.5rem 1.5rem; }
+.dss-tour-prompt-title {
+  margin: 0 0 .6rem;
+  font-size: 1.55rem; font-weight: 700; line-height: 1.25;
+  color: var(--tour-ink);
+}
+.dss-tour-prompt-text { margin: 0 0 .5rem; font-size: 1.1rem; line-height: 1.55; color: var(--tour-ink); }
+.dss-tour-prompt-note { margin: 0 0 1.25rem; font-size: 1rem; color: var(--tour-muted); }
+
+.dss-tour-prompt-actions { display: grid; gap: .75rem; }
+.dss-tour-btn-lg { min-height: 56px; font-size: 1.125rem; border-radius: .75rem; }
+.dss-tour-prompt-error {
+  margin: 1rem 0 0; padding: .7rem .85rem;
+  border-radius: .65rem;
+  border-left: 4px solid var(--dss-red);
+  background: rgba(239, 68, 68, .10);
+  font-size: 1rem; color: var(--tour-ink);
+}
+
+/* ---------------- The sidebar's "Take the tour" ----------------
+   Sits in the footer with Support and borrows its look
+   (.dss-nav-support); this only spaces the two apart. */
+.dss-sidebar-footer .dss-nav-tour { margin-bottom: .2rem; }
+
+/* ---------------- Motion and print ---------------- */
+@media (prefers-reduced-motion: reduce) {
+  .dss-tour-spot,
+  .dss-tour-card,
+  .dss-tour-bar-fill,
+  .dss-tour-btn { transition: none; }
+  .dss-tour.is-interactive .dss-tour-spot,
+  .dss-tour-card.is-nudged,
+  .dss-tour-prompt-card { animation: none; }
+}
+
+/* Trend Reports has an Export / Print button. A tour card in the middle
+   of a printed report would be the only thing anyone remembered. */
+@media print {
+  .dss-tour,
+  .dss-tour-prompt { display: none !important; }
+}

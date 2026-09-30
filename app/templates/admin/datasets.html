@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Datasets{% endblock %}
 
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
 {% block content %}
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
   <div>
@@ -10,13 +14,12 @@
     <i class="bi bi-file-earmark-spreadsheet"></i> Download Barangay Seed Data (CSV)
   </a>
 </div>
-<p class="text-muted small mb-4">
-  The real database has no separate "uploaded file" record -- Gov't Data Upload writes parsed rows
-  straight into these two tables (see app/services/data_import_service.py). Deleting a row here also
-  deletes any AI forecast that was built from it, since <code>forecast_result.market_id</code> /
-  <code>lgu_id</code> cascade on delete. The download above is a separate thing -- a full copy of the
-  76-barangay reference dataset (app/ml/seed_data.py) used to train the AI model, not data from these tables.
-</p>
+<div class="dss-admin-note mb-4">
+  <i class="bi bi-archive"></i>
+  Archiving a row takes it out of every analysis straight away. Forecasts already built on it are kept,
+  and you can restore the row at any time from <a href="#archived-records">Archived records</a>.
+  <div class="dss-meta mt-1">The seed data download is the 76-barangay reference set the AI model was trained on, not the rows below.</div>
+</div>
 
 <div class="dss-card mb-4">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
@@ -47,7 +50,7 @@
 <div class="dss-card mb-4">
   <h6 class="mb-3">LGU Data (permits, zoning, closures, business density)</h6>
   <div class="table-responsive">
-    <table class="table table-sm align-middle">
+    <table class="table table-sm align-middle dss-admin-table">
       <thead><tr><th>Barangay</th><th>Source</th><th>Permits</th><th>Closures</th><th>Business Density</th><th>Uploaded By</th><th>Upload Date</th><th></th></tr></thead>
       <tbody>
         {% for d in lgu_rows %}
@@ -57,14 +60,17 @@
           <td>{{ d.permit_count if d.permit_count is not none else '—' }}</td>
           <td>{{ d.closure_records if d.closure_records is not none else '—' }}</td>
           <td>{{ d.business_density if d.business_density is not none else '—' }}</td>
-          <td>{{ d.uploader.email if d.uploader else '—' }}</td>
-          <td class="text-muted small">{{ d.upload_date.strftime('%b %d, %Y') if d.upload_date else '—' }}</td>
-          <td>
-            <form method="POST" action="{{ url_for('admin.delete_lgu_data', lgu_id=d.lgu_id) }}"
-                  onsubmit="return confirm('Delete this LGU data row? Any forecast built on it is deleted too.');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="btn btn-sm btn-outline-danger">Delete</button>
-            </form>
+          <td class="text-break">{{ d.uploader.email if d.uploader else '—' }}</td>
+          <td class="dss-meta">{{ d.upload_date.strftime('%b %d, %Y') if d.upload_date else '—' }}</td>
+          <td class="text-end">
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    data-bs-toggle="modal" data-bs-target="#reasonModal"
+                    data-action="{{ url_for('admin.archive_lgu_data', lgu_id=d.lgu_id) }}"
+                    data-subject="LGU data: {{ d.barangay }} ({{ d.source }})"
+                    data-title="Archive LGU data row" data-verb="Archive" data-tone="danger"
+                    data-note="It stops counting in every analysis right away. Forecasts built on it are kept. You can restore it later.">
+              <i class="bi bi-archive"></i> Archive
+            </button>
           </td>
         </tr>
         {% else %}
@@ -75,10 +81,10 @@
   </div>
 </div>
 
-<div class="dss-card">
+<div class="dss-card mb-4">
   <h6 class="mb-3">Market Data (competitor / demand snapshots)</h6>
   <div class="table-responsive">
-    <table class="table table-sm align-middle">
+    <table class="table table-sm align-middle dss-admin-table">
       <thead><tr><th>Industry</th><th>Location</th><th>Source</th><th>Competitors</th><th>Success Rate</th><th>Date Recorded</th><th></th></tr></thead>
       <tbody>
         {% for m in market_rows %}
@@ -88,13 +94,16 @@
           <td><span class="badge bg-light text-dark">{{ m.source }}</span></td>
           <td>{{ m.competitor_count if m.competitor_count is not none else '—' }}</td>
           <td>{{ m.historical_success_rate if m.historical_success_rate is not none else '—' }}</td>
-          <td class="text-muted small">{{ m.date_recorded.strftime('%b %d, %Y') if m.date_recorded else '—' }}</td>
-          <td>
-            <form method="POST" action="{{ url_for('admin.delete_market_data', market_id=m.market_id) }}"
-                  onsubmit="return confirm('Delete this market data row? Any forecast built on it is deleted too.');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="btn btn-sm btn-outline-danger">Delete</button>
-            </form>
+          <td class="dss-meta">{{ m.date_recorded.strftime('%b %d, %Y') if m.date_recorded else '—' }}</td>
+          <td class="text-end">
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    data-bs-toggle="modal" data-bs-target="#reasonModal"
+                    data-action="{{ url_for('admin.archive_market_data', market_id=m.market_id) }}"
+                    data-subject="Market data: {{ m.industry_type }} @ {{ m.location }} ({{ m.source }})"
+                    data-title="Archive market data row" data-verb="Archive" data-tone="danger"
+                    data-note="It stops counting in every analysis right away. Forecasts built on it are kept. You can restore it later.">
+              <i class="bi bi-archive"></i> Archive
+            </button>
           </td>
         </tr>
         {% else %}
@@ -104,4 +113,52 @@
     </table>
   </div>
 </div>
+
+<div class="dss-card" id="archived-records">
+  <h6 class="mb-1">Archived records</h6>
+  <p class="dss-meta mb-3">Not used in any analysis. Restore a row to bring it back.</p>
+  <div class="table-responsive">
+    <table class="table table-sm dss-admin-table">
+      <thead><tr><th>Record</th><th>Archived</th><th>Archived by</th><th>Reason</th><th></th></tr></thead>
+      <tbody>
+        {% for r in archived_records %}
+        {% set archived_local = local_time(r.archived_at) %}
+        <tr>
+          <td>
+            {{ r.label }}
+            <div class="dss-meta">{{ r.kind }}</div>
+          </td>
+          <td class="text-nowrap">
+            {{ archived_local.strftime('%b %d, %Y') }}
+            <div class="dss-meta">{{ archived_local.strftime('%I:%M %p') }} {{ tz_label }}</div>
+          </td>
+          <td>
+            {% if r.archived_by %}{{ r.archived_by.name }}<div class="dss-meta text-break">{{ r.archived_by.email }}</div>
+            {% else %}<span class="dss-meta">&mdash;</span>{% endif %}
+          </td>
+          <td class="text-break">{{ r.reason or '—' }}</td>
+          <td class="text-end">
+            <button type="button" class="btn btn-sm btn-outline-primary"
+                    data-bs-toggle="modal" data-bs-target="#reasonModal"
+                    data-action="{{ r.restore_url }}"
+                    data-subject="{{ r.kind }}: {{ r.label }}"
+                    data-title="Restore {{ r.kind }} row" data-verb="Restore" data-tone="primary"
+                    data-note="It will count in every analysis again.">
+              <i class="bi bi-arrow-counterclockwise"></i> Restore
+            </button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-4">Nothing archived.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include "admin/_reason_modal.html" %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
 {% endblock %}

@@ -1,0 +1,112 @@
+/* =====================================================================
+   Community forum (templates/forum/*)
+   =====================================================================
+   Pulled in through {% block extra_head %} by the forum pages only.
+
+   NO NEW COLOURS, same rule as admin.css: everything is spacing, type,
+   or an existing token (--dss-blue, --dss-blue-light, --ml-line,
+   --ml-surface-2, --ml-cyan, Bootstrap's own --bs-*), so dark mode
+   follows the theme without a block of its own.
+
+   Type is a touch larger than the dashboards'. The people reading this
+   are reading sentences, not scanning figures, and many of them are
+   not used to screens full of small print. */
+
+.forum-page { max-width: 1100px; }
+
+/* ---------------- channels ---------------- */
+.forum-channels { display: flex; flex-direction: column; gap: .15rem; }
+.forum-channel-link {
+  display: flex; align-items: center; gap: .55rem;
+  padding: .5rem .75rem; border-radius: .5rem;
+  color: var(--bs-body-color); text-decoration: none; font-size: .95rem;
+}
+.forum-channel-link:hover { background: var(--ml-surface-2); color: var(--bs-body-color); }
+.forum-channel-link.active { background: var(--dss-blue-light); color: var(--dss-blue); font-weight: 600; }
+.forum-channel-link .bi { width: 1.1rem; text-align: center; }
+
+/* Below the large breakpoint the channel list becomes a row of chips
+   that scrolls sideways, so the feed is not pushed a screen down on a
+   phone. */
+@media (max-width: 991.98px) {
+  .forum-channels { flex-direction: row; overflow-x: auto; padding-bottom: .25rem; }
+  .forum-channel-link { flex: 0 0 auto; border: 1px solid var(--ml-line); white-space: nowrap; font-size: .88rem; }
+}
+
+.forum-channel-intro { border-left: 3px solid var(--ml-cyan); padding-left: .75rem; }
+
+/* ---------------- post cards ---------------- */
+.forum-post-card { margin-bottom: .85rem; border: 1px solid var(--ml-line); }
+.forum-post-card:hover { box-shadow: 0 6px 18px rgba(0,0,0,.08); }
+.forum-is-pending { border-style: dashed; border-color: var(--bs-warning-border-subtle); }
+
+.forum-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .35rem;
+  font-size: .82rem; color: var(--bs-secondary-color); margin-bottom: .35rem;
+}
+.forum-channel-chip {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: .1rem .5rem; border-radius: 999px;
+  background: var(--dss-blue-light); color: var(--dss-blue);
+  text-decoration: none; font-weight: 600;
+}
+.forum-channel-chip:hover { color: var(--dss-blue-dark); }
+.forum-role { font-weight: 500; font-size: .68rem; }
+
+.forum-post-title { font-size: 1.1rem; font-weight: 600; margin: 0 0 .35rem; line-height: 1.35; }
+.forum-post-title a { color: var(--bs-body-color); text-decoration: none; }
+.forum-post-title a:hover { color: var(--dss-blue); text-decoration: underline; }
+
+.forum-excerpt { color: var(--bs-secondary-color); margin-bottom: .5rem; overflow-wrap: anywhere; }
+.forum-pending-note { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-size: .85rem; margin-bottom: .4rem; }
+.forum-status { font-weight: 500; }
+
+.forum-stats { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .82rem; color: var(--bs-secondary-color); }
+
+.forum-empty { padding: 2rem 1rem; }
+.forum-empty-icon { font-size: 2rem; color: var(--ml-cyan); }
+
+/* ---------------- a post ---------------- */
+.forum-post-heading { font-size: 1.45rem; font-weight: 600; margin: .25rem 0 .75rem; overflow-wrap: anywhere; }
+.forum-body { font-size: 1rem; line-height: 1.6; overflow-wrap: anywhere; }
+.forum-status-alert { font-size: .92rem; }
+
+.forum-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+  margin-top: 1rem; padding-top: .75rem; border-top: 1px solid var(--ml-line);
+}
+.forum-helpful-btn { border: 1px solid var(--ml-line); color: var(--bs-body-color); }
+.forum-helpful-btn:hover { border-color: var(--dss-blue); color: var(--dss-blue); }
+.forum-helpful-btn.is-marked { background: var(--dss-blue-light); border-color: var(--dss-blue); color: var(--dss-blue); }
+
+.forum-comment { margin-bottom: .6rem; padding: .85rem 1rem; border: 1px solid var(--ml-line); }
+.forum-comment .forum-body { font-size: .96rem; }
+.forum-comment-actions { display: flex; gap: .25rem; margin-top: .25rem; }
+.forum-comment-actions .btn-link, .forum-report-btn { padding-left: 0; padding-right: .5rem; text-decoration: none; font-size: .82rem; }
+.forum-comment-form { margin-top: 1rem; border: 1px solid var(--ml-line); }
+
+.forum-count { color: var(--bs-secondary-color); }
+.forum-count.is-near-limit { color: var(--bs-warning-text-emphasis); }
+
+/* ---------------- guidelines ---------------- */
+.forum-guidelines { border-top: 3px solid var(--ml-cyan); }
+.forum-guidelines ul { padding-left: 1.1rem; font-size: .9rem; }
+.forum-guidelines li { margin-bottom: .3rem; }
+
+/* ---------------- moderation ---------------- */
+.forum-mod-tabs { border-bottom: 1px solid var(--ml-line); margin-bottom: 1rem; }
+.forum-mod-tabs .badge { font-weight: 500; }
+.forum-mod-item { border: 1px solid var(--ml-line); }
+.forum-mod-body {
+  max-height: 16rem; overflow-y: auto;
+  padding: .6rem .75rem; border-radius: .4rem; background: var(--ml-surface-2);
+  font-size: .95rem;
+}
+.forum-mod-checks { display: grid; gap: .35rem; margin: .75rem 0 0; font-size: .85rem; }
+.forum-mod-checks > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; }
+.forum-mod-checks dt { min-width: 3.5rem; font-weight: 600; color: var(--bs-secondary-color); }
+.forum-mod-checks dd { margin: 0; display: flex; flex-wrap: wrap; gap: .3rem; align-items: baseline; }
+.forum-flag { background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); font-weight: 500; }
+.forum-report-list { margin-top: .75rem; padding: .5rem .75rem; border-left: 3px solid var(--bs-danger-border-subtle); font-size: .85rem; }
+.forum-report-list ul { padding-left: 1rem; }
+.forum-ai-card { border: 1px solid var(--ml-line); }

@@ -1,0 +1,104 @@
+/* app/static/css/map.css
+   ---------------------------------------------------------------------
+   The Saturation Map page's legend, caption and data note -- loaded ONLY
+   by templates/sme/saturation_map.html (its extra_head block). The map
+   itself, the tier-toggle buttons and the swatches are styled in the
+   site-wide style.css, because the Home page's mini map uses them too.
+
+   The page used to carry three paragraphs of provenance text and a
+   dense attribution block under the map. It now has one legend row, a
+   one-line caption, a folded "About this map's data" note and a single
+   line of credits; these rules keep that compact and quiet.
+
+   Colours: none new. Text and rules use Bootstrap's own variables (with
+   the same greys style.css uses as fallbacks), so the dark theme picks
+   them up without a separate block here. */
+
+/* One row: the colour filter on the left, "Show all / Hide all" on the
+   right; wraps onto two lines on a narrow screen. */
+.dss-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .25rem .75rem;
+  margin-top: .6rem;
+  font-size: .8rem;
+}
+/* `hidden` must win over display:flex -- map.js swaps the saturation and
+   density legends by toggling it. Bootstrap's reboot already does this
+   with !important; repeated here so it holds even if Bootstrap's CSS
+   fails to load. */
+.dss-map-legend[hidden] { display: none; }
+
+.dss-map-legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .15rem .25rem;
+}
+.dss-map-legend-label {
+  color: var(--bs-secondary-color, #6c757d);
+  margin-right: .15rem;
+}
+/* Density swatches are plain labels, not buttons, but get the same
+   padding as a tier toggle so the two legends line up when swapped. */
+.dss-map-legend-item {
+  display: inline-flex;
+  align-items: center;
+  padding: .15rem .5rem;
+}
+/* A little smaller than the site-wide 16px swatch: in a single dense
+   row the colour only has to be recognisable, not dominant. */
+.dss-map-legend .dss-legend-swatch { width: 12px; height: 12px; }
+
+.dss-map-legend-actions {
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+.dss-map-legend-actions .btn-link {
+  padding: 0;
+  font-size: inherit;
+  text-decoration: none;
+}
+.dss-map-legend-actions .btn-link:hover { text-decoration: underline; }
+
+.dss-map-caption {
+  margin: .5rem 0 .4rem;
+  font-size: .8rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+/* Folded provenance note. Native <details>, so it needs no script. */
+.dss-map-about {
+  font-size: .8rem;
+  color: var(--bs-secondary-color, #6c757d);
+  border-top: 1px solid var(--bs-border-color, #dee2e6);
+  padding-top: .4rem;
+}
+.dss-map-about summary {
+  cursor: pointer;
+  font-weight: 500;
+  width: max-content;
+  max-width: 100%;
+}
+.dss-map-about ul {
+  margin: .4rem 0 .2rem;
+  padding-left: 1.1rem;
+}
+.dss-map-about li { margin-bottom: .2rem; }
+
+/* Coordinate status on the left, required credits on the right, both in
+   small print on one line (two on a narrow screen). */
+.dss-map-footnote {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: .15rem 1rem;
+  margin-top: .5rem;
+  font-size: .72rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+.dss-map-footnote a { color: inherit; text-decoration: underline; }

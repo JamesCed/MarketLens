@@ -35,8 +35,10 @@ sections):
                                 upload, or an auto-generated placeholder
                                 -- see find_or_create_lgu_data)
   4. Market Saturation Index (0-100) <- trained RandomForestRegressor
-  5. Saturation cluster (Low/Moderate/High/Saturated) <- threshold cut
-     points discovered by K-Means during training
+  5. Saturation cluster (Low/Moderate/High/Saturated) <- FIXED threshold
+     cut points on the same 0-100 scale (app/ml/constants.py
+     CLUSTER_THRESHOLDS). Deliberately not the K-Means centroids -- see
+     the note there and in app/ml/train_model.py
   6. Confidence level (0-100) <- agreement between the Random Forest's
      individual trees (low spread across estimators = high confidence)
   7. Viability score (0-10, shown to users) <- derived from saturation
@@ -328,8 +330,15 @@ def models_are_trained():
 
 def _cluster_label_for(saturation_index):
     """Low / Moderate / High / Saturated from a 0-100 saturation_index,
-    using the cut points app/ml/train_model.py's K-Means run discovered
-    (see app/ml/constants.py CLUSTER_THRESHOLDS)."""
+    using the FIXED cut points in app/ml/constants.py CLUSTER_THRESHOLDS.
+
+    These are NOT the K-Means centroids. K-Means runs during training and
+    its cluster-to-label map is reported in training_report.json as
+    evidence the clustering step was implemented and evaluated, but
+    nothing reads it at inference: thresholding the regressor's own
+    output is deterministic and keeps every tier boundary on the same
+    0-100 scale as saturation_alert_threshold. See the note at the top
+    of app/ml/train_model.py."""
     value = float(saturation_index or 0)
     for threshold, label in zip(CLUSTER_THRESHOLDS, CLUSTER_LABELS_ORDERED):
         if value <= threshold:
@@ -999,8 +1008,16 @@ def generate_forecast_for_profile(sme_profile):
     early-warning Notification when the result crosses the
     saturation_alert_threshold system setting.
 
+    SUB-CATEGORY. When the plan names a sub-category (a bakery rather
+    than "Food and Beverage"), the stored saturation/viability are the
+    direct-competition-adjusted figures from subcategory_service; the
+    industry-wide figures travel in the recommendation JSON's
+    subcategory_analysis for the page to compare against. With no
+    measured sub-category count the adjustment is exactly nothing.
+
     The stored recommendation is generated from the SME's OWN input
-    business parameters (capital, employees, stage, revenue estimate)
+    business parameters (sub-category, offering, idea, price list,
+    capital, employees, stage)
     compared against the real businesses already on file for this
     industry+location (a market_data snapshot from find_or_create_market_data
     above, and -- when that snapshot is real Google data, not a
@@ -1023,6 +1040,22 @@ def generate_forecast_for_profile(sme_profile):
         build_recommendation_context,
         serialize_recommendation,
     )
+    from app.services.subcategory_service import adjusted_scores, direct_competition
+
+    subcategory_analysis = direct_competition(
+        sme_profile.industry_type,
+        getattr(sme_profile, "subcategory", None),
+        sme_profile.location,
+        scores["competitor_count"],
+    )
+    scores = adjusted_scores(sme_profile.industry_type, sme_profile.location, scores, subcategory_analysis)
+    if subcategory_analysis is not None:
+        subcategory_analysis = {
+            **subcategory_analysis,
+            "industry_saturation_index": scores["industry_saturation_index"],
+            "industry_viability_score": scores["industry_viability_score"],
+            "saturation_index": scores["saturation_index"],
+        }
 
     # A short, real sample of the businesses this plan would actually
     # be competing with -- only fetched when the market_data snapshot
@@ -1047,6 +1080,7 @@ def generate_forecast_for_profile(sme_profile):
         competitor_sample=competitor_sample,
         competitor_simulated=competitor_simulated,
         population=get_real_population(sme_profile.location) or 0,
+        subcategory_analysis=subcategory_analysis,
     )
     recommendation_text = serialize_recommendation(build_recommendation(context))
 

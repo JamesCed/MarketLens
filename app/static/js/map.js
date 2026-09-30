@@ -69,6 +69,52 @@
 // the URL (see dssDeepLinkLocation/dssDeepLinkIndustry below) so the
 // SME Home page's search bar (app/static/js/sme_search.js) can link
 // straight into a focused view of whatever the user just searched.
+//
+// PAGE SETTINGS -- every window.DSS_* value this file reads. Both pages
+// that load it (sme/saturation_map.html and sme/home.html) set these in
+// an inline <script> before map.js. The two pages share one file, so any
+// difference between them is expressed HERE, as a setting, rather than
+// as page-specific code paths nobody remembers exist.
+//
+//   Endpoint URLs (required -- set from url_for()):
+//     DSS_LOCATIONS_FORECAST_URL    /api/locations-forecast: one AI score per barangay
+//     DSS_BARANGAY_DETAIL_URL       /api/barangay-detail: detail panel / info popup
+//     DSS_BARANGAY_COORDS_URL       /api/barangay-coords: real barangay positions
+//     DSS_BARANGAY_CHOROPLETH_URL   /api/barangay-choropleth: the shaded cells
+//     DSS_TARLAC_CITY_BOUNDARY_URL  /api/tarlac-city-boundary: the bold city outline
+//
+//   Optional:
+//     DSS_DEFAULT_INDUSTRY    Industry to score when the page has no
+//                             #businessTypeSelect -- the Home mini map
+//                             passes the chosen plan's industry. Falls
+//                             back to "Food and Beverage".
+//     DSS_FOCUS_LOCATION      A barangay name (case-insensitive). Once the
+//                             map has loaded, that barangay is outlined,
+//                             centred, and its details opened -- in the
+//                             #detailPanel if the page has one, otherwise
+//                             in an info popup on the map. Every other
+//                             barangay stays visible (this is "here is
+//                             your plan's barangay", not an isolate).
+//                             Unset or empty = the normal city-wide view.
+//     DSS_SATURATION_MAP_URL  When set, the info popup ends with an
+//                             "Open in full map" link to the Saturation
+//                             Map, focused on that barangay and industry.
+//     DSS_DEMAND_SUMMARY      PSA FIES household-spending block shown in
+//                             the detail panel (see demandDetailHtml).
+//
+//   Set by the pages but NOT read here (other scripts use them):
+//     DSS_FORECAST_URL, DSS_PLACES_URL, DSS_CSRF_TOKEN.
+//
+// All of these except DSS_DEMAND_SUMMARY are read when they are needed,
+// not when this file loads, so a page may set them in any <script> that
+// runs before DOMContentLoaded. DSS_DEMAND_SUMMARY must be set before
+// map.js is loaded.
+//
+// PAGES WITHOUT A DETAIL PANEL (the Home mini map): clicking a barangay
+// opens its details in a popup on the map instead, and the page opens
+// on the whole city (or on DSS_FOCUS_LOCATION) rather than zooming into
+// the alphabetically-first barangay -- that default only exists to fill
+// a panel, and with no panel it just threw the view somewhere arbitrary.
 
 // Full 4-tier cluster palette (matches app/ml/constants.py
 // CLUSTER_THRESHOLDS / CLUSTER_LABELS_ORDERED exactly -- these are the
@@ -134,7 +180,13 @@ let dssZonesVisible = true; // global "Hide Saturation" toggle -- gates the whol
 // here is hidden on the map but still counted in the barangay list, so
 // the filter never changes the underlying numbers.
 const dssVisibleTiers = { Low: true, Moderate: true, High: true, Saturated: true };
-let dssInfoWindow = null;
+// Two map overlays, with separate jobs (see "Hover tooltip + info popup"
+// below): a hover TOOLTIP that follows the cursor, and a pinned info
+// POPUP opened by a click (on pages with no detail panel) or by
+// DSS_FOCUS_LOCATION.
+let dssHoverTooltip = null;
+let dssHoverLocation = null; // whose content the tooltip currently holds
+let dssInfoPopup = null;
 let dssLocationsCache = [];
 let dssCoordsCache = {}; // { "Barangay Name": {lat, lng, source}, ... }
 // Whether loadCoords() has completed at least once. Kept separate from
@@ -147,6 +199,18 @@ let dssSelectedLocation = null;
 // hidden), or null when all barangays are showing. See the module
 // docstring above for the full click / double-click / search contract.
 let dssIsolatedLocation = null;
+// The DSS_FOCUS_LOCATION barangay, once resolved to its real name. Drawn
+// with the same bold outline as an isolated cell, but WITHOUT hiding the
+// others, so the plan's barangay stays findable among its neighbours.
+let dssFocusedLocation = null;
+// Bumped by every selection AND by "show all". A detail request that
+// comes back after either has happened is stale: it may still fill the
+// panel if it is for the barangay currently selected, but it must not
+// move the map or open a popup -- that would yank the view back to a
+// barangay the user has already moved on from (double-click-to-restore
+// used to do exactly that when the detail request was slower than the
+// double-click).
+let dssSelectSeq = 0;
 
 // Overlay mode: "saturation" (default, colours by AI saturation tier)
 // or "population" (colours by real PSA population density -- the
@@ -218,6 +282,34 @@ function applyDeepLinkIndustry() {
     (opt) => opt.value.toLowerCase() === dssDeepLinkIndustry.toLowerCase()
   );
   if (match) select.value = match.value;
+}
+
+// DSS_FOCUS_LOCATION, trimmed, or null when unset/blank/not a string --
+// read at use time (see PAGE SETTINGS at the top of this file).
+function focusLocationSetting() {
+  const value = window.DSS_FOCUS_LOCATION;
+  if (typeof value !== "string") return null;
+  return value.trim() || null;
+}
+
+// The full Saturation Map has a side panel for a barangay's details; the
+// Home mini map does not, and shows them in a popup on the map instead.
+// Checked on every call rather than once, because the panel is the only
+// thing that decides which of the two a page gets.
+function hasDetailPanel() {
+  return !!document.getElementById("detailPanel");
+}
+
+// Industry names reach this file from the database, where industry_type
+// is free text an SME can type -- so they are escaped before being put
+// into HTML, rather than trusted to be one of the known PSIC sections.
+function escapeHtml(value) {
+  return String(value === null || value === undefined ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function pillClass(cluster) {
@@ -468,6 +560,36 @@ function renderLocationTable(rows) {
   });
 }
 
+// Small, muted "(est.)" after a count that is a generated placeholder
+// rather than a real Google Places / LGU-DTI figure. Kept deliberately
+// quiet -- it is a disclosure, not a warning -- but never left off: the
+// "About this map's data" note on the Saturation Map promises it.
+const ESTIMATE_MARK =
+  ' <span class="text-muted" style="font-size:.72rem;font-weight:400;" ' +
+  'title="Estimated: no Google Places or LGU/DTI count on file for this industry here yet">(est.)</span>';
+
+const SUBHEADING_STYLE = "font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;";
+
+// The barangay's top industries by business count, ranked, as detail
+// rows -- shared by the Saturation Map's detail panel and the Home mini
+// map's info popup so the two can never disagree. The ranking itself is
+// done server-side (see api_controller._top_industries): which industry
+// is "top" is a finding, not presentation.
+function topIndustriesHtml(items) {
+  if (!Array.isArray(items) || !items.length) {
+    return '<div class="text-muted border-bottom py-1">No business counts on file yet</div>';
+  }
+  return items
+    .map(
+      (item, index) => `
+      <div class="d-flex justify-content-between align-items-baseline gap-2 border-bottom py-1" title="${escapeHtml(item.industry)}">
+        <span class="text-muted">${index + 1}. ${escapeHtml(item.label || item.industry)}</span>
+        <span class="text-nowrap"><strong>${Number(item.count).toLocaleString()}</strong>${item.is_estimated ? ESTIMATE_MARK : ""}</span>
+      </div>`
+    )
+    .join("");
+}
+
 function renderDetailPanel(detail) {
   const panel = document.getElementById("detailPanel");
   if (!panel) return;
@@ -504,10 +626,9 @@ function renderDetailPanel(detail) {
       ${isolateBtn}
     </div>
     <div class="small mb-3">
-      <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Total Businesses</span><strong>${detail.total_businesses}</strong></div>
-      <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Food Industry</span><strong>${detail.food_count}</strong></div>
-      <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Service Industry</span><strong>${detail.service_count}</strong></div>
-      <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Retail Industry</span><strong>${detail.retail_count}</strong></div>
+      <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Total Businesses</span><strong>${Number(detail.total_businesses || 0).toLocaleString()}</strong></div>
+      <div class="text-muted pt-2 pb-1" style="${SUBHEADING_STYLE}">Top industries here</div>
+      ${topIndustriesHtml(detail.top_industries)}
       <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Population</span><strong>${population}</strong></div>
       <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Population Density <span class="text-muted" style="font-weight:400;">(fixed)</span></span><strong>${density}</strong></div>
       <div class="d-flex justify-content-between py-1"><span class="text-muted">Saturation Score <span class="text-muted" style="font-weight:400;">(for ${detail.industry_type})</span></span><strong>${detail.saturation_index.toFixed(1)}%</strong></div>
@@ -525,7 +646,13 @@ function renderDetailPanel(detail) {
 
 async function selectLocation(location) {
   dssSelectedLocation = location;
+  const seq = ++dssSelectSeq;
   const businessType = currentBusinessType();
+  const usePopup = !hasDetailPanel();
+  // Close the previous barangay's popup now rather than when the new one
+  // opens: it is keepInView, so for as long as it stays open every map
+  // move below would be pulled back towards it.
+  if (usePopup) closeInfoPopup();
 
   let detail;
   try {
@@ -535,11 +662,43 @@ async function selectLocation(location) {
   } catch (err) {
     detail = null;
   }
-  if (detail && !detail.error) {
-    renderDetailPanel(detail);
-  }
+  const usable = detail && !detail.error && detail.location ? detail : null;
 
-  await focusMapOn(location);
+  // A different barangay was selected while this request was in flight:
+  // showing this older answer now would put the wrong barangay's figures
+  // on screen.
+  if (dssSelectedLocation !== location) return;
+  if (usable) renderDetailPanel(usable);
+
+  // Superseded by "show all" or a newer click -- see dssSelectSeq.
+  if (seq !== dssSelectSeq) return;
+  if (usePopup) {
+    // No animation here: the popup's auto-pan measures the map at the
+    // moment it opens, and mid-way through an animated zoom Leaflet still
+    // reports the OLD zoom -- so the pan would be computed for the wrong
+    // view and the popup could still land half outside a small map.
+    await focusMapOn(location, { animate: false });
+    if (seq === dssSelectSeq) openInfoPopup(location, usable);
+  } else {
+    await focusMapOn(location);
+  }
+}
+
+// DSS_FOCUS_LOCATION: outline the plan's barangay, centre on it and open
+// its details (panel or popup) exactly as a click would -- but without
+// isolating it, so the preview still shows how it compares with the
+// barangays around it. Matched case-insensitively against the real
+// names, since a plan's location is whatever the SME typed.
+function focusBarangay(name) {
+  const wanted = String(name || "").trim();
+  if (!wanted) return Promise.resolve();
+  const match = dssLocationsCache.find((r) => r.location.toLowerCase() === wanted.toLowerCase());
+  // Not one of the scored locations: still try it as typed, the same way
+  // the search bar does -- it just has no cell to outline.
+  const location = match ? match.location : wanted;
+  dssFocusedLocation = location;
+  applyTierVisibility();
+  return selectLocation(location);
 }
 
 // Explicit user action (map click, list/table click, search, or a deep
@@ -559,6 +718,11 @@ async function isolateAndSelect(location) {
 // "Show All" button, or searching the same name again all call this.
 function restoreAllLocations() {
   dssIsolatedLocation = null;
+  // Cancel any detail request still in flight (it must not zoom back in
+  // afterwards), and close the info popup BEFORE re-centring: it is
+  // keepInView, and would otherwise drag the map straight back to it.
+  dssSelectSeq += 1;
+  closeInfoPopup();
   applyTierVisibility();
   renderLocationList(dssLocationsCache);
   updateIsolationBanner();
@@ -594,12 +758,202 @@ function updateIsolationBanner() {
   wireShowAllButtons();
 }
 
-async function focusMapOn(location) {
+// `options.animate === false` jumps straight there -- see selectLocation()
+// for why the info-popup path needs that.
+async function focusMapOn(location, options) {
   if (!dssMap || !window.L) return;
   const coords = await loadCoords();
   const point = coords[location];
   if (!point) return;
-  dssMap.setView([point.lat, point.lng], 15);
+  dssMap.setView([point.lat, point.lng], 15, options && options.animate === false ? { animate: false } : undefined);
+}
+
+// ---- Hover tooltip + info popup: always fully inside the map ---------
+// The Home page's mini map is small (~420px tall), and its hover card
+// used to open ABOVE the cursor with no regard for the map's edge: over
+// the top half of the map the card was cut off, and the only way to read
+// it was to drag the map until the barangay sat near the bottom. Both
+// overlays below are now kept whole wherever the barangay is.
+//
+// "Inside the map" also means clear of the map's own controls, because
+// Leaflet draws controls ABOVE popups and tooltips: the "Powered by
+// Google" mark in the top-left corner (see addGoogleAttributionControl),
+// the zoom buttons in the top-right (moved there in dssInitMap so the
+// two no longer stack into one tall block), and the OpenStreetMap credit
+// along the bottom. These margins keep every card out from under all
+// three. [x, y] in pixels.
+const MAP_CLEAR_TOP_LEFT = [16, 48];
+const MAP_CLEAR_BOTTOM_RIGHT = [48, 24];
+const HOVER_GAP_PX = 12; // between the cursor and the hover card
+const TOOLTIP_CHROME_PX = 14; // Leaflet tooltip padding + border, both sides
+// A popup's tip, content margins and border sit OUTSIDE its maxHeight
+// box; subtracting them makes maxHeight mean "the whole popup fits".
+const POPUP_CHROME_PX = 52;
+
+// The hover card is never wider than half the map. Its direction is
+// "auto" -- Leaflet opens it on whichever side of the cursor faces the
+// map's centre -- so capped at half the width it always fits sideways,
+// even on a phone-width map.
+function hoverContentMaxWidth() {
+  const mapWidth = dssMap ? dssMap.getSize().x : 480;
+  const half = Math.floor(mapWidth / 2) - HOVER_GAP_PX - MAP_CLEAR_TOP_LEFT[0] - TOOLTIP_CHROME_PX;
+  return Math.max(120, Math.min(240, half));
+}
+
+function hoverTooltipHtml(row, color, isPopulationMode) {
+  const population = row.population
+    ? `<div>Population: <strong>${Number(row.population).toLocaleString()}</strong></div>`
+    : "";
+  const density = row.population_density
+    ? `<div>Density: <strong>${Number(row.population_density).toLocaleString()} /km&sup2;</strong></div>`
+    : "";
+  const modeLabel = isPopulationMode ? "Population density overlay" : displayLabelFor(row.cluster_label);
+  // Styled inline rather than by class: home.html does not load this
+  // page's stylesheet, and Leaflet's tooltip defaults to nowrap.
+  return `<div style="width:max-content;max-width:${hoverContentMaxWidth()}px;white-space:normal;font-size:.8rem;line-height:1.45;">
+      <div style="font-weight:600;font-size:.95rem;">${escapeHtml(row.location)}</div>
+      <div style="margin:.15rem 0 .3rem;">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${color};margin-right:.35rem;"></span>${modeLabel}
+      </div>
+      <div>Industry: <strong>${escapeHtml(row.industry_type)}</strong></div>
+      <div>Businesses: <strong>${Number(row.competitor_count).toLocaleString()}</strong></div>
+      ${population}
+      ${density}
+      <div style="color:#6c757d;font-size:.72rem;margin-top:.25rem;">Saturation ${row.saturation_index}% &middot; click to focus, double-click to show all</div>
+    </div>`;
+}
+
+function showHoverTooltip(row, color, isPopulationMode, evt) {
+  if (!dssMap || !dssHoverTooltip || !evt || !evt.latlng) return;
+  // Rebuild the card only when the cursor enters a different barangay,
+  // not on every pixel of movement inside the same one.
+  if (dssHoverLocation !== row.location) {
+    dssHoverTooltip.setContent(hoverTooltipHtml(row, color, isPopulationMode));
+    dssHoverLocation = row.location;
+  }
+  dssHoverTooltip.setLatLng(evt.latlng);
+  if (!dssMap.hasLayer(dssHoverTooltip)) dssHoverTooltip.openOn(dssMap);
+  keepHoverTooltipInside(evt.containerPoint);
+}
+
+function hideHoverTooltip() {
+  dssHoverLocation = null;
+  if (dssMap && dssHoverTooltip) dssMap.closeTooltip(dssHoverTooltip);
+}
+
+// Direction "auto" handles left/right; this handles up/down. A
+// left/right tooltip is centred vertically on the cursor, so near the top
+// or bottom edge half of it would hang outside -- shift it back in by
+// exactly the overhang. Measured from the rendered card, so it holds for
+// any content length.
+//
+// NOT autoPan, deliberately: a card that follows the cursor and pans the
+// map to fit would move the map under the mouse on every movement near
+// an edge -- the map would chase the cursor. Only the pinned info popup
+// (below), which opens once and stays put, auto-pans.
+function keepHoverTooltipInside(cursor) {
+  const el = dssHoverTooltip.getElement ? dssHoverTooltip.getElement() : null;
+  if (!el || !cursor) return;
+  const mapHeight = dssMap.getSize().y;
+  const half = el.offsetHeight / 2;
+  const top = cursor.y - half;
+  const bottom = cursor.y + half;
+  let dy = 0;
+  if (top < MAP_CLEAR_TOP_LEFT[1]) dy = MAP_CLEAR_TOP_LEFT[1] - top;
+  else if (bottom > mapHeight - MAP_CLEAR_BOTTOM_RIGHT[1]) dy = mapHeight - MAP_CLEAR_BOTTOM_RIGHT[1] - bottom;
+  dy = Math.round(dy);
+  const current = dssHoverTooltip.options.offset || [HOVER_GAP_PX, 0];
+  if (current[1] !== dy) {
+    dssHoverTooltip.options.offset = [HOVER_GAP_PX, dy];
+    dssHoverTooltip.update();
+  }
+}
+
+function closeInfoPopup() {
+  if (dssMap && dssInfoPopup) dssMap.closePopup(dssInfoPopup);
+  dssInfoPopup = null;
+}
+
+// The pinned card with a barangay's details, for pages with no detail
+// panel (the Home mini map). `detail` is the /api/barangay-detail answer,
+// or null if that request failed -- the card then falls back to the
+// figures the map already has for this barangay.
+function infoPopupHtml(location, detail, row) {
+  const d = detail || {};
+  const pick = (key) => {
+    if (d[key] !== undefined && d[key] !== null) return d[key];
+    if (row && row[key] !== undefined && row[key] !== null) return row[key];
+    return null;
+  };
+  const cluster = pick("cluster_label");
+  const industry = pick("industry_type") || currentBusinessType();
+  const saturation = pick("saturation_index");
+  const businesses = pick("competitor_count");
+  const population = pick("population");
+
+  const tierLine = cluster
+    ? `<div style="margin:.1rem 0 .4rem;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${CLUSTER_COLORS[cluster] || CLUSTER_COLORS.Moderate};margin-right:.35rem;"></span>${displayLabelFor(cluster)}</div>`
+    : "";
+  const industryLine =
+    saturation !== null
+      ? `<div class="mb-1">${escapeHtml(industry)}: <strong>${Number(saturation).toFixed(1)}%</strong> saturated` +
+        (businesses !== null ? ` &middot; <strong>${Number(businesses).toLocaleString()}</strong> businesses` : "") +
+        "</div>"
+      : "";
+  const populationLine =
+    population !== null
+      ? `<div class="d-flex justify-content-between gap-3 border-bottom py-1"><span class="text-muted">Population</span><strong>${Number(population).toLocaleString()}</strong></div>`
+      : "";
+  const topSection = detail
+    ? `<div class="text-muted pt-2 pb-1" style="${SUBHEADING_STYLE}">Top industries here</div>${topIndustriesHtml(detail.top_industries)}`
+    : "";
+  const fullMapLink = window.DSS_SATURATION_MAP_URL
+    ? `<a class="d-inline-block mt-2" href="${escapeHtml(window.DSS_SATURATION_MAP_URL)}?location=${encodeURIComponent(location)}&industry_type=${encodeURIComponent(industry)}">Open in full map &rarr;</a>`
+    : "";
+
+  return `<div style="line-height:1.45;">
+      <div style="font-weight:600;font-size:.95rem;">${escapeHtml(location)}</div>
+      ${tierLine}
+      ${industryLine}
+      ${populationLine}
+      ${topSection}
+      ${fullMapLink}
+    </div>`;
+}
+
+function openInfoPopup(location, detail) {
+  if (!dssMap || !window.L) return;
+  const point = dssCoordsCache[location];
+  if (!point) return; // can't be placed on the map -- nothing to point at
+  const row = dssLocationsCache.find((r) => r.location === location) || null;
+
+  // Sized from the map it is opening in, so the same code suits the full
+  // 500px map and the Home page's small one: never wider than the space
+  // between the side margins, never taller than the space between the top
+  // and bottom margins -- longer content scrolls inside the card instead.
+  const size = dssMap.getSize();
+  const maxWidth = Math.max(160, Math.min(260, size.x - MAP_CLEAR_TOP_LEFT[0] - MAP_CLEAR_BOTTOM_RIGHT[0] - 24));
+  const maxHeight = Math.max(96, size.y - MAP_CLEAR_TOP_LEFT[1] - MAP_CLEAR_BOTTOM_RIGHT[1] - POPUP_CHROME_PX);
+
+  hideHoverTooltip(); // a tap on a phone leaves the hover card up otherwise
+  dssInfoPopup = L.popup({
+    className: "dss-map-popup",
+    maxWidth,
+    minWidth: Math.min(200, maxWidth),
+    maxHeight,
+    // Pan the map just enough to show the whole card, stopping short of
+    // the controls (see MAP_CLEAR_*)...
+    autoPan: true,
+    autoPanPaddingTopLeft: MAP_CLEAR_TOP_LEFT,
+    autoPanPaddingBottomRight: MAP_CLEAR_BOTTOM_RIGHT,
+    // ...and keep it whole while it is open: dragging the map can no
+    // longer push half the card off the edge. Click the map (or the x)
+    // to dismiss it and explore freely.
+    keepInView: true,
+  })
+    .setLatLng([point.lat, point.lng])
+    .setContent(infoPopupHtml(location, detail, row))
+    .openOn(dssMap);
 }
 
 // Draws one choropleth polygon per barangay (see module docstring and
@@ -615,6 +969,10 @@ async function drawChoropleth(rows) {
     cellByName[f.properties.name] = f.geometry;
   });
 
+  // The cells are about to be replaced (new industry or overlay), so a
+  // hover card still showing the old figures would be wrong -- and the
+  // cell it belongs to won't fire a mouseout once it is removed.
+  hideHoverTooltip();
   dssPolygons.forEach(({ polygon }) => dssMap.removeLayer(polygon));
   dssPolygons = [];
   const tierCounts = { Low: 0, Moderate: 0, High: 0, Saturated: 0 };
@@ -642,36 +1000,8 @@ async function drawChoropleth(rows) {
 
     polygon.on("click", () => isolateAndSelect(row.location));
     polygon.on("dblclick", () => toggleIsolate(row.location));
-    polygon.on("mousemove", (evt) => {
-      const population = row.population
-        ? `<div>Population: <strong>${Number(row.population).toLocaleString()}</strong></div>`
-        : "";
-      const density = row.population_density
-        ? `<div>Density: <strong>${Number(row.population_density).toLocaleString()} /km&sup2;</strong></div>`
-        : "";
-      const modeLine = isPopulationMode
-        ? `<div style="margin:.15rem 0 .3rem;">
-             <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${color};margin-right:.35rem;"></span>
-             Population density overlay
-           </div>`
-        : `<div style="margin:.15rem 0 .3rem;">
-             <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${color};margin-right:.35rem;"></span>
-             ${displayLabelFor(row.cluster_label)}
-           </div>`;
-      dssInfoWindow.setContent(
-        `<div style="min-width:190px;line-height:1.45;">
-           <div style="font-weight:600;font-size:1rem;">${row.location}</div>
-           ${modeLine}
-           <div>Industry: <strong>${row.industry_type}</strong></div>
-           <div>Businesses: <strong>${Number(row.competitor_count).toLocaleString()}</strong></div>
-           ${population}
-           ${density}
-           <div style="color:#6c757d;font-size:.75rem;margin-top:.25rem;">Saturation ${row.saturation_index}% &middot; click to isolate, double-click to restore all</div>
-         </div>`
-      );
-      dssInfoWindow.setLatLng(evt.latlng).openOn(dssMap);
-    });
-    polygon.on("mouseout", () => dssMap.closePopup(dssInfoWindow));
+    polygon.on("mousemove", (evt) => showHoverTooltip(row, color, isPopulationMode, evt));
+    polygon.on("mouseout", hideHoverTooltip);
     dssPolygons.push({ polygon, location: row.location, cluster: row.cluster_label });
     if (row.cluster_label in tierCounts) tierCounts[row.cluster_label] += 1;
   }
@@ -688,11 +1018,15 @@ async function drawChoropleth(rows) {
 // per-tier filter apply as before. The per-tier filter only makes sense
 // in saturation mode -- in population mode every zone stays visible.
 // The isolated cell also gets a bolder, dark outline so it reads as
-// "focused" even though it's now the only shape on the map.
+// "focused" even though it's now the only shape on the map. So does the
+// DSS_FOCUS_LOCATION barangay while nothing is isolated -- the same
+// "this one" signal, just with its neighbours still showing.
 function applyTierVisibility() {
   if (!dssMap) return;
   dssPolygons.forEach(({ polygon, location, cluster }) => {
     const isIsolatedCell = dssIsolatedLocation !== null && location === dssIsolatedLocation;
+    const isFocusCell = dssIsolatedLocation === null && dssFocusedLocation !== null && location === dssFocusedLocation;
+    const outlined = isIsolatedCell || isFocusCell;
     const show = dssIsolatedLocation !== null
       ? isIsolatedCell
       : dssZonesVisible && (dssOverlayMode === "population" || dssVisibleTiers[cluster] !== false);
@@ -702,9 +1036,12 @@ function applyTierVisibility() {
       dssMap.removeLayer(polygon);
     }
     polygon.setStyle({
-      weight: isIsolatedCell ? 3 : 1,
-      color: isIsolatedCell ? "#111827" : "#ffffff",
+      weight: outlined ? 3 : 1,
+      color: outlined ? "#111827" : "#ffffff",
     });
+    // Drawn last, so the neighbouring cells' white edges can't paint over
+    // part of its bold outline.
+    if (outlined && show) polygon.bringToFront();
   });
 }
 
@@ -760,6 +1097,12 @@ function setupOverlaySwitch() {
     dssOverlayMode = select.value;
     if (satLegend) satLegend.hidden = dssOverlayMode !== "saturation";
     if (densityLegend) densityLegend.hidden = dssOverlayMode !== "population";
+    // The one-line caption under the map says what the shading means, so
+    // it has to change with the overlay too -- each variant is marked
+    // with the overlay it describes.
+    document.querySelectorAll("[data-overlay-caption]").forEach((el) => {
+      el.hidden = el.dataset.overlayCaption !== dssOverlayMode;
+    });
     drawChoropleth(dssLocationsCache);
   });
 }
@@ -884,9 +1227,16 @@ async function loadLocationsInner(businessType) {
     isolateAndSelect(dssIsolatedLocation);
   } else if (dssSelectedLocation) {
     selectLocation(dssSelectedLocation);
-  } else if (rows.length) {
+  } else if (focusLocationSetting()) {
+    // First load on a page that names a barangay to open on (the Home
+    // page passes the chosen plan's) -- see focusBarangay(). Later loads
+    // take the branch above, since this sets dssSelectedLocation.
+    focusBarangay(focusLocationSetting());
+  } else if (rows.length && hasDetailPanel()) {
     // Default view on first load: show ALL barangays, just populate
-    // the detail panel with the first one -- no isolation.
+    // the detail panel with the first one -- no isolation. Only where
+    // there IS a panel: without one this would just zoom the map into
+    // whichever barangay sorts first (see PAGE SETTINGS at the top).
     selectLocation(rows[0].location);
   }
 
@@ -950,6 +1300,9 @@ window.dssInitMap = function () {
     // Leaflet equivalent of the gestureHandling:"greedy" fix the Google
     // map needed, and here it is simply the default behavior.
     scrollWheelZoom: true,
+    // Leaflet's default zoom buttons are added below, top-RIGHT -- see
+    // the zoom control comment.
+    zoomControl: false,
   });
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -958,16 +1311,32 @@ window.dssInitMap = function () {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(dssMap);
 
-  // One reusable popup, positioned on hover -- the Leaflet counterpart
-  // of the single google.maps.InfoWindow this file used before.
-  dssInfoWindow = L.popup({
-    closeButton: false,
-    autoPan: false,
-    className: "dss-map-popup",
-    offset: [0, -4],
+  // Hover card: a Leaflet TOOLTIP (it used to be a popup) that follows
+  // the cursor. A tooltip, for two reasons:
+  //   * tooltips ignore the mouse, so the card can never slide under the
+  //     cursor and "steal" it -- which fired mouseout on the barangay and
+  //     made the old hover popup flicker; and
+  //   * Leaflet shows one popup at a time, and the pinned info popup
+  //     (openInfoPopup) needs to stay open while the mouse moves -- a
+  //     hover popup would have closed it on the first movement.
+  // Direction "auto" + keepHoverTooltipInside() keep it whole in any
+  // size of map.
+  dssHoverTooltip = L.tooltip({
+    direction: "auto",
+    offset: [HOVER_GAP_PX, 0],
+    className: "dss-map-tooltip",
+    opacity: 0.96,
   });
 
   addGoogleAttributionControl();
+
+  // Zoom buttons top-RIGHT rather than Leaflet's default top-left. The
+  // "Powered by Google" mark has to be top-left (see
+  // addGoogleAttributionControl), and the two stacked in one corner made
+  // a block ~110px tall that popups and tooltips slid underneath --
+  // Leaflet draws controls above both. One control per top corner keeps
+  // each corner shallow enough for MAP_CLEAR_* to step around.
+  L.control.zoom({ position: "topright" }).addTo(dssMap);
 
   setupSearchBar();
   setupHideSaturationToggle();
@@ -985,6 +1354,12 @@ window.dssInitMap = function () {
   // settles, and again on resize, is the standard fix.
   setTimeout(() => dssMap && dssMap.invalidateSize(), 0);
   window.addEventListener("resize", () => dssMap && dssMap.invalidateSize());
+  // The Home map grows to the height of the forecast panel beside it,
+  // and that panel settles only after its charts draw -- a size change
+  // no window resize announces. Watching the element itself covers it.
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => dssMap && dssMap.invalidateSize()).observe(mapEl);
+  }
 };
 
 // REQUIRED BY GOOGLE, AND DELIBERATELY AT THE TOP OF THE MAP.

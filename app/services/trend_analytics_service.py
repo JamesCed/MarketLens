@@ -458,21 +458,6 @@ def _last_n_month_labels(n, as_of=None):
     return [m.strftime("%b %Y") for m in _last_n_month_dates(n, as_of=as_of)]
 
 
-def _last_n_quarter_labels(n, as_of=None):
-    today = as_of or date.today()
-    q = (today.month - 1) // 3 + 1
-    year = today.year
-    labels = []
-    for _ in range(n):
-        labels.append(f"Q{q} {year}")
-        q -= 1
-        if q == 0:
-            q = 4
-            year -= 1
-    labels.reverse()
-    return labels
-
-
 def _industry_baseline_average(baseline, industry_type, field):
     values = [row[field] for row in baseline if row["industry_type"] == industry_type]
     return sum(values) / len(values) if values else 0.0
@@ -1237,8 +1222,8 @@ def get_market_quarterly_performance(industry_type=None, quarters=_QUARTERS_BACK
     """How the MARKET performed, quarter by quarter -- optionally for one
     industry.
 
-    This replaces a revenue chart that summed `monthly_revenue_est`
-    across registered business plans. On a real deployment that is one
+    This replaced a revenue chart that summed the (since removed)
+    monthly revenue estimate across registered business plans. On a real deployment that is one
     or two plans, so the line was flat at a fraction of a million pesos
     and said nothing about the market. What an LGU actually wants to see
     is how the *market* moved, so each quarter now reports:
@@ -1351,46 +1336,6 @@ def get_market_quarterly_performance(industry_type=None, quarters=_QUARTERS_BACK
         "has_real_history": any(measured),
         "measured_quarters": sum(1 for m in measured if m),
     }
-
-
-def get_quarterly_performance(industries):
-    """Last 5 quarters of estimated total revenue (Php millions) and a
-    quarter-over-quarter growth %. The CURRENT quarter's revenue is
-    REAL (sum of monthly_revenue_est x 3 across every real SmeProfile,
-    optionally filtered to the requested industry); earlier quarters,
-    before this deployment had that much real history, are filled with
-    a deterministic backward projection from that same real figure --
-    see this module's docstring, point 3. As more real quarters of
-    SmeProfile data accumulate, this automatically shifts from
-    "projected" to "real"."""
-    query = SmeProfile.query
-    if len(industries) == 1:
-        query = query.filter_by(industry_type=industries[0])
-    real_monthly_total = sum(float(p.monthly_revenue_est or 0) for p in query.all())
-    current_quarter_revenue = (real_monthly_total * 3) / 1_000_000  # Php millions
-
-    labels = _last_n_quarter_labels(_QUARTERS_BACK)
-    revenues = [0.0] * len(labels)
-    revenues[-1] = current_quarter_revenue
-    # Deterministic backward projection for quarters with no real
-    # SmeProfile history yet: each prior quarter is a fixed 8% below
-    # the one after it (a modest, documented growth-rate assumption,
-    # not a fitted trend) unless/until real data replaces it.
-    for i in range(len(revenues) - 2, -1, -1):
-        revenues[i] = round(revenues[i + 1] / 1.08, 2)
-    revenues[-1] = round(revenues[-1], 2)
-    if current_quarter_revenue == 0:
-        # No real SmeProfile revenue on file at all yet (fresh install)
-        # -- keep the series honestly at zero rather than inventing a
-        # revenue figure with nothing real behind it.
-        revenues = [0.0] * len(labels)
-
-    growth_rates = [0.0]
-    for i in range(1, len(revenues)):
-        prev = revenues[i - 1]
-        growth_rates.append(round(((revenues[i] - prev) / prev) * 100, 1) if prev else 0.0)
-
-    return {"labels": labels, "revenue_php_millions": revenues, "growth_rate_percent": growth_rates}
 
 
 def get_top_industries(baseline, monthly_trends):
@@ -1767,10 +1712,6 @@ def build_trend_report(industry_type=None, as_of=None,
     back-projections (see get_market_quarterly_performance), and the KPI
     cards report `measured: False` rather than a fabricated delta."""
     as_of = as_of or date.today().replace(day=1)
-    # Every industry is charted, not just the featured 8 -- the Monthly
-    # Industry Trends legend and the Industry Distribution pie now cover
-    # the same full list, so the two panels agree with each other.
-    industries = [industry_type] if industry_type else list(BUSINESS_TYPES)
 
     # Everything that moves with the chosen month, built once.
     period = build_trend_period(industry_type, as_of=as_of, months=months, quarters=quarters)
@@ -1790,7 +1731,6 @@ def build_trend_report(industry_type=None, as_of=None,
     return {
         "overview": overview,
         "industry_distribution": get_industry_distribution(latest_market),
-        "quarterly_performance": get_quarterly_performance(industries),
         # period / period_overview / monthly_trends / market_quarterly /
         # top_industries -- the month-dependent half, identical to what
         # /api/trend-period returns on its own.

@@ -17,9 +17,13 @@ see app/services/data_import_service.py.
 
 from datetime import datetime
 from app.extensions import db
+from app.models.archive import HiddenWhenArchived
 
 
-class LguData(db.Model):
+class LguData(HiddenWhenArchived, db.Model):
+    # Archived rather than deleted -- see app/models/archive.py. An archived
+    # row is invisible to every ordinary query, so it stops informing the
+    # scoring engine the moment it is archived, and it can be restored.
     __tablename__ = "lgu_data"
 
     lgu_id = db.Column(db.Integer, primary_key=True)

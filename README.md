@@ -148,7 +148,8 @@ forced some real design decisions — all deliberate, all explainable:
    "risks" JSON columns. `app/services/recommendation_service.py` builds a
    structured `{headline, opportunity_type, summary, reasons, risks,
    generated_by}` dict — grounded in the SME's own input parameters
-   (capital, employees, stage, revenue estimate) compared against the real
+   (sub-category, what they sell, what makes them different, price list,
+   capital, employees, stage) compared against the real
    businesses on file for that industry/location — and JSON-serializes it
    into that single column. `parse_recommendation()` reads it back out
    again on every page that shows it (Recommendations, Home, personal
@@ -177,6 +178,28 @@ are all still fully implemented — it changes HOW the data is shaped
 underneath, to match the database you're actually grading against.
 
 ---
+
+## 0.1 Revisions round (September 2026) — what changed
+
+From the panel's CHANGES-REVISIONS list, plus the audit trail, archive and
+revenue requests. Everything below is applied to an existing database
+automatically at start-up (`app/services/startup_migrations.py`); the same
+changes as plain MySQL, for the ERD, are in `sql/2026-09_revisions.sql`.
+
+| Change | Where |
+|---|---|
+| **Plan choice bar** on Home: every saved plan with its own market score, one click to switch (`/home?plan=<id>`, remembered per session, audited as `select_plan`) | `sme_controller.home`, `sme/home.html` |
+| **Mini map follows the chosen plan** (its industry, centred on its barangay), bigger and filling its card; popups stay inside the map | `sme/home.html`, `static/js/map.js` |
+| **Broader business parameters**: industry → sub-category, what you sell, "what makes you different" (read by the AI), optional menu / price list. One parser for sign-up, Add New Plan and Settings | `app/ml/subcategories.py`, `app/services/plan_params.py`, `shared/_plan_fields.html`, `static/js/plan_form.js` |
+| **Direct competition**: the score is adjusted by how dense the plan's sub-category is (measured by Places or the LGU permit register); with no measurement it is left exactly as the industry score and labelled "estimated" | `app/services/subcategory_service.py`, table `subcategory_market_data` |
+| **Monthly revenue removed** from every form; the ROI window is now built from the model alone (column kept, no longer read) | `location_opportunity_service.estimate_roi_timeframe` |
+| **First-time walkthrough** (asks once; interactive, plain-language steps per role; replay from the sidebar) | `onboarding_controller.py`, `static/js/tour.js`, `tour_steps.js` |
+| **Community forum** with keyword filter + moderator/AI approval, reports, moderation queue | `forum_controller.py`, `services/forum_moderation.py` |
+| **Interior look matches sign-in** (navy/cyan frame; prototype content colours unchanged; remove `dss-skin` from `<body>` in `base.html` to revert) | `static/css/style.css` (INTERIOR SKIN block) |
+| **Location by map** on Home (Pick on map), visible Industry type box, **Clear** | `static/js/location_picker.js`, `static/js/sme_search.js` |
+| **Saturation map**: cleaner text; barangay panel shows the top 3 industries there | `static/js/map.js`, `api_controller.barangay_detail` |
+| **Admin: archive, never delete** users and datasets (with a required reason; restore available); archived datasets drop out of every score | `admin_controller.py`, `app/models/archive.py` |
+| **Audit trail with the 5 W's** — who, what, when, where, why — with filters and CSV export | `app/utils/audit.py`, `admin/audit_log.html` |
 
 ## 1. Quick start
 
@@ -825,7 +848,7 @@ Change the colours in one place —
 
 There is also a search bar for
 any barangay + industry combination, a "Hide Saturation" toggle, a detail
-panel (Total Businesses / Food / Service / Retail counts / real 2024 PSA
+panel (Total Businesses / the three largest industries in the barangay / real 2024 PSA
 Population / Density Score / Est. Household Demand / Recommended Actions),
 and a scrollable "All Barangays" list. Business/competitor data plotted
 on the map still comes
@@ -1003,7 +1026,7 @@ talks to. It's already fully implemented — nothing to configure:
 | `GET /api/locations-forecast?industry_type=...` | map.js | one ephemeral AI score per known location, for that industry |
 | `GET /api/forecast?industry_type=&location=` | sme_search.js (SME Home search bar), map.js (deep links / unknown pins) | one ephemeral forecast, no DB write |
 | `GET /api/places/nearby?location=&industry_type=` | map.js | real (or simulated) competitor list for the detail panel |
-| `GET /api/barangay-detail?location=&industry_type=` | map.js (Saturation Map detail panel) | Total Businesses / Food / Service / Retail counts, real population, density score, recommended actions for one barangay |
+| `GET /api/barangay-detail?location=&industry_type=` | map.js (Saturation Map detail panel) | Total Businesses, the top 3 industries by business count, real population, density score, recommended actions for one barangay |
 | `GET /api/barangay-coords` | map.js | `{name: {lat, lng, source}}` for every known location -- the real, static PhilAtlas coordinates plus any live-geocoded fallback (section 5.2) |
 | `GET /api/barangay-choropleth` | map.js (Saturation Map choropleth) | a GeoJSON `FeatureCollection`, one `Polygon`/`MultiPolygon` cell per known barangay, clipped to Tarlac City's REAL boundary (see section 5.2's "From circles to a choropleth" and `app/services/choropleth_service.py`) |
 | `GET /api/tarlac-city-boundary` | map.js (Saturation Map choropleth) | Tarlac City's own real outline, as a single-feature GeoJSON `FeatureCollection` (OpenStreetMap, ODbL) |
@@ -1049,7 +1072,8 @@ row). Pipeline:
    users.
 8. **AI-Powered Recommendation** — `recommendation_service.py` builds the
    comparison: the SME's OWN input parameters from this step's
-   `sme_profile` (capital, employees, business stage, revenue estimate)
+   `sme_profile` (sub-category, offering, innovation idea, price list,
+   capital, employees, business stage -- monthly revenue is no longer collected)
    against a real competitor sample for this industry+location (from the
    `market_data` snapshot above, upgraded with real Google Places names
    when that snapshot isn't a simulated fallback) and this barangay's real

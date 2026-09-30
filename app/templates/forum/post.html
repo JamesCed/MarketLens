@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% import "forum/_macros.html" as m with context %}
+{% block title %}{{ post.title }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/forum.css') }}">
+{% endblock %}
+
+{% block content %}
+{% set is_mine = post.author_id == current_user.user_id %}
+{% set is_admin = current_user.is_admin() %}
+<div class="forum-page forum-thread">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb small mb-2">
+      <li class="breadcrumb-item"><a href="{{ url_for('forum.index') }}">Community</a></li>
+      <li class="breadcrumb-item"><a href="{{ url_for('forum.channel', slug=post.channel.slug) }}">{{ post.channel.name }}</a></li>
+    </ol>
+  </nav>
+
+  {# ---------------- status, for the author (and moderators) ---------------- #}
+  {% if post.status == 'pending' %}
+    <div class="alert alert-warning forum-status-alert" role="status">
+      <strong><i class="bi bi-hourglass-split" aria-hidden="true"></i> Waiting for approval.</strong>
+      {% if is_mine %}Only you can see this post until a moderator approves it.{% else %}Members can't see this post yet.{% endif %}
+      {% if review_messages %}
+        <ul class="mb-0 mt-1 small">
+          {% for line in review_messages %}<li>{{ line }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  {% elif post.status == 'rejected' %}
+    <div class="alert alert-secondary forum-status-alert" role="status">
+      <strong><i class="bi bi-x-circle" aria-hidden="true"></i> This post was not approved.</strong>
+      {% if post.moderation_note %}Reason: {{ post.moderation_note }}{% endif %}
+      {% if is_mine %}<div class="small mt-1">You're welcome to <a href="{{ url_for('forum.new_post', channel=post.channel.slug) }}">write a new post</a> with the changes.</div>{% endif %}
+    </div>
+  {% elif post.status == 'removed' %}
+    <div class="alert alert-danger forum-status-alert" role="status">
+      <strong><i class="bi bi-slash-circle" aria-hidden="true"></i> This post was removed by a moderator.</strong>
+      {% if post.moderation_note %}Reason: {{ post.moderation_note }}{% endif %}
+    </div>
+  {% endif %}
+
+  {# ---------------- the post ---------------- #}
+  <article class="dss-card forum-post-full mb-3">
+    <div class="forum-meta">
+      <a class="forum-channel-chip" href="{{ url_for('forum.channel', slug=post.channel.slug) }}">
+        <i class="bi bi-{{ post.channel.icon }}" aria-hidden="true"></i> {{ post.channel.name }}
+      </a>
+      <span aria-hidden="true">&middot;</span>
+      <span>{{ post.author.name }}</span> {{ m.role_badge(post.author) }}
+      <span aria-hidden="true">&middot;</span>
+      {{ m.when(post.created_at) }}
+    </div>
+    <h1 class="forum-post-heading">{{ post.title }}</h1>
+    <div class="forum-body">{{ forum_text(post.body) }}</div>
+
+    {% if post.status == 'approved' %}
+      <div class="forum-actions">
+        {% if is_mine %}
+          <span class="text-muted small"><i class="bi bi-hand-thumbs-up" aria-hidden="true"></i>
+            <span>{{ post.helpful_count }}</span> found this helpful</span>
+        {% else %}
+          <form method="POST" action="{{ url_for('forum.helpful', post_id=post.id) }}" data-forum-helpful class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm forum-helpful-btn {{ 'is-marked' if marked_helpful }}"
+                    aria-pressed="{{ 'true' if marked_helpful else 'false' }}">
+              <i class="bi {{ 'bi-hand-thumbs-up-fill' if marked_helpful else 'bi-hand-thumbs-up' }}" aria-hidden="true"></i>
+              Helpful <span class="badge rounded-pill text-bg-light" data-forum-helpful-count>{{ post.helpful_count }}</span>
+            </button>
+          </form>
+          {% if ('post', post.id) in reported %}
+            <span class="text-muted small"><i class="bi bi-flag-fill" aria-hidden="true"></i> You reported this</span>
+          {% else %}
+            <button type="button" class="btn btn-sm btn-link text-muted forum-report-btn"
+                    data-bs-toggle="modal" data-bs-target="#forumReportModal"
+                    data-action="{{ url_for('forum.report_post', post_id=post.id) }}" data-kind="post">
+              <i class="bi bi-flag" aria-hidden="true"></i> Report
+            </button>
+          {% endif %}
+        {% endif %}
+        {% if is_admin %}
+          <button type="button" class="btn btn-sm btn-outline-danger ms-auto"
+                  data-bs-toggle="modal" data-bs-target="#forumReasonModal"
+                  data-action="{{ url_for('forum.moderate', kind='post', item_id=post.id, action='remove') }}"
+                  data-title="Remove this post" data-verb="Remove" data-subject="{{ post.title }}">
+            <i class="bi bi-trash" aria-hidden="true"></i> Remove
+          </button>
+        {% endif %}
+      </div>
+    {% elif is_admin and post.status == 'pending' %}
+      <div class="forum-actions">
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('forum.moderation') }}">Review in Moderation</a>
+      </div>
+    {% endif %}
+  </article>
+
+  {# ---------------- comments ---------------- #}
+  {% if post.status == 'approved' or comments %}
+  {% set n_approved = comments|selectattr('status', 'equalto', 'approved')|list|length %}
+  <section class="forum-comments" aria-labelledby="forumCommentsTitle">
+    <h2 class="h6 mb-3" id="forumCommentsTitle">
+      <i class="bi bi-chat" aria-hidden="true"></i> {{ n_approved }} comment{{ '' if n_approved == 1 else 's' }}
+    </h2>
+
+    {% for c in comments %}
+      <div class="dss-card forum-comment{{ ' forum-is-pending' if c.status == 'pending' }}" id="comment-{{ c.id }}">
+        <div class="forum-meta">
+          <span class="fw-semibold">{{ c.author.name }}</span> {{ m.role_badge(c.author) }}
+          <span aria-hidden="true">&middot;</span>
+          {{ m.when(c.created_at) }}
+          {% if c.status == 'pending' %}
+            {{ m.status_badge(c) }}
+            <span class="small">{{ 'Only you can see this until a moderator approves it.' if c.author_id == current_user.user_id else 'Members cannot see this yet.' }}</span>
+          {% endif %}
+        </div>
+        <div class="forum-body">{{ forum_text(c.body) }}</div>
+        {% if c.status == 'approved' %}
+          <div class="forum-comment-actions">
+            {% if c.author_id != current_user.user_id %}
+              {% if ('comment', c.id) in reported %}
+                <span class="text-muted small"><i class="bi bi-flag-fill" aria-hidden="true"></i> You reported this</span>
+              {% else %}
+                <button type="button" class="btn btn-sm btn-link text-muted forum-report-btn"
+                        data-bs-toggle="modal" data-bs-target="#forumReportModal"
+                        data-action="{{ url_for('forum.report_comment', comment_id=c.id) }}" data-kind="comment">
+                  <i class="bi bi-flag" aria-hidden="true"></i> Report
+                </button>
+              {% endif %}
+            {% endif %}
+            {% if is_admin %}
+              <button type="button" class="btn btn-sm btn-link text-danger"
+                      data-bs-toggle="modal" data-bs-target="#forumReasonModal"
+                      data-action="{{ url_for('forum.moderate', kind='comment', item_id=c.id, action='remove') }}"
+                      data-title="Remove this comment" data-verb="Remove"
+                      data-subject="Comment by {{ c.author.name }}">
+                <i class="bi bi-trash" aria-hidden="true"></i> Remove
+              </button>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+    {% else %}
+      <p class="text-muted small">No comments yet. Share what you know!</p>
+    {% endfor %}
+
+    {% if post.status == 'approved' %}
+      <form method="POST" action="{{ url_for('forum.add_comment', post_id=post.id) }}" class="dss-card forum-comment-form" id="comment-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="commentBody" class="form-label fw-semibold">Add a comment</label>
+        {% if comment_messages %}
+          <div class="alert alert-warning py-2" role="alert">
+            <strong>We couldn't post your comment yet.</strong>
+            <ul class="mb-0 small">{% for line in comment_messages %}<li>{{ line }}</li>{% endfor %}</ul>
+          </div>
+        {% endif %}
+        <textarea class="form-control" id="commentBody" name="body" rows="3" required
+                  minlength="{{ limits.comment_min }}" maxlength="{{ limits.comment_max }}"
+                  data-forum-count="commentCount"
+                  placeholder="Be kind and helpful.">{{ comment_text }}</textarea>
+        <div class="d-flex justify-content-between align-items-center mt-2 gap-2 flex-wrap">
+          <span class="form-text m-0">Please don't share phone numbers or personal info.
+            <span class="forum-count" id="commentCount" aria-live="polite"></span></span>
+          <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-send" aria-hidden="true"></i> Post comment</button>
+        </div>
+      </form>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+
+{% include "forum/_report_modal.html" %}
+{% if is_admin %}{% include "forum/_reason_modal.html" %}{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/forum.js') }}"></script>
+{% endblock %}

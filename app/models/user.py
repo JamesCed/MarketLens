@@ -57,9 +57,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy.dialects.mysql import LONGTEXT
 
 from app.extensions import db, login_manager
+from app.models.archive import ArchivableMixin
 
 
-class User(UserMixin, db.Model):
+class User(ArchivableMixin, UserMixin, db.Model):
     __tablename__ = "user"
 
     user_id = db.Column(db.Integer, primary_key=True)
@@ -100,18 +101,33 @@ class User(UserMixin, db.Model):
     #       an early-warning notification is created. Defaults ON, since
     #       the warnings are one of the SME module's stated features.
     #
-    #   notify_recommendations / notify_weekly_trends / notify_newsletter
-    #       -> saved and honoured the moment something sends them, but
-    #       NOTHING SENDS THEM YET. email_service.py can only send a
-    #       registration verification code, and there is no scheduled
-    #       job in this project. They default OFF for that reason: an
-    #       account should not be silently opted in to mail that starts
-    #       arriving the day a digest job is written. The Settings page
-    #       labels them accordingly rather than implying they work.
+    #   notify_recommendations / notify_weekly_trends
+    #       -> REAL. app/services/market_alert_service.py detects
+    #       material movement in market_data and delivers both an
+    #       in-app Notification and an email through email_service.
+    #
+    #   notify_newsletter
+    #       -> saved, and nothing sends it. A monthly newsletter is
+    #       product news written by a person; there is no copy and no
+    #       author, and wiring it to send something auto-generated
+    #       would make an honest label into a false one. The Settings
+    #       page still marks this one as not sending.
+    #
+    #   All three default OFF: an account must not be silently opted in
+    #   to mail it never asked for. Only notify_saturation_change, a
+    #   stated SME-module feature, defaults ON.
     notify_recommendations = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     notify_weekly_trends = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     notify_saturation_change = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
     notify_newsletter = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+
+    # First-time walkthrough (see static/js/tour.js). NULL means the
+    # account has never been asked "is this your first time?" -- which is
+    # every account that existed before the walkthrough did, so each of
+    # them is asked exactly once. 'touring' while a walkthrough is in
+    # progress, then 'completed' or 'skipped'. A plain string so adding a
+    # state later needs no migration.
+    onboarding_state = db.Column(db.String(20), nullable=True)
 
     # Kept as an alias so older code and databases that used the
     # original name keep working after the rename.
@@ -145,7 +161,10 @@ class User(UserMixin, db.Model):
 
     @property
     def is_active(self):
-        return self.status == "active"
+        # An archived account cannot sign in whatever its status says:
+        # archiving is the admin's replacement for deletion, so it has to
+        # be at least as final as deletion was for access.
+        return self.status == "active" and self.archived_at is None
 
     def set_password(self, raw_password):
         self.password = generate_password_hash(raw_password)

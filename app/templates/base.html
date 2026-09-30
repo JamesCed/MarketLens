@@ -43,10 +43,20 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <!-- Our own overrides -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  {% if current_user.is_authenticated %}
+  <!-- First-time walkthrough: see shared/_onboarding.html -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tour.css') }}">
+  {% endif %}
 
   {% block extra_head %}{% endblock %}
 </head>
-<body class="dss-body">
+{#
+  dss-skin: the signed-in pages dressed in the sign-in page's look
+  (navy/cyan frame, the same card, button and heading treatment). Every
+  rule for it is scoped to body.dss-skin in style.css, so deleting this
+  one class puts the previous interior back exactly.
+#}
+<body class="dss-body{{ ' dss-skin' if current_user.is_authenticated }}">
 
 {#
   FLASH TOASTS SIT HERE, as a direct child of <body>, and not inside
@@ -82,6 +92,7 @@
       {% block content %}{% endblock %}
     </main>
   </div>
+  {% include "shared/_onboarding.html" %}
 {% else %}
   {% block auth_content %}{% endblock %}
 {% endif %}
@@ -103,5 +114,11 @@
 </script>
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 {% block extra_scripts %}{% endblock %}
+{% if current_user.is_authenticated %}
+<!-- After the page's own scripts on purpose: the tour measures the page
+     once it has been built (see whenReady() in tour.js). -->
+<script src="{{ url_for('static', filename='js/tour_steps.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tour.js') }}"></script>
+{% endif %}
 </body>
 </html>

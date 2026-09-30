@@ -25,7 +25,6 @@ from app.models import User, SmeProfile, MarketData, SystemSetting, PlanSave, Fo
 from app.services.location_opportunity_service import (
     estimate_roi_timeframe,
     rank_location_opportunities,
-    ASSUMED_NET_MARGIN,
     MINIMUM_RAMP_MONTHS,
     RECOMMENDABLE_TIERS,
     DEFAULT_LIMIT,
@@ -93,45 +92,41 @@ def test_detail_panel_still_shows_the_demand_figures():
 # ---------------------------------------------------------------------------
 
 
-def test_roi_uses_margin_not_raw_revenue():
-    """Capital / monthly REVENUE treats every peso of sales as profit,
-    which put a PHP 20,000 plan at "1 month". Recovery runs on margin."""
-    roi = estimate_roi_timeframe(
-        viability_score=8.0, saturation_index=50, residents_per_business=None,
-        city_median_depth=None, startup_capital=20000, monthly_revenue_est=25000,
-    )
-    naive_months = 20000 / 25000  # < 1 month, the old behaviour
-    assert roi["low_months"] > naive_months * 2
-    # With a 15% margin the midpoint is ~5.3 months, so the window
-    # should straddle that rather than sitting at 1.
-    expected_mid = 20000 / (25000 * ASSUMED_NET_MARGIN)
-    assert roi["low_months"] <= expected_mid <= roi["high_months"]
+def test_roi_takes_no_revenue_input():
+    """Monthly revenue is no longer collected, so the ROI window is the
+    model's alone -- the function cannot be handed a revenue figure."""
+    import inspect
+
+    params = inspect.signature(estimate_roi_timeframe).parameters
+    assert "monthly_revenue_est" not in params
+    assert "startup_capital" not in params
+    roi = estimate_roi_timeframe(8.0, 50, None, None)
+    assert roi["basis"] == "model"
 
 
 def test_roi_is_slower_in_a_saturated_market():
     """The whole point of calling it AI-derived: the model's saturation
     prediction has to actually move the number."""
-    common = dict(viability_score=5.0, residents_per_business=None, city_median_depth=None,
-                  startup_capital=500000, monthly_revenue_est=100000)
+    common = dict(viability_score=5.0, residents_per_business=None, city_median_depth=None)
     uncontested = estimate_roi_timeframe(saturation_index=15, **common)
     saturated = estimate_roi_timeframe(saturation_index=90, **common)
     assert saturated["low_months"] > uncontested["low_months"]
 
 
-def test_roi_falls_back_to_the_model_when_no_revenue_is_on_file():
-    roi = estimate_roi_timeframe(
-        viability_score=9.0, saturation_index=20, residents_per_business=None,
-        city_median_depth=None, startup_capital=0, monthly_revenue_est=0,
-    )
-    assert roi["basis"] == "model"
+def test_roi_is_faster_in_a_stronger_market():
+    roi = estimate_roi_timeframe(9.0, 20, None, None)
     assert roi["low_months"] >= 1
-    # A strong market should still come back faster than a weak one.
-    weak = estimate_roi_timeframe(1.0, 80, None, None, 0, 0)
+    weak = estimate_roi_timeframe(1.0, 80, None, None)
     assert roi["high_months"] < weak["high_months"]
 
 
+def test_roi_never_reports_faster_than_the_ramp_floor():
+    roi = estimate_roi_timeframe(10.0, 0, 5000, 100)
+    assert roi["low_months"] >= MINIMUM_RAMP_MONTHS
+
+
 def test_roi_always_returns_a_range_not_a_point():
-    roi = estimate_roi_timeframe(6.0, 40, 500, 300, 300000, 60000)
+    roi = estimate_roi_timeframe(6.0, 40, 500, 300)
     assert roi["high_months"] > roi["low_months"]
     assert roi["label"] == f"{roi['low_months']}-{roi['high_months']} months"
 
@@ -147,7 +142,7 @@ def sme_with_plan(app):
         user = _user("sme@example.com", "SME")
         db.session.add(SmeProfile(
             user_id=user.user_id, business_name="Kapepe", industry_type="Food and Beverage",
-            location="Santo Domingo", startup_capital=20000, monthly_revenue_est=25000,
+            location="Santo Domingo", startup_capital=20000,
             business_stage="startup",
         ))
         db.session.commit()
@@ -181,7 +176,7 @@ def test_every_card_carries_an_roi_timeframe(app):
         )
         for opp in result["opportunities"]:
             assert opp["roi_timeframe"].endswith("months")
-            assert opp["roi_basis"] in ("plan", "model")
+            assert opp["roi_basis"] == "model"
 
 
 def test_explore_more_returns_every_recommended_location(app):

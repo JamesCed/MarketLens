@@ -1563,3 +1563,293 @@ body.dss-body {
   background: rgba(96, 165, 250, .10);
   border-color: rgba(96, 165, 250, .28);
 }
+
+/* ---------------------------------------------------------------------
+   Broader business parameters (shared/_plan_fields.html)
+   The optional sub-plan: a collapsible menu / price list. Uses the
+   existing --dss-* tokens only -- no new colours.
+   --------------------------------------------------------------------- */
+.dss-subplan {
+  border: 1px dashed var(--dss-border, #d7dee8);
+  border-radius: 10px;
+  padding: .55rem .8rem;
+  background: var(--dss-gray-bg);
+}
+.dss-subplan > summary {
+  cursor: pointer; font-weight: 600; font-size: .88rem; list-style: none;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem;
+}
+.dss-subplan > summary::-webkit-details-marker { display: none; }
+.dss-subplan > summary::before {
+  content: "\F285"; font-family: "bootstrap-icons"; font-size: .75rem;
+  transition: transform .15s ease; display: inline-block; color: var(--dss-blue);
+}
+.dss-subplan[open] > summary::before { transform: rotate(90deg); }
+.dss-subplan-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 2rem;
+  gap: .4rem; align-items: center; margin-bottom: .35rem;
+}
+.dss-subplan-head { margin-bottom: .15rem; }
+@media (max-width: 420px) {
+  .dss-subplan-row { grid-template-columns: minmax(0, 1fr) 5.5rem 2rem; }
+}
+[data-bs-theme="dark"] .dss-subplan { border-color: #2b3746; background: #111a24; }
+
+/* Sub-category analysis on the forecast panel and Recommendations page. */
+.dss-subcat-compare { display: flex; flex-wrap: wrap; gap: .35rem .9rem; font-size: .82rem; }
+.dss-subcat-compare strong { font-variant-numeric: tabular-nums; }
+.dss-innovation-badge {
+  display: inline-flex; align-items: center; gap: .3rem; font-size: .75rem; font-weight: 700;
+  padding: .15rem .55rem; border-radius: 999px; background: var(--dss-blue-light); color: var(--dss-blue-dark);
+}
+
+/* ---------------------------------------------------------------------
+   Home page, revisions round: search row, plan choice bar, bigger map,
+   location picker. Existing --dss-* colours only.
+   --------------------------------------------------------------------- */
+.dss-home-search { max-width: 900px; }
+.dss-home-search-grid {
+  display: grid; gap: .75rem; align-items: end;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto;
+}
+.dss-home-search-actions { display: flex; gap: .5rem; }
+@media (max-width: 767.98px) {
+  .dss-home-search-grid { grid-template-columns: 1fr; }
+  .dss-home-search-actions > .btn { flex: 1 1 0; }
+}
+
+/* The choice bar: one chip per saved plan, each with its own score. */
+.dss-plan-chips {
+  display: flex; gap: .6rem; overflow-x: auto; padding-bottom: .25rem;
+  scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+}
+.dss-plan-chip {
+  flex: 0 0 auto; min-width: 190px; max-width: 260px; scroll-snap-align: start;
+  display: flex; flex-direction: column; gap: .2rem;
+  padding: .6rem .8rem; border-radius: .6rem; text-decoration: none; color: inherit;
+  border: 1px solid #dbe3ec; background: var(--dss-gray-bg);
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.dss-plan-chip:hover { border-color: var(--dss-blue); box-shadow: 0 4px 12px rgba(37,99,235,.12); color: inherit; }
+.dss-plan-chip:focus-visible { outline: 3px solid var(--dss-blue); outline-offset: 2px; }
+.dss-plan-chip.is-selected {
+  border-color: var(--dss-blue); background: var(--dss-blue-light);
+  box-shadow: inset 0 0 0 1px var(--dss-blue);
+}
+.dss-plan-chip-name { font-weight: 700; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dss-plan-chip-meta { font-size: .76rem; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dss-plan-chip-score { align-self: flex-start; font-size: .74rem; }
+.dss-plan-chip.is-selected .dss-plan-chip-name::before {
+  content: "\F26A"; font-family: "bootstrap-icons"; color: var(--dss-blue); margin-right: .3rem; font-weight: 400;
+}
+.dss-card-current { box-shadow: inset 0 0 0 2px var(--dss-blue), 0 1px 3px rgba(0,0,0,.08); }
+
+/* The Home map fills its card, so it is as tall as the forecast panel
+   beside it -- no dead band underneath -- and never shorter than 440px. */
+#dss-map.dss-mini-map.dss-home-map { height: auto; min-height: 440px; flex: 1 1 auto; border-radius: .5rem; }
+@media (max-width: 991.98px) {
+  #dss-map.dss-mini-map.dss-home-map { min-height: 380px; }
+}
+.dss-legend-inline { display: flex; flex-wrap: wrap; gap: .35rem 1rem; align-items: center; }
+.dss-legend-inline .dss-legend-swatch { width: 12px; height: 12px; margin-right: .3rem; }
+
+/* Location picker maps. */
+.dss-location-picker-map { height: 280px; border-radius: .5rem; border: 1px solid #dbe3ec; }
+.dss-location-picker-map-lg { height: min(60vh, 460px); }
+
+[data-bs-theme="dark"] .dss-plan-chip { background: #111a24; border-color: #2b3746; }
+[data-bs-theme="dark"] .dss-plan-chip.is-selected { background: var(--dss-blue-light); border-color: var(--dss-blue); }
+[data-bs-theme="dark"] .dss-plan-chip-meta { color: #93a4b8; }
+[data-bs-theme="dark"] .dss-location-picker-map { border-color: #2b3746; }
+
+/* =====================================================================
+   INTERIOR SKIN (body.dss-skin) -- revision MINOR 1
+   ---------------------------------------------------------------------
+   The signed-in pages now wear the sign-in page's look: the same navy
+   and cyan frame, the same soft-cornered cards with a layered shadow,
+   the same heavy, tightly-tracked headings and glowing primary button.
+
+   WHAT DOES NOT CHANGE: the prototype's working colours. Content stays
+   on white cards over the light page, the primary action stays the
+   prototype blue (--dss-blue), and the saturation tier colours on maps,
+   pills and legends are untouched -- they encode meaning. Only the FRAME
+   (sidebar, hero banner, footer bar) takes the brand navy that the
+   sign-in page and the logo already use.
+
+   Everything is scoped to body.dss-skin (set in base.html for signed-in
+   pages), so removing that class restores the previous interior.
+   ===================================================================== */
+
+/* ---- Sidebar: the sign-in page's navy, with its cyan accent ---- */
+body.dss-skin .dss-sidebar {
+  background:
+    radial-gradient(420px 260px at 0% 0%, rgba(92,207,234,.16), transparent 70%),
+    linear-gradient(180deg, var(--ml-navy) 0%, var(--ml-navy-800) 100%);
+  border-right: 1px solid rgba(255,255,255,.06);
+  color: #dbe7f3;
+}
+body.dss-skin .dss-sidebar-header { border-bottom-color: rgba(255,255,255,.08); }
+body.dss-skin .dss-sidebar-sub { color: rgba(219,231,243,.55); }
+body.dss-skin .dss-sidebar .ml-brand-auto .ml-on-light { display: none; }
+body.dss-skin .dss-sidebar .ml-brand-auto .ml-on-dark { display: block; }
+body.dss-skin .dss-nav-link {
+  color: rgba(226,236,246,.8); border-radius: .6rem; font-weight: 500;
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+body.dss-skin .dss-nav-link i { color: var(--ml-cyan); opacity: .85; }
+body.dss-skin .dss-nav-link:hover { background: rgba(255,255,255,.07); color: #fff; }
+body.dss-skin .dss-nav-link.active {
+  background: rgba(92,207,234,.14); color: #fff; font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--ml-cyan);
+}
+body.dss-skin .dss-nav-link.active i { opacity: 1; }
+body.dss-skin .dss-nav-section { color: rgba(226,236,246,.45); font-weight: 700; }
+body.dss-skin .dss-sidebar-footer { border-top-color: rgba(255,255,255,.08); color: rgba(219,231,243,.55); }
+body.dss-skin .dss-sidebar-footer .dss-nav-link { color: rgba(226,236,246,.72); }
+
+/* ---- Top bar: light glass, like the sign-in nav once it sticks ---- */
+body.dss-skin .dss-topbar {
+  /* Solid rather than blurred glass: backdrop-filter would make the bar
+     the containing block for any position:fixed child (see the note on
+     flash toasts in base.html). */
+  background: linear-gradient(180deg, #ffffff 0%, var(--ml-surface-2) 100%);
+  border-bottom: 1px solid var(--ml-line);
+}
+body.dss-skin .dss-topbar-title { font-weight: 700; color: var(--ml-ink); letter-spacing: -.005em; }
+
+/* ---- Cards: the sign-in card's corners and layered shadow ---- */
+body.dss-skin .dss-card {
+  border-radius: 14px;
+  border: 1px solid var(--ml-line);
+  box-shadow: 0 1px 2px rgba(13,27,42,.04), 0 10px 28px -16px rgba(13,27,42,.18);
+}
+body.dss-skin .dss-card:hover.dss-card-hover {
+  box-shadow: 0 2px 4px rgba(13,27,42,.05), 0 18px 36px -18px rgba(13,27,42,.28);
+  transform: translateY(-2px);
+}
+body.dss-skin .dss-card.dss-card-hover { transition: transform .18s ease, box-shadow .18s ease; }
+body.dss-skin .dss-card h5, body.dss-skin .dss-card h6 { font-weight: 700; letter-spacing: -.01em; color: var(--ml-ink); }
+
+/* ---- Headings: heavy and tight, as on the sign-in page ---- */
+body.dss-skin .dss-main h1, body.dss-skin .dss-main h2, body.dss-skin .dss-main h3, body.dss-skin .dss-main h4 {
+  font-weight: 800; letter-spacing: -.02em; color: var(--ml-ink);
+}
+
+/* ---- Buttons: the glowing primary, in the prototype's blue ---- */
+body.dss-skin .dss-main .btn { border-radius: .6rem; font-weight: 600; }
+body.dss-skin .btn-primary {
+  background: linear-gradient(135deg, var(--dss-blue) 0%, var(--dss-blue-dark) 100%);
+  border-color: transparent;
+  box-shadow: 0 10px 24px -14px rgba(37,99,235,.9);
+}
+body.dss-skin .btn-primary:hover, body.dss-skin .btn-primary:focus-visible {
+  background: linear-gradient(135deg, var(--dss-blue) 0%, var(--dss-blue-dark) 70%);
+  box-shadow: 0 14px 30px -14px rgba(37,99,235,1);
+}
+
+/* ---- Form fields: the sign-in card's fields ---- */
+body.dss-skin .dss-main .form-control, body.dss-skin .dss-main .form-select,
+body.dss-skin .modal .form-control, body.dss-skin .modal .form-select { border-color: #dbe3ec; border-radius: .55rem; }
+body.dss-skin .dss-main .input-group > .form-control, body.dss-skin .dss-main .input-group > .form-select,
+body.dss-skin .modal .input-group > .form-control { border-radius: 0; }
+body.dss-skin .dss-main .input-group > :first-child, body.dss-skin .modal .input-group > :first-child { border-top-left-radius: .55rem; border-bottom-left-radius: .55rem; }
+body.dss-skin .dss-main .input-group > :last-child:not(.list-group), body.dss-skin .modal .input-group > :last-child { border-top-right-radius: .55rem; border-bottom-right-radius: .55rem; }
+body.dss-skin .dss-main .input-group-text { background: var(--ml-surface-2); border-color: #dbe3ec; color: #64778c; }
+body.dss-skin .dss-main .form-label { font-weight: 600; color: #33445a; }
+body.dss-skin .modal-content { border-radius: 16px; border: 1px solid var(--ml-line); box-shadow: 0 30px 70px -30px rgba(13,27,42,.45); }
+
+/* ---- Hero banner: the sign-in hero, with its grid and glow ---- */
+/* No overflow:hidden here: the search suggestions list hangs below the
+   hero's bottom edge and must not be clipped. The decorations are
+   painted inside the box (inset: 0) instead. */
+body.dss-skin .dss-hero {
+  position: relative; isolation: isolate;
+  background: linear-gradient(135deg, var(--ml-navy) 0%, var(--ml-navy-700) 62%, var(--ml-navy-600) 100%);
+  border: 1px solid rgba(92,207,234,.18);
+  border-radius: 18px;
+  color: #fff;
+  box-shadow: 0 24px 50px -30px rgba(17,42,72,.8);
+}
+body.dss-skin .dss-hero::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit;
+  background-image:
+    linear-gradient(rgba(92,207,234,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(92,207,234,.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 95%); mask-image: linear-gradient(180deg, #000 0%, transparent 95%);
+}
+body.dss-skin .dss-hero::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit;
+  background:
+    radial-gradient(460px 300px at 100% 0%, rgba(92,207,234,.30), transparent 70%),
+    radial-gradient(380px 260px at 0% 100%, rgba(43,166,200,.22), transparent 70%);
+}
+body.dss-skin .dss-hero h2 { color: #fff; font-weight: 800; letter-spacing: -.025em; }
+body.dss-skin .dss-hero > p, body.dss-skin .dss-hero .text-muted { color: rgba(255,255,255,.74) !important; }
+body.dss-skin .dss-hero .form-label { color: rgba(255,255,255,.86); }
+body.dss-skin .dss-hero .form-control, body.dss-skin .dss-hero .form-select { border-color: transparent; }
+body.dss-skin .dss-hero .input-group-text { border-color: transparent; }
+body.dss-skin .dss-hero .btn-outline-primary { background: #fff; border-color: transparent; }
+body.dss-skin .dss-hero .btn-outline-primary:hover { background: var(--dss-blue-light); color: var(--dss-blue-dark); }
+body.dss-skin .dss-hero .btn-primary {
+  background: linear-gradient(135deg, var(--ml-cyan) 0%, var(--ml-cyan-600) 100%);
+  color: var(--ml-navy); box-shadow: 0 10px 26px -12px rgba(92,207,234,.85);
+}
+body.dss-skin .dss-hero .btn-light { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.25); color: #fff; }
+body.dss-skin .dss-hero .btn-light:hover { background: rgba(255,255,255,.18); color: #fff; }
+body.dss-skin .dss-hero .dss-card { color: var(--ml-ink); }
+body.dss-skin .dss-hero .dss-card h6 { color: var(--ml-ink); }
+body.dss-skin .dss-hero .dss-card .text-muted { color: #64748b !important; }
+
+/* ---- Footer bar: the same navy as the frame ---- */
+body.dss-skin .dss-home-footer {
+  background: linear-gradient(90deg, var(--ml-navy) 0%, var(--ml-navy-700) 100%);
+  border: 1px solid rgba(92,207,234,.14); border-radius: 14px;
+}
+
+/* ---- Small things the sign-in page does ---- */
+body.dss-skin .dss-industry-icon {
+  background: linear-gradient(135deg, var(--dss-blue) 0%, var(--dss-blue-dark) 100%);
+  box-shadow: 0 10px 22px -12px rgba(37,99,235,.9);
+}
+body.dss-skin .dss-main .table > thead th {
+  font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: #64778c; font-weight: 700;
+}
+
+/* ---- Dark theme: the frame goes a shade deeper; content as before ---- */
+[data-bs-theme="dark"] body.dss-skin .dss-sidebar {
+  background:
+    radial-gradient(420px 260px at 0% 0%, rgba(92,207,234,.10), transparent 70%),
+    linear-gradient(180deg, #0b1624 0%, #0f1f33 100%);
+  border-right-color: #1b2a3b;
+}
+[data-bs-theme="dark"] body.dss-skin .dss-topbar { background: linear-gradient(180deg, #131c26 0%, #0f1720 100%); border-bottom-color: #223040; }
+[data-bs-theme="dark"] body.dss-skin .dss-topbar-title { color: #e6edf5; }
+[data-bs-theme="dark"] body.dss-skin .dss-card { border-color: var(--ml-line); box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 30px -18px rgba(0,0,0,.7); }
+[data-bs-theme="dark"] body.dss-skin .dss-card h5, [data-bs-theme="dark"] body.dss-skin .dss-card h6,
+[data-bs-theme="dark"] body.dss-skin .dss-main h1, [data-bs-theme="dark"] body.dss-skin .dss-main h2, [data-bs-theme="dark"] body.dss-skin .dss-main h3,
+[data-bs-theme="dark"] body.dss-skin .dss-main h4 { color: #e6edf5; }
+[data-bs-theme="dark"] body.dss-skin .dss-hero {
+  background: linear-gradient(135deg, #0d2038 0%, #13304f 62%, #1a4263 100%);
+  border-color: rgba(92,207,234,.16);
+}
+[data-bs-theme="dark"] body.dss-skin .dss-hero .dss-card { color: #dbe5f0; }
+[data-bs-theme="dark"] body.dss-skin .dss-hero .dss-card h6 { color: #e6edf5; }
+[data-bs-theme="dark"] body.dss-skin .dss-main .form-label { color: #c3d3e5; }
+[data-bs-theme="dark"] body.dss-skin .dss-main .input-group-text { background: #1b2733; border-color: #2b3746; color: #8ba0b6; }
+[data-bs-theme="dark"] body.dss-skin .dss-main .form-control, [data-bs-theme="dark"] body.dss-skin .dss-main .form-select,
+[data-bs-theme="dark"] body.dss-skin .modal .form-control, [data-bs-theme="dark"] body.dss-skin .modal .form-select { border-color: #2b3746; }
+[data-bs-theme="dark"] body.dss-skin .modal-content { border-color: #26313d; }
+
+@media (prefers-reduced-motion: reduce) {
+  body.dss-skin .dss-card.dss-card-hover { transition: none; }
+  body.dss-skin .dss-card:hover.dss-card-hover { transform: none; }
+}
+/* ===== END INTERIOR SKIN ===== */
+
+/* The topbar shows the mark only on desktop (the sidebar has the full
+   lockup). In dark mode the brand's own "show the light wordmark" rule
+   out-ranked that and put the name in twice; this restores it. */
+@media (min-width: 901px) {
+  html[data-bs-theme="dark"] .dss-topbar-brand .ml-brand-word { display: none; }
+}

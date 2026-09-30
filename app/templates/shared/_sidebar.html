@@ -26,60 +26,70 @@
 
   <nav class="dss-nav">
     {% if current_user.is_sme() %}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.home' }}" href="{{ url_for('sme.home') }}">
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.home' }}" href="{{ url_for('sme.home') }}" data-tour="nav-home">
         <i class="bi bi-house-door"></i> Home
       </a>
     {% endif %}
 
     {% if current_user.is_lgu() or current_user.is_admin() %}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.dashboard' }}" href="{{ url_for('lgu.dashboard') }}">
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.dashboard' }}" href="{{ url_for('lgu.dashboard') }}" data-tour="nav-lgu-dashboard">
         <i class="bi bi-speedometer2"></i> LGU Dashboard
       </a>
     {% endif %}
 
-    <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.saturation_map' }}" href="{{ url_for('sme.saturation_map') }}">
+    <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.saturation_map' }}" href="{{ url_for('sme.saturation_map') }}" data-tour="nav-saturation-map">
       <i class="bi bi-map"></i> Saturation Map
     </a>
 
-    <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.trend_reports' }}" href="{{ url_for('sme.trend_reports') }}">
+    <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.trend_reports' }}" href="{{ url_for('sme.trend_reports') }}" data-tour="nav-trend-reports">
       <i class="bi bi-graph-up-arrow"></i> Trend Reports
     </a>
 
     {% if current_user.is_sme() %}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.recommendations' }}" href="{{ url_for('sme.recommendations') }}">
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.recommendations' }}" href="{{ url_for('sme.recommendations') }}" data-tour="nav-recommendations">
         <i class="bi bi-lightbulb"></i> Recommendations
       </a>
     {% endif %}
 
+    {# Every role can read and post; moderation is Admin-only and has
+       its own entry in the ADMIN section below. #}
+    <a class="dss-nav-link {{ 'active' if request.endpoint and request.endpoint.startswith('forum.') and request.endpoint != 'forum.moderation' }}"
+       href="{{ url_for('forum.index') }}" data-tour="nav-community">
+      <i class="bi bi-people-fill"></i> Community
+    </a>
+
     {% if current_user.is_lgu() or current_user.is_admin() %}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.government_upload' }}" href="{{ url_for('lgu.government_upload') }}">
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.government_upload' }}" href="{{ url_for('lgu.government_upload') }}" data-tour="nav-data-upload">
         <i class="bi bi-database-add"></i> Gov't Data Upload
       </a>
     {% endif %}
 
     {% if current_user.is_admin() %}
       <div class="dss-nav-section">ADMIN</div>
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.dashboard' }}" href="{{ url_for('admin.dashboard') }}">
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.dashboard' }}" href="{{ url_for('admin.dashboard') }}" data-tour="nav-admin-dashboard">
         <i class="bi bi-shield-check"></i> Admin Dashboard
       </a>
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.users' }}" href="{{ url_for('admin.users') }}">
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.users' }}" href="{{ url_for('admin.users') }}" data-tour="nav-users">
         <i class="bi bi-people"></i> Manage Users
       </a>
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.audit_log' }}" href="{{ url_for('admin.audit_log') }}">
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.audit_log' }}" href="{{ url_for('admin.audit_log') }}" data-tour="nav-audit">
         <i class="bi bi-journal-text"></i> Audit Trail
       </a>
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.datasets' }}" href="{{ url_for('admin.datasets') }}">
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.datasets' }}" href="{{ url_for('admin.datasets') }}" data-tour="nav-datasets">
         <i class="bi bi-hdd-stack"></i> Datasets
+      </a>
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'forum.moderation' }}" href="{{ url_for('forum.moderation') }}" data-tour="nav-moderation">
+        <i class="bi bi-shield-exclamation"></i> Moderation
       </a>
       {# bi-sliders, not a second bi-gear: personal "Settings" sits a few
          rows below, and the same icon twice in one list reads as the
          same destination. #}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.settings' }}" href="{{ url_for('admin.settings') }}">
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.settings' }}" href="{{ url_for('admin.settings') }}" data-tour="nav-system-settings">
         <i class="bi bi-sliders"></i> System Settings
       </a>
     {% endif %}
 
-    <a class="dss-nav-link {{ 'active' if request.endpoint == 'profile.settings' }}" href="{{ url_for('profile.settings') }}">
+    <a class="dss-nav-link {{ 'active' if request.endpoint == 'profile.settings' }}" href="{{ url_for('profile.settings') }}" data-tour="nav-settings">
       <i class="bi bi-gear"></i> Settings
     </a>
 
@@ -90,6 +100,14 @@
      without needing a label. It also replaces the old "TARLAC CITY LGU
      DEMO" caption, which said nothing a visitor could act on. #}
   <div class="dss-sidebar-footer">
+    {# Replays the first-time walkthrough from step 1 (static/js/tour.js
+       binds [data-tour-replay]). Help, like Support, so it lives down
+       here with it -- and it borrows .dss-nav-support so it looks like
+       Support and main.js closes the phone menu when it is pressed. #}
+    <button type="button" class="dss-nav-link dss-nav-support dss-nav-tour"
+            data-tour-replay data-tour="nav-tour">
+      <i class="bi bi-signpost-2"></i> Take the tour
+    </button>
     <button type="button" class="dss-nav-link dss-nav-support"
             data-bs-toggle="modal" data-bs-target="#supportModal">
       <i class="bi bi-question-circle"></i> Support

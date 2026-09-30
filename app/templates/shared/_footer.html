@@ -19,7 +19,8 @@
       🌐 PSA Data Source
     </a>
     <span>📊 DTI-Verified</span>
-    <span>💬 Community Forum</span>
+    {# Was a plain label that looked like a link and went nowhere. #}
+    <a href="{{ url_for('forum.index') }}" class="text-white text-decoration-none">💬 Community Forum</a>
     <button type="button" class="dss-footer-link" data-bs-toggle="modal" data-bs-target="#contactModal">
       📞 Contact Us
     </button>

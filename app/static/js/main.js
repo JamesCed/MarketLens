@@ -2,6 +2,21 @@
 // Shared behaviour used on every logged-in page: populates the
 // notification bell dropdown from GET /api/notifications.
 
+// Notification text is DATA, never markup. A notification can quote
+// something a person typed -- a forum post title, a moderator's reason
+// for rejecting it -- so interpolating n.message into innerHTML raw was
+// a stored-XSS hole: a post titled <img src=x onerror=...> would run
+// script in the moderator's browser the moment they opened the bell.
+// Everything interpolated below goes through escapeHtml first.
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   const menu = document.getElementById("notifDropdown");
   if (!menu) return;
@@ -19,8 +34,8 @@ document.addEventListener("DOMContentLoaded", function () {
             const icon = n.type === "early_warning" ? "bi-exclamation-triangle text-danger" : "bi-info-circle text-primary";
             return `<div class="dropdown-item-text py-2 border-bottom ${n.is_read ? "" : "bg-light"}">
                       <i class="bi ${icon} me-1"></i>
-                      <span class="small">${n.message}</span>
-                      <div class="text-muted" style="font-size:.7rem;">${n.created_at}</div>
+                      <span class="small">${escapeHtml(n.message)}</span>
+                      <div class="text-muted" style="font-size:.7rem;">${escapeHtml(n.created_at)}</div>
                     </div>`;
           })
           .join("");

@@ -1,0 +1,68 @@
+{#
+  shared/_onboarding.html
+  -------------------------
+  The first-time walkthrough's two pieces of markup, included once from
+  base.html for signed-in pages:
+
+  1. window.DSS_ONBOARDING -- what static/js/tour.js needs (this
+     account's walkthrough state, role, user id and the four endpoint
+     URLs). Built by the context processor in
+     app/controllers/onboarding_controller.py and written with |tojson,
+     which escapes it safely for a <script> block. Rendered on EVERY
+     signed-in page, whatever the state: a tour in progress resumes on
+     each page load, and "Take the tour" in the sidebar has to work for
+     people who finished or skipped it long ago.
+
+  2. "Welcome to MarketLens! Is this your first time here?" -- ONLY for
+     an account that has never been asked (onboarding_state is NULL),
+     and never on an error page. Rendered `hidden`; tour.js reveals it.
+     If the script fails to load, nobody is left facing a dialog whose
+     buttons do nothing.
+
+  The one-line summary is per role because the three roles use
+  MarketLens for different things, and "what is this for?" is the
+  first question the client asked the prompt to answer.
+#}
+{% if DSS_ONBOARDING %}
+<script>window.DSS_ONBOARDING = {{ DSS_ONBOARDING|tojson }};</script>
+
+{% if DSS_ONBOARDING.state is none and not DSS_ONBOARDING.suppressed %}
+<div class="dss-tour-prompt" id="dssOnboardingPrompt" role="dialog" aria-modal="true"
+     aria-labelledby="dssOnboardingPromptTitle" aria-describedby="dssOnboardingPromptText" hidden>
+  <div class="dss-tour-prompt-card">
+    <div class="dss-tour-prompt-head">
+      {% with variant='light', size='md' %}{% include "shared/_brand.html" %}{% endwith %}
+      <div><span class="ml-eyebrow"><i class="bi bi-stars" aria-hidden="true"></i> Welcome{% if DSS_ONBOARDING.firstName %}, {{ DSS_ONBOARDING.firstName }}{% endif %}</span></div>
+    </div>
+    <div class="dss-tour-prompt-body">
+      <h2 class="dss-tour-prompt-title" id="dssOnboardingPromptTitle">Welcome to MarketLens! Is this your first time here?</h2>
+      <p class="dss-tour-prompt-text" id="dssOnboardingPromptText">
+        {% if current_user.is_sme() %}
+          MarketLens helps you find the best barangay in Tarlac City for your business &mdash; and warns you
+          where there are already too many of the same kind of shop.
+        {% elif current_user.is_lgu() %}
+          MarketLens shows the city which barangays are crowded with the same kind of business and which
+          ones need more, so you can plan and guide investors with real numbers.
+        {% else %}
+          MarketLens helps business owners and the city decide where businesses should open. As an
+          administrator, you keep its accounts, data and records in good order.
+        {% endif %}
+      </p>
+      <p class="dss-tour-prompt-note">
+        If you say yes, we&rsquo;ll walk you through each page and let you try things as we go.
+        It takes about 5 minutes, and you can stop anytime.
+      </p>
+      <div class="dss-tour-prompt-actions">
+        <button type="button" class="dss-tour-btn dss-tour-btn-primary dss-tour-btn-lg" data-onboarding-answer="yes">
+          Yes &mdash; show me around
+        </button>
+        <button type="button" class="dss-tour-btn dss-tour-btn-ghost dss-tour-btn-lg" data-onboarding-answer="no">
+          No, I&rsquo;ve used it before
+        </button>
+      </div>
+      <p class="dss-tour-prompt-error" role="alert" hidden></p>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endif %}

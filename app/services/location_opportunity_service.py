@@ -86,28 +86,10 @@ RECOMMENDABLE_TIERS = ("High Opportunity", "Moderate Opportunity")
 # -- worth saying out loud on a card that leans on the number.
 PLACES_RESULT_CEILING = 60
 
-# Net margin assumed when turning an SME's monthly REVENUE estimate into
-# the profit that actually pays back their capital.
-#
-# This is an ASSUMPTION, stated here in one editable place rather than
-# buried in a formula, because it changes the ROI figure a lot. The SME
-# input form asks for expected monthly revenue, not profit -- and
-# treating revenue as if it were profit is what made a PHP 20,000 plan
-# report a 1-month ROI. 15% is a conservative middle for a small
-# Philippine retail/food operation after cost of goods, rent, utilities
-# and wages; a high-margin service business runs well above it and a
-# thin-margin grocery below. If you have a real figure for your sector,
-# change it here. The UI states that the ROI window assumes a net
-# margin, so the number is never presented as a measured return.
-ASSUMED_NET_MARGIN = 0.15
-
 # No new business earns its steady-state revenue in month one: there is
 # fit-out, permits, and the weeks it takes for customers to find you. So
 # the ROI window never reports faster than this, however favourable the
-# arithmetic looks. Without it, an SME who enters a small capital and an
-# optimistic monthly revenue gets told "1 month", which is not a
-# forecast, it is their own optimism handed back to them. Also a stated
-# assumption, editable here.
+# model's scores look. A stated assumption, editable here.
 MINIMUM_RAMP_MONTHS = 3
 
 
@@ -188,38 +170,33 @@ def _apply_opportunity_ranking(rows):
 
 
 def estimate_roi_timeframe(viability_score, saturation_index, residents_per_business,
-                           city_median_depth, startup_capital=None, monthly_revenue_est=None):
+                           city_median_depth):
     """The card's "ROI Timeframe" -- a months-to-return-on-investment
-    RANGE, derived from the model's own prediction for this barangay
-    rather than from a flat capital/revenue division.
+    RANGE, derived from the model's own prediction for this barangay.
 
-    WHY IT IS A MODEL OUTPUT AND NOT ARITHMETIC
-    Capital divided by monthly revenue is a payback period, not an ROI
-    timeframe: it assumes the business hits its revenue estimate from
-    month one, everywhere, regardless of how crowded the barangay is.
-    The same coffee shop plan does NOT recover its capital on the same
-    schedule in an uncontested barangay of 8,000 people and in a
-    saturated one -- and the saturation model is precisely the thing
-    this system has an opinion about. So the payback figure is treated
-    as a starting point and then adjusted by what the Random Forest
-    predicted for THIS industry in THIS barangay:
+    WHY THERE IS NO REVENUE INPUT
+    This used to divide the SME's capital by their monthly revenue
+    estimate. Monthly revenue is no longer collected: someone PLANNING a
+    business does not have that number, and asking for one invited a
+    guess that then drove this figure as though it had been measured.
+    Worse, capital / revenue is a payback period that assumes month-one
+    revenue everywhere, regardless of how crowded the barangay is -- and
+    the saturation model is precisely the thing this system has an
+    opinion about. So the window is built from the model alone:
 
-      * SATURATION stretches or compresses the timeline. A barangay the
-        model scores at 20% saturation ramps faster than one at 80%;
-        the multiplier is 1 + (saturation - 50)/100, clamped to
-        0.6x-1.8x so no single input can run away with the estimate.
+      * VIABILITY sets the base. 10/10 starts from ~6 months, 0/10 from
+        ~24.
+      * SATURATION stretches or compresses it. A barangay the model
+        scores at 20% ramps faster than one at 80%; the multiplier is
+        1 + (saturation - 50)/100, clamped to 0.6x-1.8x so no single
+        input can run away with the estimate.
       * MARKET DEPTH nudges it further. More residents per existing
-        business than the city median means each competitor is serving
-        a bigger slice, so a new entrant fills faster (up to 10%).
-      * VIABILITY is the fallback driver. With no capital/revenue on
-        file there is no payback figure at all, so the window is built
-        from the model's 0-10 viability score alone (a 9/10 barangay
-        starts from a shorter base than a 3/10 one).
+        business than the city median means each competitor serves a
+        bigger slice, so a new entrant fills faster (up to 10%).
 
-    Returned as a RANGE (-20%/+25% around the adjusted midpoint),
-    because a single-month figure would imply a precision this estimate
-    does not have. `basis` records which of the two paths produced it,
-    so the UI can say so.
+    Returned as a RANGE (-20%/+25% around the adjusted midpoint), because
+    a single-month figure would imply a precision this estimate does not
+    have. `basis` is always "model" and is kept so the UI can say so.
 
     This is an estimate built from a model prediction, not a measured
     return. It is labelled that way everywhere it appears.
@@ -238,25 +215,11 @@ def estimate_roi_timeframe(viability_score, saturation_index, residents_per_busi
         elif residents_per_business < city_median_depth * 0.5:
             market_factor *= 1.10
 
-    capital = float(startup_capital or 0)
-    revenue = float(monthly_revenue_est or 0)
-
-    if capital > 0 and revenue > 0:
-        # Capital divided by monthly REVENUE would assume every peso of
-        # sales is profit, which puts a PHP 20,000 plan at "1 month" and
-        # is simply wrong. Recovery runs on margin, not turnover, so the
-        # revenue estimate is discounted to an assumed net margin first.
-        midpoint = (capital / (revenue * ASSUMED_NET_MARGIN)) * market_factor
-        basis = "plan"  # built from the SME's own capital/revenue inputs
-    else:
-        # No payback figure available -- derive the window from the
-        # model's viability score. 10/10 -> ~6 months, 0/10 -> ~24.
-        midpoint = (24.0 - (viability * 1.8)) * market_factor
-        basis = "model"  # built from the model's prediction alone
+    midpoint = (24.0 - (viability * 1.8)) * market_factor
 
     low = max(MINIMUM_RAMP_MONTHS, int(round(midpoint * 0.8)))
     high = max(low + 1, int(round(midpoint * 1.25)))
-    return {"low_months": low, "high_months": high, "label": f"{low}-{high} months", "basis": basis}
+    return {"low_months": low, "high_months": high, "label": f"{low}-{high} months", "basis": "model"}
 
 
 def _opportunity_type_for(cluster_label):
@@ -334,10 +297,9 @@ def _scored_and_ranked(industry_type, locations):
     at the same industry get the same city-wide scores, and so does the
     same SME reloading the page, switching plans and back, or hitting
     "Explore more recommendations" (which re-scores the identical city
-    just to show more of it). Everything user-specific -- the ROI
-    window built from their own capital, "this is your current plan's
-    barangay", the prose -- is computed AFTER this, per request, from
-    these rows.
+    just to show more of it). Everything user-specific -- "this is your
+    current plan's barangay", the prose -- is computed AFTER this, per
+    request, from these rows.
 
     Keyed on the market_data fingerprint rather than a timeout, for the
     same reason as the trend caches: import rows or run a Places
@@ -559,10 +521,9 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
     """Score every barangay in `locations` for ONE industry and return
     the best `limit` of them as storyboard-shaped opportunity cards.
 
-    `sme_profile` (optional) is the SME's own plan -- when given, their
-    real capital/revenue inputs feed the per-card key metrics, so a card
-    answers "what would MY plan look like in this barangay", not a
-    generic one. `market_meta_by_location` optionally carries
+    `sme_profile` (optional) is the SME's own plan -- when given, the
+    cards mark its own barangay and quote its capital, so a card answers
+    "what would MY plan look like in this barangay", not a generic one. `market_meta_by_location` optionally carries
     {location: {"is_live": bool, "date_recorded": date}} so the cards can
     state the provenance of each competitor count without re-querying.
 
@@ -583,9 +544,6 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
     city = _city_context(rows)
     industry_label = short_industry_label(industry_type)
 
-    capital = getattr(sme_profile, "startup_capital", None) if sme_profile is not None else None
-    revenue = getattr(sme_profile, "monthly_revenue_est", None) if sme_profile is not None else None
-
     # Scoring is not recommending -- keep only the tiers an SME could
     # actually enter (see RECOMMENDABLE_TIERS). Everything else stays
     # counted in `scored_by_tier` below but is never offered as an
@@ -603,7 +561,7 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
         meta = market_meta_by_location.get(row["location"], {})
         roi = estimate_roi_timeframe(
             row["viability_score"], row["saturation_index"], row["residents_per_business"],
-            city["median_residents_per_business"], capital, revenue,
+            city["median_residents_per_business"],
         )
         opportunities.append(
             {

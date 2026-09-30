@@ -24,6 +24,7 @@
   asking for a number that has nowhere to go.
 #}
 
+{% from "shared/_plan_fields.html" import subcategory_field, offering_field, innovation_field, subplan_field %}
 {% set f = form or {} %}
 {% set chosen_role = f.get('role', 'sme') %}
 
@@ -120,7 +121,7 @@
           </div>
 
           {# ------------------- step 2 (SME only) -------------------- #}
-          <div class="ml-step" data-step="2" hidden>
+          <div class="ml-step" data-step="2" data-plan-form hidden>
             <div class="ml-auth-head">
               <h2>Your business</h2>
               <p>This becomes your first plan. You can edit it, or add more, any time.</p>
@@ -137,12 +138,20 @@
 
             <div class="mb-3">
               <label class="form-label" for="ml-industry">Industry type</label>
-              <select id="ml-industry" name="industry_type" class="form-select">
+              <select id="ml-industry" name="industry_type" class="form-select" data-plan-industry>
                 <option value="">Choose an industry&hellip;</option>
                 {% for bt in business_types %}
                   <option value="{{ bt }}" {{ 'selected' if f.get('industry_type') == bt else '' }}>{{ bt }}</option>
                 {% endfor %}
               </select>
+            </div>
+
+            <div class="mb-3">
+              {{ subcategory_field('ml', f.get('industry_type'), f.get('subcategory'), subcategories) }}
+            </div>
+
+            <div class="mb-3">
+              {{ offering_field('ml', f.get('product_offering')) }}
             </div>
 
             <div class="mb-3">
@@ -176,7 +185,7 @@
             </div>
 
             <div class="row g-3">
-              <div class="col-sm-4">
+              <div class="col-sm-6">
                 <label class="form-label" for="ml-capital">Startup capital</label>
                 <div class="input-group">
                   <span class="input-group-text">&#8369;</span>
@@ -184,24 +193,25 @@
                          min="0" step="1000" placeholder="500000" value="{{ f.get('startup_capital','') }}">
                 </div>
               </div>
-              <div class="col-sm-4">
+              <div class="col-sm-6">
                 <label class="form-label" for="ml-employees">Employees</label>
                 <input type="number" id="ml-employees" name="employee_count" class="form-control"
                        min="0" step="1" placeholder="3" value="{{ f.get('employee_count','') }}">
               </div>
-              <div class="col-sm-4">
-                <label class="form-label" for="ml-revenue">Monthly revenue</label>
-                <div class="input-group">
-                  <span class="input-group-text">&#8369;</span>
-                  <input type="number" id="ml-revenue" name="monthly_revenue_est" class="form-control"
-                         min="0" step="1000" placeholder="50000" value="{{ f.get('monthly_revenue_est','') }}">
-                </div>
-              </div>
             </div>
             <p class="ml-step-note">
               <i class="bi bi-info-circle"></i>
-              These last three are optional, but they sharpen the ROI estimate.
+              Capital and employees are optional. The ROI window comes from the market forecast itself,
+              so you do not need a revenue figure to get one.
             </p>
+
+            <div class="mb-3">
+              {{ innovation_field('ml', f.get('innovation_idea')) }}
+            </div>
+
+            <div class="mb-3">
+              {{ subplan_field('ml', offering_items) }}
+            </div>
 
             <div class="ml-step-actions">
               <button type="button" class="ml-btn ml-btn-outline-dark" data-go="prev">
@@ -301,6 +311,8 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<script>window.DSS_SUBCATEGORIES = {{ subcategories|tojson }};</script>
+<script src="{{ url_for('static', filename='js/plan_form.js') }}"></script>
 <script>
 // Show/hide password moved to static/js/main.js -- one copy, every page.
 
@@ -380,7 +392,7 @@
     // on the whole form would complain about fields the visitor has not
     // reached yet.
     if (delta > 0) {
-      const fields = [...steps[at].querySelectorAll("input, select")].filter(el => !el.disabled);
+      const fields = [...steps[at].querySelectorAll("input, select, textarea")].filter(el => !el.disabled);
       for (const el of fields) {
         if (!el.checkValidity()) { el.reportValidity(); return; }
       }

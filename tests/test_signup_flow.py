@@ -45,7 +45,9 @@ SME_SIGNUP = {
     "business_stage": "startup",
     "startup_capital": "250000",
     "employee_count": "3",
-    "monthly_revenue_est": "60000",
+    "subcategory": "coffee_shop",
+    "product_offering": "Brewed coffee and pastries",
+    "innovation_idea": "Kapampangan-style tsokolate batirol on the menu",
     "full_name": "Juan Dela Cruz",
     "email": "juan@example.com",
     "password": "password123",
@@ -79,7 +81,51 @@ def test_signup_creates_the_first_business_plan(app, client):
         assert profile.business_stage == "startup"
         assert float(profile.startup_capital) == 250000.0
         assert profile.employee_count == 3
-        assert float(profile.monthly_revenue_est) == 60000.0
+        assert profile.subcategory == "coffee_shop"
+        assert profile.product_offering == "Brewed coffee and pastries"
+        assert profile.innovation_idea.startswith("Kapampangan")
+        # Monthly revenue is no longer collected.
+        assert profile.monthly_revenue_est is None
+
+
+def test_signup_ignores_a_posted_monthly_revenue(app, client):
+    """An old cached copy of the form may still post it; it must not be
+    stored, because nothing can show or edit it any more."""
+    _signup(client, monthly_revenue_est="60000")
+    with app.app_context():
+        profile = SmeProfile.query.one()
+        assert profile.monthly_revenue_est is None
+
+
+def test_signup_page_has_no_revenue_field_and_has_the_new_fields(client):
+    body = client.get("/register").get_data(as_text=True)
+    assert 'name="monthly_revenue_est"' not in body
+    for name in ("subcategory", "product_offering", "innovation_idea", "offering_item"):
+        assert f'name="{name}"' in body
+    assert "window.DSS_SUBCATEGORIES" in body
+    assert "for a clearer and more accurate view of your plan" in body
+
+
+def test_signup_stores_the_optional_price_list(app, client):
+    client.post("/register", data={
+        **SME_SIGNUP,
+        "offering_item": ["Pandesal (10 pcs)", "Ensaymada", ""],
+        "offering_price": ["30", "", "99"],
+    }, follow_redirects=True)
+    with app.app_context():
+        profile = SmeProfile.query.one()
+        assert profile.offering_items == [
+            {"item": "Pandesal (10 pcs)", "price": 30.0},
+            {"item": "Ensaymada", "price": None},
+        ]
+
+
+def test_signup_drops_a_subcategory_from_another_industry(app, client):
+    """The industry changed after a sub-category was picked: score at the
+    industry level rather than refuse the whole form."""
+    _signup(client, subcategory="electrical_plumbing")
+    with app.app_context():
+        assert SmeProfile.query.one().subcategory is None
 
 
 def test_exactly_one_row_is_written(app, client):
@@ -136,7 +182,6 @@ def test_the_profile_guard_refuses_a_second_plan_for_the_same_account(app):
             "business_stage": "startup",
             "startup_capital": 1000.0,
             "employee_count": None,
-            "monthly_revenue_est": None,
             "registration_date": None,
         },
     }

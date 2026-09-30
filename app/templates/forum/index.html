@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% import "forum/_macros.html" as m with context %}
+{% block title %}{{ channel.name if channel else 'Community' }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/forum.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="forum-page">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1"><i class="bi bi-people-fill" aria-hidden="true"></i> Community</h1>
+      <p class="text-muted mb-0">Ask questions and share tips with other business owners in Tarlac City.</p>
+    </div>
+    <a class="btn btn-primary" href="{{ url_for('forum.new_post', channel=channel.slug if channel else None) }}">
+      <i class="bi bi-pencil-square" aria-hidden="true"></i> Write a post
+    </a>
+  </div>
+
+  {% if queue_size %}
+    <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+      <span><i class="bi bi-shield-exclamation" aria-hidden="true"></i>
+        {{ queue_size }} item{{ '' if queue_size == 1 else 's' }} waiting for review.</span>
+      <a class="btn btn-sm btn-outline-dark" href="{{ url_for('forum.moderation') }}">Open moderation</a>
+    </div>
+  {% endif %}
+
+  <div class="row g-3">
+    {# ---------------- channels ---------------- #}
+    <div class="col-lg-3">
+      <nav class="forum-channels" aria-label="Channels">
+        <a class="forum-channel-link {{ 'active' if not channel }}" href="{{ url_for('forum.index') }}"
+           {% if not channel %}aria-current="page"{% endif %}>
+          <i class="bi bi-grid" aria-hidden="true"></i> All posts
+        </a>
+        {% for c in channels %}
+          <a class="forum-channel-link {{ 'active' if channel and channel.id == c.id }}"
+             href="{{ url_for('forum.channel', slug=c.slug) }}"
+             {% if channel and channel.id == c.id %}aria-current="page"{% endif %}>
+            <i class="bi bi-{{ c.icon }}" aria-hidden="true"></i> {{ c.name }}
+          </a>
+        {% endfor %}
+      </nav>
+      <div class="d-none d-lg-block mt-3">
+        {% include "forum/_guidelines.html" %}
+      </div>
+    </div>
+
+    {# ---------------- feed ---------------- #}
+    <div class="col-lg-9">
+      <form class="forum-search mb-3" method="GET" role="search"
+            action="{{ url_for('forum.channel', slug=channel.slug) if channel else url_for('forum.index') }}">
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-search" aria-hidden="true"></i></span>
+          <input type="search" name="q" class="form-control" value="{{ search }}" maxlength="100"
+                 placeholder="Search posts{{ ' in ' ~ channel.name if channel }}" aria-label="Search posts">
+          <button class="btn btn-outline-primary" type="submit">Search</button>
+        </div>
+      </form>
+
+      {% if channel %}
+        <div class="forum-channel-intro mb-3">
+          <h2 class="h5 mb-1"><i class="bi bi-{{ channel.icon }}" aria-hidden="true"></i> {{ channel.name }}</h2>
+          <p class="text-muted mb-0">{{ channel.description }}</p>
+        </div>
+      {% endif %}
+
+      {% if search %}
+        <p class="small text-muted">
+          Showing posts that mention <strong>&ldquo;{{ search }}&rdquo;</strong>.
+          <a href="{{ url_for('forum.channel', slug=channel.slug) if channel else url_for('forum.index') }}">Clear search</a>
+        </p>
+      {% endif %}
+
+      {% for post in posts %}
+        {{ m.post_card(post, comment_counts.get(post.id, 0)) }}
+      {% else %}
+        <div class="dss-card forum-empty text-center">
+          <div class="forum-empty-icon" aria-hidden="true"><i class="bi bi-chat-heart"></i></div>
+          {% if search %}
+            <p class="mb-2">No posts match your search yet.</p>
+          {% else %}
+            <p class="mb-2">No posts here yet. Be the first to start a conversation!</p>
+          {% endif %}
+          <a class="btn btn-primary btn-sm" href="{{ url_for('forum.new_post', channel=channel.slug if channel else None) }}">Write a post</a>
+        </div>
+      {% endfor %}
+
+      {% if page > 1 or has_more %}
+        {% set base_args = {'q': search or None} %}
+        <nav class="d-flex justify-content-between mt-3" aria-label="More posts">
+          {% if page > 1 %}
+            <a class="btn btn-outline-secondary btn-sm"
+               href="{{ url_for(request.endpoint, slug=channel.slug if channel else None, page=page - 1, **base_args) }}">
+              <i class="bi bi-arrow-left" aria-hidden="true"></i> Newer posts</a>
+          {% else %}<span></span>{% endif %}
+          {% if has_more %}
+            <a class="btn btn-outline-secondary btn-sm"
+               href="{{ url_for(request.endpoint, slug=channel.slug if channel else None, page=page + 1, **base_args) }}">
+              Older posts <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
+          {% endif %}
+        </nav>
+      {% endif %}
+
+      <div class="d-lg-none mt-3">
+        {% with guidelines_id="forumGuidelinesTitleSm" %}{% include "forum/_guidelines.html" %}{% endwith %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

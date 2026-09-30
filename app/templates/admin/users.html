@@ -1,43 +1,139 @@
 {% extends "base.html" %}
 {% block title %}Manage Users{% endblock %}
 
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% macro role_badge(role) -%}
+  <span class="badge bg-{{ 'dark' if role=='Admin' else ('primary' if role=='SME' else 'success') }}">{{ (role or '')|upper }}</span>
+{%- endmacro %}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <h4 class="mb-0"><i class="bi bi-people"></i> Manage User Accounts</h4>
   <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createUserModal"><i class="bi bi-plus-lg"></i> New Account</button>
 </div>
 
-<div class="dss-card">
-  <div class="table-responsive">
-    <table class="table align-middle">
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th><th></th></tr></thead>
-      <tbody>
-        {% for u in users %}
-        <tr>
-          <td>{{ u.name }}</td>
-          <td>{{ u.email }}</td>
-          <td><span class="badge bg-{{ 'dark' if u.role=='Admin' else ('primary' if u.role=='SME' else 'success') }}">{{ u.role|upper }}</span></td>
-          <td>{% if u.is_active %}<span class="text-success">Active</span>{% else %}<span class="text-danger">Suspended</span>{% endif %}</td>
-          <td class="text-muted small">{{ u.created_at.strftime('%b %d, %Y') }}</td>
-          <td class="text-end">
-            <form method="POST" action="{{ url_for('admin.toggle_active', user_id=u.user_id) }}" class="d-inline">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="btn btn-sm btn-outline-secondary" {{ 'disabled' if u.user_id == current_user.user_id }}>
-                {{ 'Suspend' if u.is_active else 'Activate' }}
-              </button>
-            </form>
-            <form method="POST" action="{{ url_for('admin.delete_user', user_id=u.user_id) }}" class="d-inline"
-                  onsubmit="return confirm('Delete this account? This cannot be undone.');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="btn btn-sm btn-outline-danger" {{ 'disabled' if u.user_id == current_user.user_id }}>Delete</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<ul class="nav nav-underline dss-admin-tabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {{ 'active' if active_tab == 'current' }}" id="tab-current" data-bs-toggle="tab"
+            data-bs-target="#pane-current" type="button" role="tab" aria-controls="pane-current"
+            aria-selected="{{ 'true' if active_tab == 'current' else 'false' }}">
+      Active &amp; suspended <span class="badge rounded-pill text-bg-secondary ms-1">{{ users|length }}</span>
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {{ 'active' if active_tab == 'archived' }}" id="tab-archived" data-bs-toggle="tab"
+            data-bs-target="#pane-archived" type="button" role="tab" aria-controls="pane-archived"
+            aria-selected="{{ 'true' if active_tab == 'archived' else 'false' }}">
+      Archived <span class="badge rounded-pill text-bg-secondary ms-1">{{ archived_users|length }}</span>
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+  {# ------------------------------------------------ active & suspended #}
+  <div class="tab-pane fade {{ 'show active' if active_tab == 'current' }}" id="pane-current" role="tabpanel" aria-labelledby="tab-current">
+    <div class="dss-card">
+      <div class="table-responsive">
+        <table class="table align-middle dss-admin-table">
+          <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Joined</th><th></th></tr></thead>
+          <tbody>
+            {% for u in users %}
+            {% set is_self = u.user_id == current_user.user_id %}
+            {% set is_system = u.email == system_email %}
+            <tr>
+              <td>
+                {{ u.name }}{% if is_self %} <span class="dss-meta">(you)</span>{% endif %}
+                <div class="dss-meta text-break">{{ u.email }}</div>
+              </td>
+              <td>{{ role_badge(u.role) }}</td>
+              <td>{% if u.is_active %}<span class="text-success">Active</span>{% else %}<span class="text-danger">Suspended</span>{% endif %}</td>
+              <td class="dss-meta">{{ u.created_at.strftime('%b %d, %Y') }}</td>
+              <td class="text-end text-nowrap">
+                <button type="button" class="btn btn-sm btn-outline-secondary" {{ 'disabled' if is_self }}
+                        data-bs-toggle="modal" data-bs-target="#reasonModal"
+                        data-action="{{ url_for('admin.toggle_active', user_id=u.user_id) }}"
+                        data-subject="{{ u.name }} ({{ u.email }})"
+                        {% if u.is_active %}
+                        data-title="Suspend account" data-verb="Suspend" data-tone="warning"
+                        data-note="They won't be able to sign in until the account is activated again."
+                        {% else %}
+                        data-title="Activate account" data-verb="Activate" data-tone="primary"
+                        data-note="They will be able to sign in again."
+                        {% endif %}>
+                  {{ 'Suspend' if u.is_active else 'Activate' }}
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger" {{ 'disabled' if is_self or is_system }}
+                        {% if is_system %}title="The system account owns auto-generated data and can't be archived."{% endif %}
+                        data-bs-toggle="modal" data-bs-target="#reasonModal"
+                        data-action="{{ url_for('admin.archive_user', user_id=u.user_id) }}"
+                        data-subject="{{ u.name }} ({{ u.email }})"
+                        data-title="Archive account" data-verb="Archive" data-tone="danger"
+                        data-note="They won't be able to sign in. Their history is kept, and you can restore the account at any time.">
+                  <i class="bi bi-archive"></i> Archive
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-4">No accounts yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ------------------------------------------------------------ archived #}
+  <div class="tab-pane fade {{ 'show active' if active_tab == 'archived' }}" id="pane-archived" role="tabpanel" aria-labelledby="tab-archived">
+    <div class="dss-card">
+      <p class="dss-meta mb-3">Archived accounts can't sign in. Everything they did stays on record, and restoring brings the account back as it was.</p>
+      <div class="table-responsive">
+        <table class="table dss-admin-table">
+          <thead><tr><th>Name</th><th>Role</th><th>Archived</th><th>Archived by</th><th>Reason</th><th></th></tr></thead>
+          <tbody>
+            {% for u in archived_users %}
+            {% set by = archivers.get(u.archived_by) %}
+            {% set archived_local = local_time(u.archived_at) %}
+            <tr>
+              <td>
+                {{ u.name }}
+                <div class="dss-meta text-break">{{ u.email }}</div>
+              </td>
+              <td>{{ role_badge(u.role) }}</td>
+              <td class="text-nowrap">
+                {{ archived_local.strftime('%b %d, %Y') }}
+                <div class="dss-meta">{{ archived_local.strftime('%I:%M %p') }} {{ tz_label }}</div>
+              </td>
+              <td>
+                {% if by %}{{ by.name }}<div class="dss-meta text-break">{{ by.email }}</div>
+                {% elif u.archived_by %}<span class="dss-meta">Account #{{ u.archived_by }}</span>
+                {% else %}<span class="dss-meta">&mdash;</span>{% endif %}
+              </td>
+              <td class="text-break">{{ u.archive_reason or '—' }}</td>
+              <td class="text-end">
+                <button type="button" class="btn btn-sm btn-outline-primary"
+                        data-bs-toggle="modal" data-bs-target="#reasonModal"
+                        data-action="{{ url_for('admin.restore_user', user_id=u.user_id) }}"
+                        data-subject="{{ u.name }} ({{ u.email }})"
+                        data-title="Restore account" data-verb="Restore" data-tone="primary"
+                        data-note="{{ 'They will be able to sign in again.' if u.status == 'active' else 'The account was suspended before it was archived, so it comes back suspended.' }}">
+                  <i class="bi bi-arrow-counterclockwise"></i> Restore
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted py-4">No archived accounts.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
+
+{% include "admin/_reason_modal.html" %}
 
 <div class="modal fade" id="createUserModal" tabindex="-1">
   <div class="modal-dialog">
@@ -67,4 +163,8 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
 {% endblock %}

@@ -2,8 +2,9 @@
 app/services/recommendation_service.py
 -----------------------------------------
 Turns the numbers from forecasting_service.py -- PLUS the SME's own
-input business parameters (startup capital, employee count, business
-stage, monthly revenue estimate) compared against the real businesses
+input business parameters (industry and sub-category, what they sell,
+what makes them different, an optional price list, startup capital,
+employee count, business stage) compared against the real businesses
 already on file for that industry/location (seeded market_data and/or
 live Google Places API results) -- into the structured recommendation
 the capstone paper's storyboard calls for: a headline, an opportunity
@@ -47,7 +48,8 @@ from app.models import SystemSetting
 # out of storage -- has exactly these keys, so every template that
 # reads one (recommendations.html, home.html) can rely on the shape
 # without checking for missing pieces.
-_KEYS = ("headline", "opportunity_type", "summary", "reasons", "risks", "generated_by")
+_KEYS = ("headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
+         "subcategory_analysis", "innovation")
 
 
 # ---------------------------------------------------------------------
@@ -56,24 +58,55 @@ _KEYS = ("headline", "opportunity_type", "summary", "reasons", "risks", "generat
 #    dict both the rule-based generator and the LLM prompt read from.
 # ---------------------------------------------------------------------
 
+def price_summary(items):
+    """{count, priced, low, high} for the optional price list, or None.
+    Only the owner's own figures -- no market price benchmark is
+    invented to compare them against."""
+    items = [i for i in (items or []) if isinstance(i, dict) and i.get("item")]
+    if not items:
+        return None
+    prices = [float(i["price"]) for i in items if i.get("price") is not None]
+    return {
+        "count": len(items),
+        "priced": len(prices),
+        "low": min(prices) if prices else None,
+        "high": max(prices) if prices else None,
+    }
+
+
 def build_recommendation_context(sme_profile, scores, competitor_sample=None, competitor_simulated=True,
-                                  population=0):
+                                  population=0, subcategory_analysis=None):
     """`sme_profile` is the SME's own SmeProfile row (their input
     business parameters). `scores` is the dict compute_scores() in
-    forecasting_service.py just returned for that same profile.
+    forecasting_service.py just returned for that same profile -- after
+    the sub-category adjustment, when there is one (see
+    subcategory_service.adjusted_scores), in which case it also carries
+    industry_saturation_index for the comparison.
     `competitor_sample` is a short list of real (or simulated,
     clearly flagged) business names on file for this industry+location
-    -- see forecasting_service.generate_forecast_for_profile()."""
+    -- see forecasting_service.generate_forecast_for_profile().
+    `subcategory_analysis` is subcategory_service.direct_competition()'s
+    result, or None when the plan has no sub-category.
+
+    Monthly revenue is deliberately absent: it is no longer collected
+    (see app/services/plan_params.py)."""
+    offering_items = list(getattr(sme_profile, "offering_items", None) or [])
     return {
         "business_name": sme_profile.business_name,
         "industry_type": sme_profile.industry_type,
+        "subcategory": getattr(sme_profile, "subcategory", None),
+        "subcategory_label": getattr(sme_profile, "subcategory_label", None),
+        "product_offering": getattr(sme_profile, "product_offering", None) or "",
+        "innovation_idea": getattr(sme_profile, "innovation_idea", None) or "",
+        "offering_items": offering_items,
+        "price_summary": price_summary(offering_items),
         "location": sme_profile.location,
         "business_stage": sme_profile.business_stage,
         "years_in_operation": sme_profile.years_in_operation(),
         "startup_capital": float(sme_profile.startup_capital or 0),
         "employee_count": sme_profile.employee_count or 0,
-        "monthly_revenue_est": float(sme_profile.monthly_revenue_est or 0),
         "saturation_index": scores["saturation_index"],
+        "industry_saturation_index": scores.get("industry_saturation_index", scores["saturation_index"]),
         "cluster_label": scores["cluster_label"],
         "viability_score": scores["viability_score"],
         "confidence_level": scores["confidence_level"],
@@ -81,6 +114,7 @@ def build_recommendation_context(sme_profile, scores, competitor_sample=None, co
         "competitor_count": scores["competitor_count"],
         "competitor_simulated": competitor_simulated,
         "competitor_sample": competitor_sample or [],
+        "subcategory_analysis": subcategory_analysis,
     }
 
 
@@ -102,12 +136,30 @@ def _headline_and_type_for(cluster_label):
     return ("HIGH OPPORTUNITY -- favorable conditions for market entry.", "High Opportunity")
 
 
+def _kind_of_business(context):
+    """"a bakery" when a sub-category is known, else "a food and beverage
+    business" -- the summary should name what the owner actually said
+    they are opening."""
+    label = context.get("subcategory_label")
+    if context.get("subcategory") and context.get("subcategory") != "other" and label:
+        return label.lower()
+    return f"{context['industry_type'].lower()} business"
+
+
 def _summary_for(context):
-    return (
-        f"A {context['industry_type'].lower()} business in {context['location']} is currently classified as "
+    summary = (
+        f"A {_kind_of_business(context)} in {context['location']} is currently classified as "
         f"'{context['cluster_label']}' saturation ({round(context['saturation_index'])}%), with a viability "
         f"score of {context['viability_score']}/10 for the parameters you entered."
     )
+    analysis = context.get("subcategory_analysis")
+    if analysis and analysis.get("adjusts_score"):
+        summary += (
+            f" Industry-wide the figure is {round(context['industry_saturation_index'])}%; it moves because "
+            f"direct {analysis['label'].lower()} competition here is "
+            f"{'lighter' if analysis['density_ratio'] < 1 else 'heavier'} than usual."
+        )
+    return summary
 
 
 def _reasons_for(context):
@@ -124,6 +176,13 @@ def _reasons_for(context):
     else:
         reasons.append(f"{context['competitor_count']} existing {industry_lower} business(es) already "
                         f"serve {context['location']}")
+    analysis = context.get("subcategory_analysis")
+    if analysis and not analysis.get("is_estimated") and analysis.get("density_ratio", 1) < 1:
+        reasons.append(
+            f"only {analysis['direct_count']} direct {analysis['label'].lower()} competitor(s) measured in "
+            f"{context['location']} -- fewer than its {analysis['industry_count']} "
+            f"{industry_lower} businesses would normally hold"
+        )
     if context["startup_capital"]:
         reasons.append(f"your planned capital of PHP {context['startup_capital']:,.0f} is on file for this plan")
     reasons.append(f"model confidence for this estimate is {round(context['confidence_level'])}%")
@@ -140,10 +199,100 @@ def _risks_for(context):
     else:
         risks.append("initial brand-awareness building will still be required")
         risks.append("monitor seasonal demand fluctuations after launch")
+    analysis = context.get("subcategory_analysis")
+    if analysis:
+        if analysis.get("is_estimated"):
+            risks.append(
+                f"the direct {analysis['label'].lower()} competitor count (~{analysis['direct_count']}) is an "
+                f"estimate -- no sub-category count is on file for {context['location']} yet, so the score "
+                f"is the industry-wide one"
+            )
+        elif analysis.get("density_ratio", 1) > 1:
+            risks.append(
+                f"{analysis['direct_count']} direct {analysis['label'].lower()} competitor(s) in "
+                f"{context['location']} -- denser than usual for its {analysis['industry_count']} "
+                f"{context['industry_type'].lower()} businesses"
+            )
     if context["competitor_simulated"]:
         risks.append("competitor count for this area is a simulated estimate -- connect a live Google "
                       "Places API key for exact figures")
     return risks
+
+
+# How much a new entrant has to stand out, by the saturation tier the
+# model put this plan in. Read from the model's own output -- the only
+# market fact the rule-based writer has -- not from the idea's wording,
+# which it cannot judge. Judging the idea itself is the LLM's job.
+_DIFFERENTIATION_NEED = {
+    "Saturated": "Very high",
+    "High": "High",
+    "Moderate": "Moderate",
+    "Low": "Low",
+}
+
+_DIFFERENTIATION_SUGGESTIONS = {
+    "Very high": [
+        "make the difference visible before anyone buys -- signage, packaging or a sample customers can try",
+        "test the idea with a small batch or a weekend stall before committing the full capital",
+        "pick one thing to be known for rather than competing on everything the established shops offer",
+    ],
+    "High": [
+        "lead with the difference in your name, signage and first posts, so it is what people remember",
+        "price the new item so trying it is an easy yes next to what regulars already buy",
+        "ask your first customers what made them choose you, and double down on that",
+    ],
+    "Moderate": [
+        "the market has room, so the idea is a head start rather than a lifeline -- consistency matters as much",
+        "keep the idea simple enough to deliver the same way every day",
+    ],
+    "Low": [
+        "competition is light, so reliability and convenience can matter more than novelty at first",
+        "keep the idea as a way to hold customers once competitors arrive",
+    ],
+}
+
+
+def _rule_based_innovation(context):
+    """What the plan's differentiation is up against. The rule-based
+    writer does NOT rate how new the idea is -- it has no way to know --
+    so `novelty` stays None here and only the LLM fills it in."""
+    need = _DIFFERENTIATION_NEED.get(context["cluster_label"], "Moderate")
+    analysis = context.get("subcategory_analysis")
+    if analysis:
+        rivals = f"{'about ' if analysis.get('is_estimated') else ''}{analysis['direct_count']} direct " \
+                 f"{analysis['label'].lower()} competitor(s)"
+    else:
+        rivals = f"{context['competitor_count']} {context['industry_type'].lower()} business(es)"
+
+    idea = (context.get("innovation_idea") or "").strip()
+    if idea:
+        summary = (
+            f"Your idea goes up against {rivals} in {context['location']}, where the market is "
+            f"{round(context['saturation_index'])}% saturated -- differentiation need: {need.lower()}."
+        )
+    else:
+        summary = (
+            f"You have not said what makes the business different yet. With {rivals} in "
+            f"{context['location']}, differentiation need is {need.lower()} -- add your idea to the plan "
+            f"for a clearer read."
+        )
+
+    prices = context.get("price_summary")
+    if prices and prices.get("priced"):
+        if prices["low"] == prices["high"]:
+            summary += f" Your price list has {prices['count']} item(s) at PHP {prices['low']:,.2f}."
+        else:
+            summary += (f" Your price list has {prices['count']} item(s), from PHP {prices['low']:,.2f} "
+                        f"to PHP {prices['high']:,.2f}.")
+
+    return {
+        "has_idea": bool(idea),
+        "differentiation_need": need,
+        "novelty": None,
+        "summary": summary,
+        "suggestions": list(_DIFFERENTIATION_SUGGESTIONS.get(need, [])),
+        "generated_by": "rule_based",
+    }
 
 
 def _rule_based_recommendation(context):
@@ -155,6 +304,8 @@ def _rule_based_recommendation(context):
         "reasons": _reasons_for(context),
         "risks": _risks_for(context),
         "generated_by": "rule_based",
+        "subcategory_analysis": context.get("subcategory_analysis"),
+        "innovation": _rule_based_innovation(context),
     }
 
 
@@ -210,7 +361,25 @@ def build_recommendation(context):
 
         llm_payload = generate_recommendation_json(context)
         if llm_payload:
-            recommendation = llm_payload
+            rule_innovation = recommendation["innovation"]
+            llm_payload = dict(llm_payload)
+            llm_innovation = llm_payload.pop("innovation", None)
+            recommendation = dict(llm_payload)
+            # The sub-category figures are measurements, never the
+            # model's words -- they always come from the context.
+            recommendation["subcategory_analysis"] = context.get("subcategory_analysis")
+            if llm_innovation and rule_innovation.get("has_idea"):
+                # The LLM judges the idea; the differentiation need stays
+                # the one read from the saturation model.
+                recommendation["innovation"] = {
+                    **rule_innovation,
+                    "novelty": llm_innovation["novelty"],
+                    "summary": llm_innovation["summary"] or rule_innovation["summary"],
+                    "suggestions": llm_innovation["suggestions"] or rule_innovation["suggestions"],
+                    "generated_by": llm_payload.get("generated_by"),
+                }
+            else:
+                recommendation["innovation"] = rule_innovation
 
     return recommendation
 
@@ -236,6 +405,8 @@ def _empty_recommendation():
         "reasons": [],
         "risks": [],
         "generated_by": "none",
+        "subcategory_analysis": None,
+        "innovation": None,
     }
 
 
@@ -277,6 +448,12 @@ def parse_recommendation(raw_text):
                 "reasons": [str(r) for r in (payload.get("reasons") or [])],
                 "risks": [str(r) for r in (payload.get("risks") or [])],
                 "generated_by": payload.get("generated_by") or "rule_based",
+                # Absent on forecasts written before sub-categories and
+                # the innovation read existed; templates check for None.
+                "subcategory_analysis": payload.get("subcategory_analysis")
+                if isinstance(payload.get("subcategory_analysis"), dict) else None,
+                "innovation": payload.get("innovation")
+                if isinstance(payload.get("innovation"), dict) else None,
             }
 
     # Legacy plain-text fallback (pre-JSON format).
@@ -298,6 +475,8 @@ def parse_recommendation(raw_text):
         "reasons": reasons,
         "risks": risks,
         "generated_by": "legacy",
+        "subcategory_analysis": None,
+        "innovation": None,
     }
 
 
@@ -315,14 +494,3 @@ def competition_level_label(competitor_count):
     if count <= 6:
         return f"Moderate ({count} competitors)"
     return f"High ({count} competitors)"
-
-
-def estimate_breakeven_months(startup_capital, monthly_revenue_est):
-    """A simple capital / monthly-revenue estimate -- None when either
-    figure is missing, so the template can say "add a revenue
-    estimate" instead of showing a misleading number."""
-    capital = float(startup_capital or 0)
-    revenue = float(monthly_revenue_est or 0)
-    if capital <= 0 or revenue <= 0:
-        return None
-    return max(1, round(capital / revenue))

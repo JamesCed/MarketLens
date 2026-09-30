@@ -445,11 +445,70 @@ def derive_permit_counts(file_path):
             continue
 
         # Only permits that are actually in force count as competitors.
-        status = str(row.get("status") or "").strip().casefold()
-        if status and status not in ("active", "approved", "released", "issued", "valid", "renewed"):
+        if not _permit_in_force(row):
             continue
 
         key = (industry, barangay)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+_IN_FORCE_STATUSES = ("active", "approved", "released", "issued", "valid", "renewed")
+
+
+def _permit_in_force(row):
+    status = str(row.get("status") or "").strip().casefold()
+    return not status or status in _IN_FORCE_STATUSES
+
+
+# Columns that can say WHAT KIND of business a permit is for, below the
+# industry section. business_name is included on purpose: a register
+# that only says "Food and Beverage" often still names the shop
+# "Aling Nena's Bakeshop", and that is exactly the evidence needed.
+_SUBCATEGORY_TEXT_COLUMNS = ("subcategory", "line_of_business", "nature_of_business",
+                             "business_type", "business_name")
+
+
+def derive_permit_subcategory_counts(file_path):
+    """Count permits per (industry, sub-category, barangay).
+
+    The same register rows derive_permit_counts() groups by industry,
+    grouped one level further down -- so an uploaded permit register
+    gives the direct-competition figure (how many BAKERIES, not how many
+    food businesses) from the city's own records. See
+    app/services/subcategory_service.py for how it is used.
+
+    A row whose text matches no sub-category is not counted anywhere at
+    this level. It still counts at the industry level through
+    derive_permit_counts(); it just cannot be attributed to a kind of
+    business, and guessing would put it in the wrong one.
+    """
+    df = _normalize_columns(_read_any(file_path))
+    column = _industry_column(df)
+    if column is None or "barangay" not in df.columns:
+        return {}
+
+    from app.ml.constants import canonical_industry_for
+    from app.ml.subcategories import match_subcategory
+
+    text_columns = [c for c in _SUBCATEGORY_TEXT_COLUMNS if c in df.columns]
+    if column not in text_columns:
+        text_columns.append(column)
+
+    counts = {}
+    for _index, row in df.iterrows():
+        barangay = str(row.get("barangay") or "").strip()
+        raw_industry = row.get(column)
+        if not barangay or raw_industry is None or str(raw_industry).strip() == "":
+            continue
+        industry = canonical_industry_for(str(raw_industry).strip())
+        if not industry or not _permit_in_force(row):
+            continue
+        text = " ".join(str(row.get(c) or "") for c in text_columns if row.get(c) is not None)
+        subcategory = match_subcategory(industry, text)
+        if not subcategory:
+            continue
+        key = (industry, subcategory, barangay)
         counts[key] = counts.get(key, 0) + 1
     return counts
 
@@ -488,6 +547,27 @@ def stage_permit_derived_market_rows(file_path, uploaded_by_user_id=None):
             date_recorded=today,
         ))
         staged += 1
+
+    # The same register, one level down: direct-competitor counts per
+    # sub-category. Same transaction -- they are the same fact about the
+    # city at a finer grain, and must land or roll back together. Not
+    # added to `staged`, which the upload summary reports as industry
+    # rows; these are a by-product of the same rows, not extra records.
+    from app.models import SubcategoryMarketData
+
+    for (industry, subcategory, barangay), count in sorted(derive_permit_subcategory_counts(file_path).items()):
+        canonical = _resolve_barangay(barangay, 0, errors)
+        if canonical is None:
+            errors.clear()
+            continue
+        db.session.add(SubcategoryMarketData(
+            industry_type=industry,
+            subcategory=subcategory,
+            location=canonical,
+            competitor_count=count,
+            source="DTI",
+            date_recorded=today,
+        ))
     return staged
 
 

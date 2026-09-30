@@ -441,7 +441,7 @@ def _plan(user, name="Carinderia ni Nena", industry="Food and Beverage",
     profile = SmeProfile(
         user_id=user.user_id, business_name=name, industry_type=industry,
         location=location, business_stage=stage, startup_capital=250000,
-        employee_count=4, monthly_revenue_est=90000,
+        employee_count=4,
     )
     db.session.add(profile)
     db.session.commit()
@@ -512,17 +512,88 @@ def test_editing_a_plan_from_settings_saves_it(app):
             "business_stage": "existing",
             "startup_capital": "500000",
             "employee_count": "9",
+            "subcategory": "tires_auto_parts",
+            "product_offering": "Tires and vulcanizing",
+            "innovation_idea": "Mobile vulcanizing for tricycles",
+            "offering_item": ["Vulcanizing", "Tire (14 in)"],
+            "offering_price": ["80", "1800"],
+            # An old cached form may still post it; it is ignored.
             "monthly_revenue_est": "150000",
         })
 
         assert response.status_code == 200
-        assert response.get_json()["success"] is True
+        payload = response.get_json()
+        assert payload["success"] is True
+        assert payload["plan"]["subcategory_label"]
+        assert "monthly_revenue_est" not in payload["plan"]
 
         saved = SmeProfile.query.get(sme_id)
         assert saved.business_name == "Renamed Carinderia"
         assert saved.industry_type == "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"
         assert saved.location == "Matatalaib"
         assert saved.employee_count == 9
+        assert saved.subcategory == "tires_auto_parts"
+        assert saved.innovation_idea == "Mobile vulcanizing for tricycles"
+        assert saved.offering_items == [
+            {"item": "Vulcanizing", "price": 80.0}, {"item": "Tire (14 in)", "price": 1800.0},
+        ]
+        assert saved.monthly_revenue_est is None
+
+
+def test_editing_keeps_a_registration_date_the_form_did_not_send(app):
+    from datetime import date
+
+    with app.app_context():
+        user = _user(app)
+        profile = _plan(user, stage="existing")
+        profile.registration_date = date(2019, 5, 1)
+        db.session.commit()
+
+        _client(app).post(f"/home/plans/{profile.sme_id}/update", data={
+            "business_name": profile.business_name, "industry_type": profile.industry_type,
+            "location": profile.location, "business_stage": "existing",
+        })
+        assert SmeProfile.query.get(profile.sme_id).registration_date == date(2019, 5, 1)
+
+
+def test_editing_keeps_a_legacy_industry_name(app):
+    """The Edit form offers a dropped industry name as "(current)";
+    saving without touching it must not be refused."""
+    with app.app_context():
+        user = _user(app)
+        profile = _plan(user, industry="Sari-sari Store (legacy)")
+        response = _client(app).post(f"/home/plans/{profile.sme_id}/update", data={
+            "business_name": "Renamed", "industry_type": "Sari-sari Store (legacy)",
+            "location": profile.location,
+        })
+        assert response.get_json()["success"] is True
+
+
+def test_the_edit_form_has_the_new_fields_and_no_revenue(app):
+    with app.app_context():
+        user = _user(app)
+        _plan(user)
+        body = _client(app).get("/settings?section=plans").get_data(as_text=True)
+        assert 'name="monthly_revenue_est"' not in body
+        assert "Est. Revenue" not in body
+        for name in ("subcategory", "product_offering", "innovation_idea", "offering_item"):
+            assert f'name="{name}"' in body
+        assert "data-plan-form" in body
+        assert "js/plan_form.js" in body
+
+
+def test_a_bad_price_is_reported_as_text_not_markup(app):
+    with app.app_context():
+        user = _user(app)
+        profile = _plan(user)
+        response = _client(app).post(f"/home/plans/{profile.sme_id}/update", data={
+            "business_name": "X", "industry_type": profile.industry_type, "location": profile.location,
+            "offering_item": ["<img src=x onerror=alert(1)>"], "offering_price": ["abc"],
+        })
+        assert response.status_code == 400
+        assert "must be a number" in response.get_json()["error"]
+        body = _client(app).get("/settings?section=plans").get_data(as_text=True)
+        assert 'querySelector("span").textContent = message' in body
 
 
 def test_a_plan_can_be_deleted_from_settings(app):

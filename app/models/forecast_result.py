@@ -25,9 +25,9 @@ Two things worth calling out because they shaped app/services/forecasting_servic
    columns for "reasons"/"risks" bullet lists, and no `cluster_label`
    column. recommendation_service.py formats headline + reasons + risks
    into one readable text block for this column, and `cluster_label`
-   below is derived live from `saturation_index` (0-100) using the same
-   threshold cut points the K-Means training run discovered -- see
-   app/ml/constants.py CLUSTER_THRESHOLDS.
+   below is derived live from `saturation_index` (0-100) using the fixed
+   threshold cut points in app/ml/constants.py CLUSTER_THRESHOLDS --
+   which are deliberately NOT the K-Means centroids; see the note there.
 """
 
 from datetime import date
@@ -66,8 +66,9 @@ class ForecastResult(db.Model):
     @property
     def cluster_label(self):
         """Low / Moderate / High / Saturated, derived from saturation_index
-        using the cut points found during K-Means training (see
-        app/ml/train_model.py + app/ml/constants.py) -- not a stored column."""
+        using the fixed cut points in app/ml/constants.py CLUSTER_THRESHOLDS
+        -- not a stored column, and not the K-Means centroids (see the note
+        in app/ml/train_model.py for why the thresholds are fixed)."""
         value = float(self.saturation_index or 0)
         for threshold, label in zip(CLUSTER_THRESHOLDS, CLUSTER_LABELS_ORDERED):
             if value <= threshold:

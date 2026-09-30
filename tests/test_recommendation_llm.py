@@ -120,12 +120,27 @@ def test_serialize_then_parse_round_trip():
         "reasons": ["Only 4 competitors found in Tibag", "Model confidence for this estimate is 71%"],
         "risks": ["Initial brand-awareness building will still be required"],
         "generated_by": "rule_based",
+        "subcategory_analysis": {"subcategory": "sari_sari", "label": "Sari-sari Store", "direct_count": 2,
+                                 "is_estimated": False, "density_ratio": 0.5, "adjusts_score": True},
+        "innovation": {"has_idea": True, "differentiation_need": "Moderate", "novelty": None,
+                       "summary": "...", "suggestions": ["a"], "generated_by": "rule_based"},
     }
     stored = rec_service.serialize_recommendation(original)
     assert stored.startswith("{")
 
     parsed = rec_service.parse_recommendation(stored)
     assert parsed == original
+
+
+def test_a_forecast_stored_before_subcategories_still_parses():
+    """Rows written by the previous version have neither new key."""
+    old_row = json.dumps({
+        "headline": "HIGH OPPORTUNITY", "opportunity_type": "High Opportunity", "summary": "s",
+        "reasons": [], "risks": [], "generated_by": "rule_based",
+    })
+    parsed = rec_service.parse_recommendation(old_row)
+    assert parsed["subcategory_analysis"] is None
+    assert parsed["innovation"] is None
 
 
 def test_parse_recommendation_legacy_plain_text_format():
@@ -152,7 +167,8 @@ def test_parse_recommendation_legacy_plain_text_format():
 def test_parse_recommendation_empty_or_none_returns_shaped_default():
     for value in (None, "", "   "):
         parsed = rec_service.parse_recommendation(value)
-        assert set(parsed.keys()) == {"headline", "opportunity_type", "summary", "reasons", "risks", "generated_by"}
+        assert set(parsed.keys()) == {"headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
+                                      "subcategory_analysis", "innovation"}
         assert parsed["reasons"] == []
         assert parsed["risks"] == []
 
@@ -168,10 +184,12 @@ def test_competition_level_label_tiers():
     assert rec_service.competition_level_label(20) == "High (20 competitors)"
 
 
-def test_estimate_breakeven_months():
-    assert rec_service.estimate_breakeven_months(0, 50000) is None
-    assert rec_service.estimate_breakeven_months(500000, 0) is None
-    assert rec_service.estimate_breakeven_months(500000, 50000) == 10
+def test_revenue_is_no_longer_part_of_the_recommendation():
+    """Monthly revenue is not collected any more, so neither the
+    context nor the break-even helper that divided by it survive."""
+    assert not hasattr(rec_service, "estimate_breakeven_months")
+    from app.services.llm_service import _prompt_for
+    assert "revenue" not in _prompt_for(_sample_context()).lower()
 
 
 # ---------------------------------------------------------------------
@@ -187,7 +205,6 @@ def _sample_context():
         "years_in_operation": 0.0,
         "startup_capital": 300000.0,
         "employee_count": 3,
-        "monthly_revenue_est": 40000.0,
         "saturation_index": 35.0,
         "cluster_label": "Moderate",
         "viability_score": 6.5,
@@ -227,7 +244,33 @@ def test_build_recommendation_uses_llm_when_enabled_and_available(app, monkeypat
         )
 
         recommendation = rec_service.build_recommendation(_sample_context())
-        assert recommendation == mock_payload
+        assert {key: recommendation[key] for key in mock_payload} == mock_payload
+        # No idea was described, so the innovation read is the
+        # rule-based one and the LLM was never asked to rate novelty.
+        assert recommendation["innovation"]["generated_by"] == "rule_based"
+        assert recommendation["innovation"]["novelty"] is None
+        assert recommendation["subcategory_analysis"] is None
+
+
+def test_llm_innovation_read_is_merged_when_the_owner_described_an_idea(app, monkeypatch):
+    with app.app_context():
+        SystemSetting.set("use_llm_recommendations", "true")
+        context = {**_sample_context(), "innovation_idea": "Ube pandesal delivered before 6am"}
+        mock_payload = {
+            "headline": "H", "opportunity_type": "Moderate Opportunity", "summary": "S",
+            "reasons": ["r"], "risks": ["k"], "generated_by": "llm:gemini",
+            "innovation": {"novelty": "High", "summary": "Nobody nearby delivers.", "suggestions": ["Start small"]},
+        }
+        monkeypatch.setattr("app.services.llm_service.generate_recommendation_json", lambda c: mock_payload)
+
+        recommendation = rec_service.build_recommendation(context)
+        innovation = recommendation["innovation"]
+        assert innovation["novelty"] == "High"
+        assert innovation["summary"] == "Nobody nearby delivers."
+        assert innovation["generated_by"] == "llm:gemini"
+        # The differentiation need stays the one read from the model.
+        assert innovation["differentiation_need"] == "Moderate"
+        assert "innovation" in mock_payload, "the caller's dict must not be mutated"
 
 
 def test_build_recommendation_falls_back_to_rule_based_when_llm_unavailable(app, monkeypatch):
@@ -266,7 +309,6 @@ def test_generate_forecast_for_profile_stores_parseable_recommendation(app):
             industry_type="Retail",
             location="Poblacion",
             startup_capital=250000,
-            monthly_revenue_est=30000,
             employee_count=2,
         )
         db.session.add(profile)
@@ -278,7 +320,10 @@ def test_generate_forecast_for_profile_stores_parseable_recommendation(app):
         # freeform text -- and it parses straight back into the full
         # structured shape every template expects.
         stored = json.loads(forecast.recommendation)
-        assert set(stored.keys()) == {"headline", "opportunity_type", "summary", "reasons", "risks", "generated_by"}
+        assert set(stored.keys()) == {
+            "headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
+            "subcategory_analysis", "innovation",
+        }
 
         parsed = rec_service.parse_recommendation(forecast.recommendation)
         assert parsed["headline"]

@@ -1,0 +1,83 @@
+{#
+  shared/_plan_insights.html
+  ----------------------------
+  The two readouts the broader business parameters add to a forecast,
+  shared by the Home forecast panel and the Recommendations page so both
+  say the same thing the same way.
+
+    subcategory_compare(rec)  -- "Industry-wide 64% · Your sub-category
+                                 41%", the direct-competitor count, and
+                                 where that count came from.
+    innovation_panel(rec)     -- what the plan's "what makes you
+                                 different" is up against, and (when the
+                                 AI wrote it) how new the idea looks.
+
+  Both take the parsed recommendation (recommendation_service
+  .parse_recommendation) and render nothing for forecasts written before
+  these existed -- those carry None for both keys.
+#}
+
+{% macro subcategory_compare(rec, compact=False) -%}
+  {% set a = rec.subcategory_analysis if rec else None %}
+  {% if a %}
+    <div class="dss-subcat-panel {{ 'mb-2' if compact else 'mb-3' }}">
+      <div class="small fw-semibold mb-1">
+        <i class="bi bi-diagram-3"></i> {{ a.label }} &mdash; direct competition
+      </div>
+      {% if a.adjusts_score %}
+        <div class="dss-subcat-compare">
+          <span>Industry-wide <strong>{{ a.industry_saturation_index|round|int }}%</strong></span>
+          <span aria-hidden="true">&middot;</span>
+          <span>Your sub-category <strong>{{ a.saturation_index|round|int }}%</strong></span>
+        </div>
+      {% endif %}
+      <div class="text-muted" style="font-size:.76rem;">
+        {% if a.is_estimated %}
+          About <strong>{{ a.direct_count }}</strong> direct competitor(s) &mdash;
+          <em>estimated</em>: no {{ a.label|lower }} count is on file for this barangay yet, so the score
+          shown is the industry-wide one.
+        {% else %}
+          <strong>{{ a.direct_count }}</strong> direct competitor(s) of {{ a.industry_count }}
+          businesses in the whole industry here
+          ({{ 'Google Places' if a.source == 'Google Places API' else 'LGU permit records' if a.source == 'DTI' else a.source }}).
+          {% if a.adjusts_score %}
+            {{ 'Lighter' if a.density_ratio < 1 else 'Heavier' }} than usual for this barangay,
+            so the score is adjusted.
+          {% else %}
+            About what is usual here, so the score is unchanged.
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+{%- endmacro %}
+
+
+{% macro innovation_panel(rec, compact=False) -%}
+  {% set i = rec.innovation if rec else None %}
+  {% if i %}
+    <div class="dss-innovation-panel {{ 'mt-2' if compact else 'mt-3' }}">
+      <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+        <span class="small fw-semibold"><i class="bi bi-stars"></i> What makes you different</span>
+        {% if i.novelty %}
+          <span class="dss-innovation-badge">Novelty: {{ i.novelty }}</span>
+        {% endif %}
+        <span class="dss-innovation-badge">Differentiation need: {{ i.differentiation_need }}</span>
+      </div>
+      <p class="small mb-1">{{ i.summary }}</p>
+      {% if i.suggestions and not compact %}
+        <ul class="small mb-0 ps-3">
+          {% for tip in i.suggestions %}<li>{{ tip }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      <div class="text-muted" style="font-size:.7rem;">
+        {% if i.generated_by and i.generated_by.startswith('llm:') %}
+          Read by the AI from your own description. It never changes the market score.
+        {% else %}
+          Based on the market score and competitor count. When AI-written recommendations are switched on,
+          the AI also rates the idea itself.
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+{%- endmacro %}
