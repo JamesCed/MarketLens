@@ -171,6 +171,79 @@ assert _urban_count == 36, _urban_count  # PSA/PSGC's own classification -- see 
 BARANGAY_NAMES = [row[0] for row in BARANGAY_PROFILES]
 
 
+# Other ways the same 76 barangays get written -- in permit registers,
+# Places results and older uploads. Keys are normalised (see
+# _normalise_barangay); values are the canonical names above. "Baras"
+# is the one that reached the map as a 77th barangay: it is Baras-baras.
+# The parenthesised alternates are the ones PSA itself prints
+# ("Buhilit (Bubulit)", "Santa Cruz (Alvindia Primero)", "Trinidad
+# (Trinidad Primero)").
+BARANGAY_ALIASES = {
+    "baras": "Baras-baras",
+    "bubulit": "Buhilit",
+    "alvindia primero": "Santa Cruz",
+    "trinidad primero": "Trinidad",
+    "cutcut 1": "Cut-cut I",
+    "cutcut 2": "Cut-cut II",
+    "cut cut 1": "Cut-cut I",
+    "cut cut 2": "Cut-cut II",
+    "alvindia 2nd": "Alvindia Segundo",
+    "alvindia ii": "Alvindia Segundo",
+    "sto nino": "Santo Nino",
+    "sto cristo": "Santo Cristo",
+    "sto domingo": "Santo Domingo",
+    "sta cruz": "Santa Cruz",
+    "sta maria": "Santa Maria",
+}
+
+
+def _normalise_barangay(value):
+    """Lower-case, strip accents from ñ, drop a parenthesised alternate,
+    a leading "Barangay"/"Brgy.", and punctuation -- so "BARAS-BARAS",
+    "Baras Baras" and "baras-baras " compare equal."""
+    import re
+
+    text = str(value or "").strip().lower().replace("ñ", "n")
+    alternate = re.search(r"\(([^)]*)\)", text)
+    text = re.sub(r"\s*\([^)]*\)", "", text)
+    text = re.sub(r"^(barangay|brgy\.?|bgy\.?)\s+", "", text)
+    text = re.sub(r"[.\-_,]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text, (alternate.group(1).strip() if alternate else None)
+
+
+def canonical_barangay(value):
+    """The canonical name of one of Tarlac City's 76 barangays, or None.
+
+    Matches the official name however it is cased or punctuated, a known
+    alias ("Baras" -> "Baras-baras"), or the alternate PSA prints in
+    parentheses. Anything else is None: a name that might be a barangay
+    is not guessed at, because a count filed under the wrong barangay is
+    worse than one not filed."""
+    text, alternate = _normalise_barangay(value)
+    if not text:
+        return None
+    lookup = _canonical_lookup()
+    for candidate in (text, alternate and _normalise_barangay(alternate)[0]):
+        if not candidate:
+            continue
+        if candidate in lookup:
+            return lookup[candidate]
+        if candidate in BARANGAY_ALIASES:
+            return BARANGAY_ALIASES[candidate]
+    return None
+
+
+_CANONICAL_LOOKUP = {}
+
+
+def _canonical_lookup():
+    if not _CANONICAL_LOOKUP:
+        for name in BARANGAY_NAMES:
+            _CANONICAL_LOOKUP[_normalise_barangay(name)[0]] = name
+    return _CANONICAL_LOOKUP
+
+
 def get_real_population(name):
     """Returns the REAL 2024 PSA population headcount for a barangay
     (an int), or None if the name isn't recognized / not parseable.

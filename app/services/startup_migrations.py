@@ -198,6 +198,58 @@ def _retire_system_theme():
     return result.rowcount or 0
 
 
+# Where a barangay name is stored, per table. Used by
+# _merge_barangay_aliases() below.
+_BARANGAY_COLUMNS = (
+    ("market_data", "location"),
+    ("lgu_data", "barangay"),
+    ("subcategory_market_data", "location"),
+    ("sme_profile", "location"),
+)
+
+
+def _merge_barangay_aliases():
+    """Fold differently-written barangay names into the official one.
+
+    A permit register or an old Places run could file rows under "Baras"
+    while every other row says "Baras-baras" -- one barangay, two names,
+    and the map listed it twice. This renames every stored name that
+    seed_data.canonical_barangay() recognises as an official barangay
+    written another way. Names it does not recognise are left exactly as
+    they are: renaming on a guess would file a count under the wrong
+    barangay.
+
+    Runs on every start, and is cheap when there is nothing to do (one
+    DISTINCT per table). Returns {table: {old_name: canonical}}.
+    """
+    from sqlalchemy import inspect, text
+
+    from app.ml.seed_data import BARANGAY_NAMES, canonical_barangay
+
+    inspector = inspect(db.engine)
+    tables = set(inspector.get_table_names())
+    official = set(BARANGAY_NAMES)
+    dialect = db.engine.dialect.name
+    merged = {}
+    for table, column in _BARANGAY_COLUMNS:
+        if table not in tables:
+            continue
+        quoted = _quote(table, dialect)
+        with db.engine.begin() as conn:
+            names = [row[0] for row in conn.execute(text(f"SELECT DISTINCT {column} FROM {quoted}"))]
+            for name in names:
+                if name is None or name in official:
+                    continue
+                canonical = canonical_barangay(name)
+                if canonical and canonical != name:
+                    conn.execute(
+                        text(f"UPDATE {quoted} SET {column} = :canonical WHERE {column} = :name"),
+                        {"canonical": canonical, "name": name},
+                    )
+                    merged.setdefault(table, {})[name] = canonical
+    return merged
+
+
 def run_startup_migrations(app):
     """Called from create_app(). Never raises: a fresh checkout whose
     tables don't exist yet, or a database that happens to be down at
@@ -220,6 +272,24 @@ def run_startup_migrations(app):
 
         try:
             _retire_system_theme()
+        except Exception:  # noqa: BLE001 -- see docstring
+            db.session.rollback()
+
+        try:
+            merged = _merge_barangay_aliases()
+            if merged:
+                for table, renames in merged.items():
+                    app.logger.info(
+                        "Merged barangay names in %s: %s", table,
+                        ", ".join(f"{old!r} -> {new!r}" for old, new in renames.items()),
+                    )
+                # Renaming does not move the data fingerprint the trend
+                # caches key on, so they are dropped explicitly.
+                from app.services.response_cache import clear_response_cache
+                from app.services.trend_analytics_service import clear_trend_caches
+
+                clear_trend_caches(drop_disk=True)
+                clear_response_cache()
         except Exception:  # noqa: BLE001 -- see docstring
             db.session.rollback()
 

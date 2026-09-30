@@ -173,7 +173,7 @@
         <span><span class="dss-legend-swatch" style="background:#22c55e"></span>High Opportunity</span>
       </div>
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2">
-        <p class="text-muted mb-0" style="font-size:.7rem;">Bold outline = Tarlac City's real border. City border data &copy; OpenStreetMap contributors, ODbL.</p>
+        <p class="text-muted mb-0" style="font-size:.7rem;">Official barangay boundaries &copy; PSA &amp; NAMRIA (2023) &middot; city border &copy; OpenStreetMap contributors, ODbL.</p>
         <a href="{{ url_for('sme.saturation_map') }}?industry_type={{ plan_industry|urlencode }}{% if selected_plan %}&location={{ selected_plan.location|urlencode }}{% endif %}"
            class="btn btn-outline-primary btn-sm">
           <i class="bi bi-map"></i> Open Full Interactive Map
@@ -622,9 +622,8 @@
   // REAL, PhilAtlas-sourced coordinates for all 76 Tarlac City barangays
   // (app/services/geocoding_service.py + app/static/data/barangay_coords.json).
   window.DSS_BARANGAY_COORDS_URL = "{{ url_for('api.barangay_coords') }}";
-  // Choropleth polygon cells computed from those same real coordinates,
-  // clipped to Tarlac City's REAL boundary (app/services/choropleth_service.py)
-  // -- see map.js's module docstring.
+  // The official PSA/NAMRIA barangay boundaries (2023) -- see
+  // app/services/choropleth_service.py.
   window.DSS_BARANGAY_CHOROPLETH_URL = "{{ url_for('api.barangay_choropleth') }}";
   // Tarlac City's own real outline (OpenStreetMap, ODbL), drawn as its
   // own bold overlay on this mini map preview too.

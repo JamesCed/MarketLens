@@ -1,6 +1,25 @@
 """
 app/services/choropleth_service.py
 --------------------------------------
+UPDATE (revisions round): THE MAP NOW USES THE OFFICIAL BOUNDARIES.
+
+The statement further down that "there is no publicly available
+per-BARANGAY administrative boundary dataset for Tarlac City" turned out
+to be wrong. PSA and NAMRIA publish one: the Philippines Admin Level 4
+boundaries (phl_admbnda_adm4_psa_namria_20231106), distributed by UN OCHA
+on the Humanitarian Data Exchange. Tarlac City's 76 barangays were
+extracted from it, unsimplified, into app/static/data/barangay_boundaries.json
+-- see barangay_boundaries_geojson() below. Two checks back the file:
+all 76 PhilAtlas barangay points in barangay_coords.json fall inside
+their own official polygon, and the polygons' outer edge matches the
+OpenStreetMap city outline this map already draws.
+
+The Voronoi computation documented below is kept, unchanged, as the
+fallback for the case the boundaries file is missing -- so a deployment
+that somehow lost the file still draws a map rather than an empty one.
+It is no longer what visitors see.
+
+
 Turns the Saturation Map's per-barangay point coordinates
 (app/static/data/barangay_coords.json, via geocoding_service.merged_coords)
 into filled polygon "cells" for a real choropleth map, one cell per
@@ -238,6 +257,53 @@ def load_precomputed_cells(app):
     except (OSError, ValueError, AttributeError):  # pragma: no cover - defensive
         pass
     return _precomputed_cache["fingerprint"], _precomputed_cache["value"]
+
+
+# ---------------------------------------------------------------------
+# The official boundaries (preferred)
+# ---------------------------------------------------------------------
+
+OFFICIAL_BOUNDARIES_NAME = "barangay_boundaries.json"
+_official_cache = {"loaded": False, "value": None}
+
+
+def load_official_boundaries(app):
+    """The official PSA/NAMRIA barangay polygons for Tarlac City, or None
+    if the file is absent or unreadable. Read once per process: the file
+    is static, and at ~90 KB it is cheap to keep."""
+    if _official_cache["loaded"]:
+        return _official_cache["value"]
+    _official_cache["loaded"] = True
+    try:
+        path = os.path.join(app.root_path, "static", "data", OFFICIAL_BOUNDARIES_NAME)
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if payload.get("features"):
+            _official_cache["value"] = payload
+    except (OSError, ValueError, AttributeError):  # pragma: no cover - defensive
+        pass
+    return _official_cache["value"]
+
+
+def barangay_boundaries_geojson(app, names=None):
+    """The official barangay polygons as a FeatureCollection, limited to
+    `names` when given, or None when the boundaries file is unavailable
+    (the caller then falls back to compute_choropleth_geojson). The
+    feature shape -- properties.name plus a Polygon -- is exactly what
+    compute_choropleth_geojson returns, so map.js draws either one."""
+    official = load_official_boundaries(app)
+    if official is None:
+        return None
+    wanted = set(names) if names is not None else None
+    features = [
+        f for f in official["features"]
+        if wanted is None or f["properties"]["name"] in wanted
+    ]
+    return {
+        "type": "FeatureCollection",
+        "source": official.get("source", {}).get("publisher"),
+        "features": features,
+    }
 
 
 def compute_choropleth_geojson(coords, city_boundary_ring=None, app=None, resolution=None, force=False):

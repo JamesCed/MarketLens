@@ -251,8 +251,11 @@ def test_saturation_map_keeps_a_short_honest_about_section(app, client):
     # The same honest facts, just shorter: what is measured, what is
     # estimated (and that it is marked), why, and what the lines mean.
     text = re.sub(r"<[^>]+>", " ", about_html)
+    # The boundaries bullet changed when the official PSA/NAMRIA barangay
+    # boundaries replaced the computed cells: it now names that source
+    # instead of calling the inner lines approximations.
     for fact in ("Google Places", "2024 PSA", "Estimated", "(est.)", "thousands of paid Google calls",
-                 "real city border", "not a survey"):
+                 "official boundary", "PSA / NAMRIA", "city border", "not a survey"):
         assert fact in text, f"the About section lost: {fact!r}"
     # One short caption instead of the paragraphs.
     assert "Click a barangay for details." in body

@@ -198,6 +198,9 @@ changes as plain MySQL, for the ERD, are in `sql/2026-09_revisions.sql`.
 | **Interior look matches sign-in** (navy/cyan frame; prototype content colours unchanged; remove `dss-skin` from `<body>` in `base.html` to revert) | `static/css/style.css` (INTERIOR SKIN block) |
 | **Location by map** on Home (Pick on map), visible Industry type box, **Clear** | `static/js/location_picker.js`, `static/js/sme_search.js` |
 | **Saturation map**: cleaner text; barangay panel shows the top 3 industries there | `static/js/map.js`, `api_controller.barangay_detail` |
+| **Official barangay boundaries** (PSA/NAMRIA 2023) replace the computed cells; "Baras" folded into Baras-baras | `static/data/barangay_boundaries.json`, `choropleth_service.py`, `seed_data.canonical_barangay` |
+| **Month timeline** on the map: history, current and predicted saturation, any month Jan 2020 → a year ahead | `saturation_timeline_service.py`, `static/js/map_timeline.js` |
+| Map controls on the right; map fills to the side panel's height; side panel can be hidden | `sme/saturation_map.html`, `static/css/map.css` |
 | **Admin: archive, never delete** users and datasets (with a required reason; restore available); archived datasets drop out of every score | `admin_controller.py`, `app/models/archive.py` |
 | **Audit trail with the 5 W's** — who, what, when, where, why — with filters and CSV export | `app/utils/audit.py`, `admin/audit_log.html` |
 
@@ -700,9 +703,27 @@ real limits. The real outline is also drawn on its own, as a bold
 outline layer (`GET /api/tarlac-city-boundary`), so the city's actual
 border is visible regardless of which barangay cells are shown.
 
-There is still no publicly available per-barangay administrative
-**boundary** dataset for Tarlac City — only the real point coordinates
-covered above. So while the map's OUTER edge is now the real city
+> **Update (revisions round):** the map now draws the **official PSA/NAMRIA
+> barangay boundaries** (2023, `phl_admbnda_adm4_psa_namria_20231106`,
+> distributed by UN OCHA on HDX), extracted unsimplified for Tarlac City's
+> 76 barangays into `app/static/data/barangay_boundaries.json`. All 76
+> PhilAtlas points fall inside their own official polygon, and the
+> polygons' outer edge matches the OpenStreetMap city outline. The
+> computed cells described below are kept only as a fallback if that file
+> is missing. Names written differently in the data ("Baras" for
+> Baras-baras) are folded into the official barangay at start-up
+> (`seed_data.canonical_barangay`, `startup_migrations._merge_barangay_aliases`).
+>
+> The map also has a **month timeline** (January 2020 → a year ahead):
+> history uses counts on file for that month, or back-projects along the
+> PSA/DTI national MSME series from the first count on file; the future
+> is the Random Forest's prediction from each barangay's own recorded
+> trend (national series otherwise), with confidence falling by horizon.
+> See `app/services/saturation_timeline_service.py`.
+
+The paragraphs below describe the earlier computed cells: at the time, no
+per-barangay **boundary** dataset for Tarlac City had been found — only
+the real point coordinates covered above. So while the map's OUTER edge is now the real city
 border, the internal lines dividing one barangay's cell from its
 neighbor's are still a computed nearest-neighbor (Voronoi) partition:
 the cell for a barangay is "every point inside the real city boundary

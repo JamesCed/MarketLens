@@ -363,10 +363,16 @@ def delete_plan(sme_id):
 @sme_bp.route("/saturation-map")
 @role_required("SME", "LGU", "Admin")
 def saturation_map():
+    from app.services.saturation_timeline_service import timeline_bounds
+
+    bounds = timeline_bounds()
     return render_template(
         "sme/saturation_map.html",
         business_types=BUSINESS_TYPES,
         locations=BARANGAY_NAMES,
+        # The month timeline under the map: history from January 2020,
+        # this month, and up to a year of prediction.
+        timeline={key: value.strftime("%Y-%m") for key, value in bounds.items()},
         # Real PSA FIES (2023) household spending-category figures --
         # the SAME for every barangay (no barangay-level breakdown
         # exists publicly), so this is computed once here and exposed

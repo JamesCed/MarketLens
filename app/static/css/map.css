@@ -213,3 +213,129 @@
 
 /* The folded household-spending block in the details panel. */
 .dss-demand-fold > summary { cursor: pointer; }
+
+/* =====================================================================
+   Month timeline under the map: History | Current | Future (predicted)
+   Colours: the prototype blue for "now", muted slate for the past, and
+   a dashed/striped blue for the predicted months -- no new palette, and
+   nothing that could be mistaken for a saturation tier colour.
+   ===================================================================== */
+.dss-timeline {
+  --dss-tl-now: 50%;
+  --dss-tl-history: #cbd5e1;      /* solid: the past is settled */
+  margin-top: .6rem;
+  padding: .6rem .75rem .55rem;
+  border: 1px solid var(--bs-border-color, #dbe3ec);
+  border-radius: 12px;
+  background: var(--bs-tertiary-bg, #f8fafc);
+}
+.dss-timeline-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .4rem .75rem;
+}
+.dss-timeline-title { display: flex; align-items: center; gap: .5rem; font-size: .9rem; min-width: 0; }
+.dss-timeline-badge {
+  display: inline-block;
+  padding: .12rem .55rem;
+  border-radius: 999px;
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  background: var(--dss-blue-light, #eff6ff);
+  color: var(--dss-blue-dark, #1e40af);
+}
+.dss-timeline-badge[data-period="history"] { background: rgba(100, 116, 139, .14); color: #475569; }
+.dss-timeline-badge[data-period="future"] {
+  background: repeating-linear-gradient(135deg, rgba(37, 99, 235, .12) 0 6px, rgba(37, 99, 235, .04) 6px 12px);
+  color: var(--dss-blue-dark, #1e40af);
+  outline: 1px dashed rgba(37, 99, 235, .45);
+}
+.dss-timeline-pick { display: flex; gap: .35rem; align-items: center; }
+.dss-timeline-pick .form-select { width: auto; }
+
+.dss-timeline-track { margin-top: .45rem; }
+.dss-timeline-range {
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+/* The track is shaded in three zones; the "now" position is set by
+   map_timeline.js from the real bounds. */
+.dss-timeline-range::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg,
+      var(--dss-tl-history) 0 calc(var(--dss-tl-now) - 3px),
+      var(--dss-blue, #2563eb) calc(var(--dss-tl-now) - 3px) calc(var(--dss-tl-now) + 3px),
+      transparent calc(var(--dss-tl-now) + 3px)),
+    repeating-linear-gradient(135deg, rgba(37, 99, 235, .30) 0 5px, rgba(37, 99, 235, .10) 5px 10px);
+}
+.dss-timeline-range::-moz-range-track {
+  height: 8px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg,
+      var(--dss-tl-history) 0 calc(var(--dss-tl-now) - 3px),
+      var(--dss-blue, #2563eb) calc(var(--dss-tl-now) - 3px) calc(var(--dss-tl-now) + 3px),
+      transparent calc(var(--dss-tl-now) + 3px)),
+    repeating-linear-gradient(135deg, rgba(37, 99, 235, .30) 0 5px, rgba(37, 99, 235, .10) 5px 10px);
+}
+.dss-timeline-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--dss-blue, #2563eb);
+  box-shadow: 0 2px 6px rgba(13, 27, 42, .3);
+}
+.dss-timeline-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--dss-blue, #2563eb);
+  box-shadow: 0 2px 6px rgba(13, 27, 42, .3);
+}
+.dss-timeline-range:focus-visible { outline: none; }
+.dss-timeline-range:focus-visible::-webkit-slider-thumb { outline: 3px solid rgba(37, 99, 235, .45); outline-offset: 2px; }
+.dss-timeline[data-period="history"] .dss-timeline-range::-webkit-slider-thumb { border-color: #64748b; }
+.dss-timeline[data-period="history"] .dss-timeline-range::-moz-range-thumb { border-color: #64748b; }
+
+/* Zone captions, positioned from the same "now" value. */
+.dss-timeline-zones {
+  position: relative;
+  height: 1.1rem;
+  font-size: .72rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+.dss-timeline-zones span { position: absolute; top: 0; white-space: nowrap; }
+.dss-timeline-zones .is-history { left: 0; }
+.dss-timeline-zones .is-current { left: var(--dss-tl-now); transform: translateX(-50%); font-weight: 700; color: var(--dss-blue, #2563eb); }
+.dss-timeline-zones .is-future { right: 0; }
+@media (max-width: 575.98px) {
+  .dss-timeline-zones .is-current { display: none; }   /* no room between History and Future */
+  .dss-timeline-pick { width: 100%; }
+  .dss-timeline-pick .form-select { flex: 1 1 0; }
+}
+
+.dss-timeline-note {
+  min-height: 1.1rem;
+  margin-top: .15rem;
+  font-size: .76rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+.dss-timeline-detail { margin-top: .5rem; background: var(--bs-tertiary-bg, #f8fafc); }
+
+[data-bs-theme="dark"] .dss-timeline { --dss-tl-history: #3b4a5e; }
+[data-bs-theme="dark"] .dss-timeline-badge[data-period="history"] { background: rgba(148, 163, 184, .16); color: #cbd5e1; }

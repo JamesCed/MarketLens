@@ -25,7 +25,7 @@ from flask import Blueprint, jsonify, request, current_app
 from flask_login import login_required, current_user
 
 from app.extensions import db
-from app.models import LguData, MarketData, Notification, SystemSetting, SmeProfile
+from app.models import Notification, SystemSetting, SmeProfile
 from app.ml.constants import BUSINESS_TYPES, short_industry_label
 from app.ml.seed_data import BARANGAY_NAMES
 from app.services.response_cache import cached_on_data
@@ -36,14 +36,20 @@ api_bp = Blueprint("api", __name__)
 
 
 def _known_locations():
-    """Every location name the app currently has ANY data for, so the
-    map always has something to plot: the 76 official Tarlac City
-    barangays (see app/ml/seed_data.py) plus any real barangay/location
-    a real LGU upload or a real SME plan has already introduced."""
-    names = set(BARANGAY_NAMES)
-    names.update(row[0] for row in db.session.query(LguData.barangay).distinct().all())
-    names.update(row[0] for row in db.session.query(MarketData.location).distinct().all())
-    return sorted(names)
+    """The locations the map plots: Tarlac City's 76 official barangays
+    (app/ml/seed_data.py), and nothing else.
+
+    This used to add every distinct location name found in lgu_data and
+    market_data, which is how a stray "Baras" -- the same place as the
+    official "Baras-baras", written differently in one data source --
+    showed up as a 77th barangay with no shape on the map. Names like
+    that are now folded into their official barangay when the data is
+    stored (see seed_data.canonical_barangay and
+    startup_migrations._merge_barangay_aliases), and a name that is not
+    a Tarlac City barangay at all has no boundary to draw, so neither
+    belongs in the map's list. An SME plan for another location is
+    still scored; it just is not a map cell."""
+    return list(BARANGAY_NAMES)
 
 
 @api_bp.route("/locations")
@@ -75,26 +81,33 @@ def my_plans():
 
 @api_bp.route("/locations-forecast")
 @login_required
-@cached_on_data("locations-forecast", query_args=("industry_type",))
+@cached_on_data("locations-forecast", query_args=("industry_type", "as_of"))
 def locations_forecast():
-    """Powers the Saturation Map's pins: one ephemeral score (see
+    """Powers the Saturation Map: one ephemeral score (see
     forecasting_service.compute_scores -- no forecast_result row is
-    written) per known location, for the chosen industry_type."""
+    written) per barangay, for the chosen industry_type.
+
+    `as_of` ("YYYY-MM", optional) scores the map for another month --
+    history back to January 2020, or the model's prediction up to a year
+    ahead. Each row then says which: `period` (history / current /
+    future) and `basis` (recorded / back-projected / current /
+    predicted). See app/services/saturation_timeline_service.py."""
     from app.ml.seed_data import get_real_population, get_barangay_profile
+    from app.services.saturation_timeline_service import saturation_map_at
 
     industry_type = request.args.get("industry_type", BUSINESS_TYPES[0])
     locations = _known_locations()
 
-    # ONE batched scoring call, not one per barangay. The loop that was
-    # here ran compute_scores() 76 times: 228 database round trips and
-    # 76 separate passes over the Random Forest, measured at 4.24s for
-    # a page that cannot draw until it returns. Batched it is 0.05s and
-    # 3 queries, with byte-identical output -- see
-    # forecasting_service.compute_scores_batch.
-    scored = compute_scores_batch([(industry_type, location) for location in locations])
+    # ONE batched scoring call, not one per barangay (inside
+    # saturation_map_at). The loop that used to be here ran
+    # compute_scores() 76 times: 228 database round trips, measured at
+    # 4.24s for a page that cannot draw until it returns. Batched it is
+    # 0.05s -- see forecasting_service.compute_scores_batch.
+    scored = saturation_map_at(industry_type, locations, as_of=request.args.get("as_of"))
 
     rows = []
-    for location, scores in zip(locations, scored):
+    for entry in scored:
+        location, scores = entry["location"], entry["scores"]
         profile = get_barangay_profile(location) or {}
         rows.append(
             {
@@ -103,8 +116,11 @@ def locations_forecast():
                 "saturation_index": scores["saturation_index"],
                 "viability_score": scores["viability_score"],
                 "cluster_label": scores["cluster_label"],
-                "competitor_count": scores["competitor_count"],
+                "competitor_count": entry["competitor_count"],
                 "confidence_level": scores["confidence_level"],
+                "period": entry["period"],
+                "as_of": entry["as_of"],
+                "basis": entry["basis"],
                 # Carried here so the map's hover tooltip can name the
                 # industry and show the barangay's real 2024 PSA
                 # population without a second round trip per hover.
@@ -256,25 +272,29 @@ def barangay_coords():
 
 @api_bp.route("/barangay-choropleth")
 @login_required
-@cached_on_data("barangay-choropleth")
+# "-official": a new key, so a deployment does not keep serving the old
+# computed cells from its on-disk cache after this change.
+@cached_on_data("barangay-choropleth-official")
 def barangay_choropleth():
-    """Polygon cells for the Saturation Map's choropleth -- see
-    app/services/choropleth_service.py for exactly what these polygons
-    are (each barangay's real coordinate's nearest-neighbor region,
-    clipped to Tarlac City's REAL administrative boundary -- not a
-    bounding rectangle) and are NOT (a surveyed per-barangay boundary
-    -- no public dataset publishes one for Tarlac City's 76 barangays;
-    see that module's docstring). Geometry only depends on the
-    barangay coordinate set, not on industry_type/overlay mode, so the
-    front end fetches this once per page load and re-styles the same
-    cells as the industry/overlay selectors change."""
-    from app.services.choropleth_service import compute_choropleth_geojson
+    """The barangay shapes for the Saturation Map's choropleth.
+
+    The OFFICIAL PSA/NAMRIA barangay boundaries (2023) when the
+    boundaries file is present -- which it is in every normal deployment
+    -- and the older computed cells only as a fallback. See
+    app/services/choropleth_service.py. Geometry does not depend on
+    industry_type or the overlay, so the front end fetches this once per
+    page load and re-styles the same shapes as the selectors change."""
+    from app.services.choropleth_service import barangay_boundaries_geojson, compute_choropleth_geojson
     from app.services.geocoding_service import merged_coords
+
+    app_obj = current_app._get_current_object()
+    official = barangay_boundaries_geojson(app_obj, names=_known_locations())
+    if official is not None and official["features"]:
+        return jsonify(official)
 
     api_key = (current_app.config.get("GOOGLE_PLACES_API_KEY") or "").strip()
     geocoding_key = (current_app.config.get("GOOGLE_GEOCODING_API_KEY") or "").strip()
 
-    app_obj = current_app._get_current_object()
     names = _known_locations()
     coords, _resolved_now, _pending = merged_coords(
         app_obj, names, api_key=api_key, limit=12, geocoding_key=geocoding_key

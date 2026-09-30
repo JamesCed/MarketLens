@@ -246,8 +246,12 @@ def _resolve_barangay(raw_value, row_number, errors):
         errors.append(RowError(row_number, "barangay", raw_value, "barangay is required"))
         return None
 
+    from app.ml.seed_data import canonical_barangay
+
     lookup = {b.casefold(): b for b in BARANGAY_NAMES}
-    canonical = lookup.get(name.casefold())
+    # Official name however written, a known alias ("Baras" is
+    # Baras-baras), or the alternate PSA prints in parentheses.
+    canonical = lookup.get(name.casefold()) or canonical_barangay(name)
     if canonical:
         return canonical
 
@@ -428,9 +432,13 @@ def derive_permit_counts(file_path):
 
     from app.ml.constants import canonical_industry_for
 
+    from app.ml.seed_data import canonical_barangay
+
     counts = {}
     for _index, row in df.iterrows():
-        barangay = str(row.get("barangay") or "").strip()
+        # Filed under the official name ("Baras" -> "Baras-baras"); a
+        # name that is not a Tarlac City barangay is not counted at all.
+        barangay = canonical_barangay(row.get("barangay"))
         raw_industry = row.get(column)
         if not barangay or raw_industry is None or str(raw_industry).strip() == "":
             continue
@@ -495,9 +503,13 @@ def derive_permit_subcategory_counts(file_path):
     if column not in text_columns:
         text_columns.append(column)
 
+    from app.ml.seed_data import canonical_barangay
+
     counts = {}
     for _index, row in df.iterrows():
-        barangay = str(row.get("barangay") or "").strip()
+        # Filed under the official name ("Baras" -> "Baras-baras"); a
+        # name that is not a Tarlac City barangay is not counted at all.
+        barangay = canonical_barangay(row.get("barangay"))
         raw_industry = row.get(column)
         if not barangay or raw_industry is None or str(raw_industry).strip() == "":
             continue

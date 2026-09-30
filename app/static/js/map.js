@@ -96,6 +96,10 @@
 //                             barangay stays visible (this is "here is
 //                             your plan's barangay", not an isolate).
 //                             Unset or empty = the normal city-wide view.
+//     DSS_MAP_AS_OF           "YYYY-MM": score the map for that month --
+//                             history, or the model's prediction ahead
+//                             (set by the Saturation Map's timeline, see
+//                             map_timeline.js). Unset or empty = now.
 //     DSS_SATURATION_MAP_URL  When set, the info popup ends with an
 //                             "Open in full map" link to the Saturation
 //                             Map, focused on that barangay and industry.
@@ -599,6 +603,23 @@ function topIndustriesHtml(items) {
     .join("");
 }
 
+// When the timeline shows another month, the panel adds that month's
+// figure under today's -- the details below it (businesses, population)
+// are today's, and say nothing about the chosen month.
+function timelineDetailHtml(location) {
+  const row = (dssLocationsCache || []).find((r) => r.location === location);
+  const label = periodLabel(row);
+  if (!label) return "";
+  return `
+    <div class="small border rounded px-2 py-1 dss-timeline-detail">
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <span class="text-muted">Saturation <span class="d-block" style="font-size:.72rem;">${escapeHtml(label)}</span></span>
+        <strong class="text-nowrap">${Number(row.saturation_index).toFixed(1)}%</strong>
+      </div>
+      <div class="text-muted" style="font-size:.72rem;">${Number(row.competitor_count).toLocaleString()} businesses ${row.basis === "predicted" ? "expected" : "at the time"} &middot; ${escapeHtml(displayLabelFor(row.cluster_label))}</div>
+    </div>`;
+}
+
 function renderDetailPanel(detail) {
   const panel = document.getElementById("detailPanel");
   if (!panel) return;
@@ -646,6 +667,7 @@ function renderDetailPanel(detail) {
         <strong class="text-nowrap">${Number(detail.saturation_index).toFixed(1)}%</strong>
       </div>
     </div>
+    ${timelineDetailHtml(detail.location)}
     ${demandDetailHtml()}
     <div class="alert alert-light border mb-0 mt-3">
       <strong>Recommended Actions</strong>
@@ -832,7 +854,7 @@ function hoverTooltipHtml(row, color, isPopulationMode) {
       <div>Businesses: <strong>${Number(row.competitor_count).toLocaleString()}</strong></div>
       ${population}
       ${density}
-      <div style="color:#6c757d;font-size:.72rem;margin-top:.25rem;">Saturation ${row.saturation_index}% &middot; click to focus, double-click to show all</div>
+      <div style="color:#6c757d;font-size:.72rem;margin-top:.25rem;">Saturation ${row.saturation_index}%${periodLabel(row) ? ` (${escapeHtml(periodLabel(row))})` : ""} &middot; click to focus, double-click to show all</div>
     </div>`;
 }
 
@@ -1197,6 +1219,26 @@ function showMapLoading(on) {
   }, 200);
 }
 
+// Tells the page's other scripts (the timeline) what the map now shows.
+function announceLocationsLoaded(rows) {
+  if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") return;
+  document.dispatchEvent(new CustomEvent("dss:locations-loaded", { detail: { rows } }));
+}
+
+// "Mar 2027 · predicted" for a row scored for another month, or "" for
+// one scored for now -- used by the hover card and the detail panel.
+const BASIS_LABEL = {
+  recorded: "on file",
+  "back-projected": "back-projected",
+  predicted: "predicted",
+};
+function periodLabel(row) {
+  if (!row || !row.period || row.period === "current" || !row.as_of) return "";
+  const [year, month] = String(row.as_of).split("-").map(Number);
+  const name = new Date(year, month - 1, 1).toLocaleString(undefined, { month: "short", year: "numeric" });
+  return `${name} · ${BASIS_LABEL[row.basis] || row.basis}`;
+}
+
 async function loadLocations() {
   const businessType = currentBusinessType();
   showMapLoading(true);
@@ -1218,13 +1260,18 @@ async function loadLocationsInner(businessType) {
   // dssCoordsCache empty and crashing updateCoordStatus() below.
   // /api/barangay-coords is a plain backend endpoint independent of the
   // Maps JS SDK, so fetch it here unconditionally instead.
+  // DSS_MAP_AS_OF ("YYYY-MM", set by the Saturation Map's timeline):
+  // score the map for another month. Unset or empty = now.
+  const asOf = typeof window.DSS_MAP_AS_OF === "string" ? window.DSS_MAP_AS_OF : "";
+  const asOfParam = asOf ? `&as_of=${encodeURIComponent(asOf)}` : "";
   const [rows] = await Promise.all([
     fetch(
-      `${window.DSS_LOCATIONS_FORECAST_URL}?industry_type=${encodeURIComponent(businessType)}`
+      `${window.DSS_LOCATIONS_FORECAST_URL}?industry_type=${encodeURIComponent(businessType)}${asOfParam}`
     ).then((r) => r.json()),
     loadCoords(),
   ]);
   dssLocationsCache = rows;
+  announceLocationsLoaded(rows);
   renderLocationList(rows);
   renderLocationTable(rows);
   await drawChoropleth(rows);
@@ -1410,6 +1457,12 @@ function addGoogleAttributionControl() {
   };
   control.addTo(dssMap);
 }
+
+// For the timeline: re-score the map (industry, overlay and isolation
+// stay as they are). Resolves once the map is redrawn.
+window.dssReloadMap = function () {
+  return loadLocations();
+};
 
 // The Saturation Map's side panel was folded or unfolded. Unfolding
 // re-fills the panel for the barangay picked while it was hidden (those

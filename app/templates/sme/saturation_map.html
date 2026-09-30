@@ -92,6 +92,37 @@
         population density, where there is nothing to filter. Every id
         and data-attribute here is read by static/js/map.js.
       #}
+      {#
+        The month timeline: History | Current | Future (predicted).
+        Drag the slider or pick a month and year; the map re-scores every
+        barangay for that month. See static/js/map_timeline.js and
+        app/services/saturation_timeline_service.py.
+      #}
+      <div class="dss-timeline" id="mapTimeline"
+           data-start="{{ timeline.start }}" data-current="{{ timeline.current }}" data-end="{{ timeline.end }}">
+        <div class="dss-timeline-top">
+          <div class="dss-timeline-title">
+            <span class="dss-timeline-badge" id="timelineBadge" data-period="current">Current</span>
+            <strong id="timelineLabel">This month</strong>
+          </div>
+          <div class="dss-timeline-pick">
+            <select id="timelineMonth" class="form-select form-select-sm" aria-label="Month"></select>
+            <select id="timelineYear" class="form-select form-select-sm" aria-label="Year"></select>
+            <button type="button" id="timelineNow" class="btn btn-sm btn-outline-primary">Now</button>
+          </div>
+        </div>
+        <div class="dss-timeline-track">
+          <input type="range" id="timelineRange" class="dss-timeline-range" min="0" max="0" step="1" value="0"
+                 aria-label="Month to show on the map">
+          <div class="dss-timeline-zones" aria-hidden="true">
+            <span class="is-history">History</span>
+            <span class="is-current">Current</span>
+            <span class="is-future">Future</span>
+          </div>
+        </div>
+        <div class="dss-timeline-note" id="timelineNote" aria-live="polite"></div>
+      </div>
+
       <div class="dss-map-legend" id="saturationLegend">
         <div class="dss-map-legend-items" role="group" aria-label="Show or hide saturation levels">
           <span class="dss-map-legend-label">Show:</span>
@@ -163,9 +194,9 @@
           <li><strong>Why estimates:</strong> Tarlac City has no live business registry, and checking
             all 20 industries in all 76 barangays would take thousands of paid Google calls. An
             estimate is replaced once the real count is fetched.</li>
-          <li><strong>Boundaries:</strong> the bold blue line is the real city border. The lines
-            inside it are approximations &mdash; no official barangay boundary map is published, so
-            each area is drawn around that barangay's real location.</li>
+          <li><strong>Boundaries:</strong> each barangay is drawn with its official boundary from
+            the PSA / NAMRIA administrative boundary map (2023).
+            The bold blue line is the city border.</li>
           <li><strong>How to use it:</strong> as a guide to where to look, not a survey.</li>
         </ul>
       </details>
@@ -182,6 +213,8 @@
           Map &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
           contributors (<a href="https://opendatacommons.org/licenses/odbl/" target="_blank" rel="noopener">ODbL</a>)
           &middot; <a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a>
+          &middot; Barangay boundaries &copy; PSA &amp; NAMRIA (2023), via
+          <a href="https://data.humdata.org/dataset/cod-ab-phl" target="_blank" rel="noopener">OCHA HDX</a>
           &middot; Business counts powered by Google (Places API; counts only, no place records stored)
         </span>
       </div>
@@ -223,9 +256,8 @@
   // REAL, PhilAtlas-sourced coordinates for all 76 Tarlac City barangays
   // (app/services/geocoding_service.py + app/static/data/barangay_coords.json).
   window.DSS_BARANGAY_COORDS_URL = "{{ url_for('api.barangay_coords') }}";
-  // Choropleth polygon cells computed from those same real coordinates,
-  // clipped to Tarlac City's REAL boundary (app/services/choropleth_service.py)
-  // -- see map.js's module docstring.
+  // The official PSA/NAMRIA barangay boundaries (2023) -- see
+  // app/services/choropleth_service.py.
   window.DSS_BARANGAY_CHOROPLETH_URL = "{{ url_for('api.barangay_choropleth') }}";
   // Tarlac City's own real outline (OpenStreetMap, ODbL -- see the
   // attribution note under the map), drawn as its own bold overlay.
@@ -240,6 +272,7 @@
   window.DSS_DEMAND_SUMMARY = {{ demand_summary|tojson }};
 </script>
 <script src="{{ url_for('static', filename='js/map.js') }}"></script>
+<script src="{{ url_for('static', filename='js/map_timeline.js') }}"></script>
 <script>
   // Side panel hide / show. The choice is remembered in this browser
   // only (a convenience, so it is fine if storage is unavailable). While
