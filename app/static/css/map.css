@@ -102,3 +102,114 @@
   color: var(--bs-secondary-color, #6c757d);
 }
 .dss-map-footnote a { color: inherit; text-decoration: underline; }
+
+/* =====================================================================
+   Page layout (revisions round)
+   ===================================================================== */
+
+/* Header: title left, controls right, one row where it fits. */
+.dss-sat-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem 1.25rem;
+}
+/* The title gives way (its one-line blurb wraps) before the controls
+   are pushed onto a second row. */
+.dss-sat-title { flex: 1 1 240px; min-width: 0; }
+.dss-sat-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-left: auto;          /* stays on the right even after wrapping */
+}
+.dss-sat-search { display: flex; gap: .25rem; }
+.dss-sat-search .form-control { width: 180px; }
+.dss-sat-industry { width: 210px; }
+.dss-sat-overlay { width: 222px; }
+@media (max-width: 767.98px) {
+  .dss-sat-toolbar { width: 100%; flex-wrap: wrap; }
+  .dss-sat-search { flex: 1 1 100%; }
+  .dss-sat-search .form-control { width: auto; flex: 1 1 auto; }
+  .dss-sat-industry, .dss-sat-overlay { flex: 1 1 0; width: auto; min-width: 0; }
+}
+
+/* Map + side panel. The two columns share one row height: the map card
+   grows to the side panel's height (no dead band under the map), and the
+   barangay list grows if the map is the taller one. */
+.dss-sat-layout {
+  --dss-side-w: 380px;
+  --dss-sat-gap: 1rem;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--dss-side-w);
+  gap: var(--dss-sat-gap);
+  align-items: stretch;
+  transition: grid-template-columns .25s ease;
+}
+.dss-sat-main { min-width: 0; }
+.dss-sat-map-card { height: 100%; display: flex; flex-direction: column; }
+.dss-sat-map-card .dss-map-wrap { flex: 1 1 auto; display: flex; flex-direction: column; }
+/* At least most of the screen, never under 520px; taller when the side
+   panel beside it is taller. */
+.dss-sat-map-card #dss-map { flex: 1 1 auto; height: auto; min-height: max(520px, calc(100vh - 360px)); }
+
+.dss-sat-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.dss-sat-list-card { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.dss-sat-list-card #locationList { flex: 1 1 0; min-height: 260px; overflow-y: auto; }
+
+/* The fold-away tab, centred on the gap between map and panel. */
+.dss-side-toggle {
+  position: absolute;
+  top: clamp(80px, 38%, 320px);
+  right: calc(var(--dss-side-w) + var(--dss-sat-gap) / 2);
+  transform: translateX(50%);
+  z-index: 5;
+  width: 24px;
+  height: 56px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--bs-border-color, #dbe3ec);
+  background: var(--bs-body-bg, #fff);
+  color: var(--dss-blue, #2563eb);
+  box-shadow: 0 4px 14px -6px rgba(13, 27, 42, .35);
+  transition: right .25s ease, background .15s ease, color .15s ease;
+}
+.dss-side-toggle:hover { background: var(--dss-blue, #2563eb); color: #fff; }
+.dss-side-toggle:focus-visible { outline: 3px solid var(--dss-blue, #2563eb); outline-offset: 2px; }
+
+/* Folded: the panel takes no width and the map fills the row; the tab
+   sits on the map card's right edge, ready to bring the panel back. */
+.dss-sat-layout.is-side-collapsed { grid-template-columns: minmax(0, 1fr) 0; gap: 0; }
+.dss-sat-layout.is-side-collapsed .dss-sat-side { visibility: hidden; overflow: hidden; }
+.dss-sat-layout.is-side-collapsed .dss-side-toggle { right: 0; }
+.dss-side-toggle svg { transition: transform .25s ease; }
+.dss-sat-layout.is-side-collapsed .dss-side-toggle svg { transform: rotate(180deg); }
+
+/* Stacked on a narrow screen: the panel sits under the map and there is
+   nothing to fold. */
+@media (max-width: 991.98px) {
+  .dss-sat-layout,
+  .dss-sat-layout.is-side-collapsed { grid-template-columns: minmax(0, 1fr); gap: var(--dss-sat-gap); }
+  .dss-sat-layout.is-side-collapsed .dss-sat-side { visibility: visible; overflow: visible; }
+  .dss-side-toggle { display: none; }
+  .dss-sat-map-card #dss-map { min-height: 420px; }
+  .dss-sat-list-card #locationList { max-height: 360px; flex: 0 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dss-sat-layout, .dss-side-toggle, .dss-side-toggle svg { transition: none; }
+}
+
+/* The folded household-spending block in the details panel. */
+.dss-demand-fold > summary { cursor: pointer; }

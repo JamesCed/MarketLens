@@ -23,35 +23,44 @@
 {% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <div>
+{#
+  Header: title on the left, every control on the right in one row --
+  search, industry and overlay. On a narrower screen the controls drop
+  under the title but stay right-aligned; on a phone they fill the width.
+#}
+<div class="dss-sat-head mb-3">
+  <div class="dss-sat-title">
     <h4 class="mb-0">Interactive Saturation Map</h4>
     <p class="text-muted small mb-0">See how crowded each Tarlac City barangay is for the industry you pick.</p>
   </div>
-  <!-- The search bar + industry filter, grouped in the card header area
-       requested in the reference screenshot. -->
-  <div class="d-flex flex-wrap gap-2 align-items-center">
-    <form id="mapSearchForm" class="d-flex" role="search">
+  <div class="dss-sat-toolbar" role="group" aria-label="Map controls">
+    <form id="mapSearchForm" class="dss-sat-search" role="search">
       <input id="mapSearchInput" class="form-control form-control-sm" type="search"
-             list="allLocationsList" placeholder="Search a barangay in Tarlac City..." style="min-width:220px;">
+             list="allLocationsList" placeholder="Search a barangay..." aria-label="Search a barangay in Tarlac City">
       <datalist id="allLocationsList">
         {% for loc in locations %}<option value="{{ loc }}">{% endfor %}
       </datalist>
-      <button class="btn btn-outline-primary btn-sm ms-1" type="submit"><i class="bi bi-search"></i></button>
+      <button class="btn btn-outline-primary btn-sm" type="submit" aria-label="Search"><i class="bi bi-search"></i></button>
     </form>
-    <select id="businessTypeSelect" class="form-select form-select-sm" style="max-width:220px;">
+    <select id="businessTypeSelect" class="form-select form-select-sm dss-sat-industry" aria-label="Industry">
       {% for bt in business_types %}<option value="{{ bt }}">{{ bt }}</option>{% endfor %}
     </select>
-    <select id="mapOverlaySelect" class="form-select form-select-sm" style="max-width:220px;" title="What the shaded zones represent">
+    <select id="mapOverlaySelect" class="form-select form-select-sm dss-sat-overlay" title="What the shaded zones represent" aria-label="Map overlay">
       <option value="saturation">Overlay: Market Saturation</option>
       <option value="population">Overlay: Population Density</option>
     </select>
   </div>
 </div>
 
-<div class="row g-3">
-  <div class="col-lg-8">
-    <div class="dss-card p-2">
+{#
+  The map and the side panel (barangay details + the list). The map card
+  stretches to the side panel's height, so there is no empty band under
+  it. The side panel can be folded away with the tab on its edge, and the
+  map then takes the full width.
+#}
+<div class="dss-sat-layout" id="satLayout">
+  <div class="dss-sat-main">
+    <div class="dss-card p-2 dss-sat-map-card">
       <div id="mapIsolationBanner"></div>
       <div class="d-flex justify-content-end mb-2">
         <button type="button" id="hideSaturationToggle" class="btn btn-outline-secondary btn-sm">
@@ -179,15 +188,27 @@
     </div>
   </div>
 
-  <div class="col-lg-4">
-    <div class="dss-card mb-3" id="detailPanel">
+  <button type="button" class="dss-side-toggle" id="satSideToggle"
+          aria-controls="satSide" aria-expanded="true" title="Hide the details panel">
+    {# Drawn inline rather than from the icon font, so the tab still shows
+       an arrow if that font fails to load. It points the way the panel
+       will move, and turns round (CSS) when the panel is folded. #}
+    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M5.5 2.5 11 8l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="visually-hidden">Hide the details panel</span>
+  </button>
+
+  <aside class="dss-sat-side" id="satSide" aria-label="Barangay details">
+    <div class="dss-card" id="detailPanel">
       <div class="text-muted text-center py-4">Select a barangay to see details.</div>
     </div>
-    <div class="dss-card">
+    <div class="dss-card dss-sat-list-card">
       <h6 class="mb-3">All Barangays</h6>
-      <div id="locationList" class="list-group list-group-flush" style="max-height:360px; overflow-y:auto;"></div>
+      <div id="locationList" class="list-group list-group-flush"></div>
     </div>
-  </div>
+  </aside>
 </div>
 {% endblock %}
 
@@ -219,5 +240,37 @@
   window.DSS_DEMAND_SUMMARY = {{ demand_summary|tojson }};
 </script>
 <script src="{{ url_for('static', filename='js/map.js') }}"></script>
+<script>
+  // Side panel hide / show. The choice is remembered in this browser
+  // only (a convenience, so it is fine if storage is unavailable). While
+  // the panel is hidden, map.js shows a barangay's details in a popup on
+  // the map instead -- see hasDetailPanel() there.
+  (function () {
+    const layout = document.getElementById("satLayout");
+    const toggle = document.getElementById("satSideToggle");
+    if (!layout || !toggle) return;
+    const KEY = "dss.satMap.sideCollapsed";
+    const label = toggle.querySelector(".visually-hidden");
+
+    function apply(collapsed) {
+      layout.classList.toggle("is-side-collapsed", collapsed);
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+      const text = collapsed ? "Show the details panel" : "Hide the details panel";
+      toggle.title = text;
+      if (label) label.textContent = text;
+    }
+
+    let collapsed = false;
+    try { collapsed = window.localStorage.getItem(KEY) === "1"; } catch (e) { /* storage blocked */ }
+    apply(collapsed);
+
+    toggle.addEventListener("click", () => {
+      collapsed = !layout.classList.contains("is-side-collapsed");
+      apply(collapsed);
+      try { window.localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch (e) { /* storage blocked */ }
+      document.dispatchEvent(new CustomEvent("dss:side-panel", { detail: { collapsed } }));
+    });
+  })();
+</script>
 
 {% endblock %}

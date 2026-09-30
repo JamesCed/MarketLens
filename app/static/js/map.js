@@ -236,6 +236,8 @@ function pesoShort(n) {
 // hover tooltip.
 function demandDetailHtml() {
   if (!dssDemandSummary) return "";
+  // Folded by default: the figures are the same for every barangay, so
+  // they need not push the barangay's own numbers down the panel.
   const rows = dssDemandSummary.categories
     .map(
       (c) =>
@@ -246,8 +248,8 @@ function demandDetailHtml() {
     )
     .join("");
   return `
-    <div class="small mt-3">
-      <div class="fw-semibold mb-1">Est. Household Demand <span class="text-muted" style="font-weight:400;">(Tarlac City avg., not barangay-specific)</span></div>
+    <details class="small mt-3 dss-demand-fold">
+      <summary class="fw-semibold mb-1">Est. Household Demand <span class="text-muted" style="font-weight:400;">(Tarlac City avg., not barangay-specific)</span></summary>
       ${rows}
       <div class="text-muted" style="font-size:.75rem;margin-top:.35rem;">
         Based on Tarlac's real ${dssDemandSummary.expenditure_year} PSA FIES average annual family expenditure
@@ -256,7 +258,7 @@ function demandDetailHtml() {
         category breakdown. * Recreation is carried over from a separate 2021 PSA/CPBRD factsheet (the 2023
         release folds it into a combined "Other" bucket). Same figure for every barangay.
       </div>
-    </div>`;
+    </details>`;
 }
 
 // Deep-link support: a search result on the SME Home page links here
@@ -296,8 +298,15 @@ function focusLocationSetting() {
 // Home mini map does not, and shows them in a popup on the map instead.
 // Checked on every call rather than once, because the panel is the only
 // thing that decides which of the two a page gets.
+//
+// A Saturation Map whose side panel has been folded away (the tab on its
+// edge) counts as having none: details then open in the map popup, the
+// same as on the Home page, instead of in a panel nobody can see.
 function hasDetailPanel() {
-  return !!document.getElementById("detailPanel");
+  const panel = document.getElementById("detailPanel");
+  if (!panel) return false;
+  const folded = typeof panel.closest === "function" && panel.closest(".is-side-collapsed");
+  return !folded;
 }
 
 // Industry names reach this file from the database, where industry_type
@@ -594,7 +603,7 @@ function renderDetailPanel(detail) {
   const panel = document.getElementById("detailPanel");
   if (!panel) return;
   const actions = (detail.recommended_actions || [])
-    .map((a) => `<li>${a}</li>`)
+    .map((a) => `<li>${escapeHtml(a)}</li>`)
     .join("") || "<li>No recommendation available.</li>";
   const population = detail.population !== null && detail.population !== undefined
     ? Number(detail.population).toLocaleString()
@@ -619,7 +628,7 @@ function renderDetailPanel(detail) {
       <div class="d-flex align-items-start gap-2">
         <i class="bi bi-geo-alt-fill fs-4 text-primary"></i>
         <div>
-          <h5 class="mb-0">${detail.location}</h5>
+          <h5 class="mb-0">${escapeHtml(detail.location)}</h5>
           <span class="dss-stat-pill ${pillClass(detail.cluster_label)}">${displayLabelFor(detail.cluster_label)}</span>
         </div>
       </div>
@@ -631,7 +640,11 @@ function renderDetailPanel(detail) {
       ${topIndustriesHtml(detail.top_industries)}
       <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Population</span><strong>${population}</strong></div>
       <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Population Density <span class="text-muted" style="font-weight:400;">(fixed)</span></span><strong>${density}</strong></div>
-      <div class="d-flex justify-content-between py-1"><span class="text-muted">Saturation Score <span class="text-muted" style="font-weight:400;">(for ${detail.industry_type})</span></span><strong>${detail.saturation_index.toFixed(1)}%</strong></div>
+      <div class="d-flex justify-content-between align-items-start gap-2 py-1">
+        <span class="text-muted">Saturation Score
+          <span class="d-block" style="font-size:.72rem;">for ${escapeHtml(detail.industry_type)}</span></span>
+        <strong class="text-nowrap">${Number(detail.saturation_index).toFixed(1)}%</strong>
+      </div>
     </div>
     ${demandDetailHtml()}
     <div class="alert alert-light border mb-0 mt-3">
@@ -1397,6 +1410,24 @@ function addGoogleAttributionControl() {
   };
   control.addTo(dssMap);
 }
+
+// The Saturation Map's side panel was folded or unfolded. Unfolding
+// re-fills the panel for the barangay picked while it was hidden (those
+// picks opened a popup instead); folding closes nothing -- the next pick
+// simply opens a popup.
+document.addEventListener("dss:side-panel", function (event) {
+  const collapsed = event.detail && event.detail.collapsed;
+  if (!collapsed) {
+    closeInfoPopup();
+    if (dssSelectedLocation) {
+      selectLocation(dssSelectedLocation);
+    } else if (dssLocationsCache && dssLocationsCache.length) {
+      // Opened folded, nothing picked yet: fill the panel the way a
+      // normal first load does, rather than leave it empty.
+      selectLocation(dssLocationsCache[0].location);
+    }
+  }
+});
 
 document.addEventListener("DOMContentLoaded", function () {
   const select = document.getElementById("businessTypeSelect");

@@ -345,3 +345,51 @@ def test_leaflet_contract_under_node():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ALL LEAFLET CONTRACT CHECKS PASSED" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Layout follow-up: controls on the right, map as tall as the side panel,
+# and a tab that folds the side panel away.
+# ---------------------------------------------------------------------------
+
+def test_the_controls_sit_in_the_header_to_the_right_of_the_title():
+    template = _read(MAP_TEMPLATE)
+    head = template.split('class="dss-sat-head', 1)[1].split('id="satLayout"', 1)[0]
+    title_at = head.index("dss-sat-title")
+    toolbar = head.split('class="dss-sat-toolbar"', 1)[1]
+    assert head.index('class="dss-sat-toolbar"') > title_at
+    for control in ('id="mapSearchForm"', 'id="businessTypeSelect"', 'id="mapOverlaySelect"'):
+        assert control in toolbar
+    css = _read(os.path.join(ROOT, "app", "static", "css", "map.css"))
+    rule = re.search(r"\.dss-sat-toolbar\s*\{([^}]+)\}", css).group(1)
+    assert "margin-left: auto" in rule, "the controls should stay on the right when they wrap"
+
+
+def test_the_map_grows_to_the_side_panels_height():
+    css = _read(os.path.join(ROOT, "app", "static", "css", "map.css"))
+    assert re.search(r"\.dss-sat-map-card\s*\{[^}]*height:\s*100%", css)
+    map_rule = re.search(r"\.dss-sat-map-card #dss-map\s*\{([^}]+)\}", css).group(1)
+    assert "flex: 1 1 auto" in map_rule and "height: auto" in map_rule and "min-height" in map_rule
+    assert re.search(r"\.dss-sat-layout\s*\{[^}]*align-items:\s*stretch", css)
+
+
+def test_the_side_panel_can_be_folded_away_and_brought_back():
+    template = _read(MAP_TEMPLATE)
+    assert 'id="satSideToggle"' in template
+    assert 'aria-controls="satSide"' in template and 'id="satSide"' in template
+    assert 'aria-expanded="true"' in template
+    # Both panels live inside the foldable side column.
+    side = template.split('id="satSide"', 1)[1]
+    assert 'id="detailPanel"' in side and 'id="locationList"' in side
+    script = template.split('id="satSideToggle"', 1)[1]
+    assert 'classList.toggle("is-side-collapsed"' in script
+    assert "try { collapsed = window.localStorage" in script, "storage must be guarded"
+    css = _read(os.path.join(ROOT, "app", "static", "css", "map.css"))
+    assert re.search(r"\.is-side-collapsed\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 0", css)
+
+
+def test_a_folded_panel_sends_details_to_the_map_popup():
+    js = _read(MAP_JS)
+    body = js.split("function hasDetailPanel()", 1)[1].split("\n}", 1)[0]
+    assert 'closest(".is-side-collapsed")' in body
+    assert 'addEventListener("dss:side-panel"' in js
