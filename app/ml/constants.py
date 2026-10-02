@@ -240,6 +240,168 @@ N_ESTIMATORS = 100  # "T = 100" per the paper's Random Forest formula
 
 
 # =====================================================================
+# STAGE 2 -- THE PLAN VIABILITY MODEL
+# =====================================================================
+# Stage 1 (FEATURE_NAMES above) answers "how crowded is this market?"
+# and nothing else: two SMEs opening the same kind of business in the
+# same barangay get the same Market Saturation Index whether one has
+# P5,000,000 behind it and the other P20,000, whether one hires ten
+# people and the other runs it alone. That is correct for a market
+# measure and wrong for a forecast of a PLAN.
+#
+# Stage 2 takes stage 1's output as one input among fourteen and adds
+# every business parameter the owner actually typed in (capital, staff,
+# stage, price list, offering, idea) to predict a Plan Viability Index
+# (0-100). The full formula -- every input, every derived quantity,
+# every weight below -- is written out in Reference/FORECAST_MODEL.md;
+# app/ml/plan_model.py is the code those words describe.
+#
+# The constants live HERE, next to stage 1's, for the same reason
+# FEATURE_NAMES does: the training script and the live service both
+# read them, and two copies would drift.
+
+# A Philippine retail or service shop typically trades six days a week:
+# 52 weeks x 6 days / 12 months = 26 working days a month. (DOLE's
+# equivalent-monthly-rate factor for six-day workers is 313/12 = 26.08;
+# 26 is the same figure rounded to whole days.)
+OPERATING_DAYS_PER_MONTH = 26
+
+# The daily wage one employee costs. DOLE Wage Order No. RBIII-26 (2nd
+# tranche, effective 16 April 2026) sets Tarlac's minimum at P590/day
+# for retail and service establishments (P600 for other
+# non-agriculture). Payroll here is employees x wage x 26 working days --
+# a minimum-wage floor, deliberately: it is the one labour cost every
+# plan is legally bound to, and anything above it is the owner's choice.
+# An Admin can change it (System Settings > Plan forecast assumptions,
+# SystemSetting `plan_daily_wage_php`) when the next wage order lands,
+# without retraining -- the model reads wage only through monthly fixed
+# cost and capital runway, so a new wage moves the forecast through
+# those features exactly as a rent change would.
+DEFAULT_DAILY_WAGE_PHP = 590.0
+
+# The range an Admin's daily wage is accepted in, both when it is saved
+# (admin_controller._save_plan_assumptions) and when it is read back
+# (plan_forecast_service.plan_assumptions -- a value outside it falls
+# back to the default above). "Greater than zero" alone was not a bound:
+# a wage of 1e37 passed it, overflowed the forest's float32 input on
+# every plan with staff, and took the Home page down for all of them.
+# P1-P100,000 a day is far wider than any Philippine wage order and
+# still a finite, plausible number of pesos.
+DAILY_WAGE_RANGE = (1.0, 100_000.0)
+
+# Share of each sale left after paying for the goods sold. 40% is an
+# ASSUMPTION -- a middle-of-the-road figure for food service and retail
+# -- not a measurement of any plan: the app does not collect a cost of
+# goods. It is used only to turn the owner's own prices into "sales a
+# day needed to cover fixed costs". Admin-overridable (SystemSetting
+# `plan_gross_margin`, accepted range 0.05-0.95).
+DEFAULT_GROSS_MARGIN = 0.40
+GROSS_MARGIN_RANGE = (0.05, 0.95)
+
+# The demand ceiling a price list is checked against: every resident a
+# business can expect to serve buys from it at most ONCE A WEEK. A
+# generous ceiling on purpose -- if a plan needs more sales a day than
+# even this allows, no realistic share of the market will carry it.
+PURCHASES_PER_RESIDENT_PER_DAY = 1.0 / 7.0
+
+# Operating experience reaches full marks after this many years in
+# business; an existing business starts at half marks on day one (it
+# already has premises, suppliers and customers a plan does not).
+EXPERIENCE_FULL_YEARS = 5
+
+# Staffing capacity reaches full marks at this many employees (the
+# owner alone scores 1/(3+1) = 0.25). The COST of staff is already in
+# capital adequacy through payroll -- the trade-off between the two is
+# intended: hiring helps capacity and costs runway.
+STAFF_FULL_CAPACITY = 3
+
+# No new business earns its steady-state revenue in month one: there is
+# fit-out, permits, and the weeks it takes for customers to find you.
+# The ramp-up period (and the ROI window built from it, see
+# location_opportunity_service.estimate_roi_timeframe) never reports
+# faster than this, however favourable the model's scores look. Moved
+# here from location_opportunity_service so stage 2 and the ROI window
+# share one value.
+MINIMUM_RAMP_MONTHS = 3
+
+# Monthly fixed cost is never treated as less than this. Rent comes
+# from market_data and is always positive in practice, but a zero there
+# (a hand-edited row) would make capital runway infinite, which is not
+# a forecast, it is a division by zero.
+MONTHLY_FIXED_COST_FLOOR_PHP = 1000.0
+
+# A price-list entry counts as a PRICE POINT only inside this range
+# (plan_model.price_list_summary). Below a centavo is not a price
+# anything can be sold at -- and it would make required daily sales
+# overflow -- and above P10,000,000 is not an SME menu price, it is a
+# typo (or "1e39", which the browser's number input happily accepts).
+# An entry outside the range still tells the model the offering is
+# described; it just does not enter the average price.
+ITEM_PRICE_RANGE_PHP = (0.01, 10_000_000.0)
+
+# The largest value any single stage-2 input is read as (capital, rent,
+# employees, population...). A guard, not an assumption: it sits five
+# orders of magnitude above anything a plan or a barangay can carry and
+# far above the training range, so it never changes a real forecast. It
+# exists because the forest reads its input as float32 (max ~3.4e38):
+# one unbounded value -- a legacy row, a hand-edited setting -- used to
+# raise inside predict() and turn a forecast into a 500 error. Non-finite
+# values (NaN, infinity) are read as missing or as this ceiling. With
+# every input at most 1e12, the largest derived quantity -- required
+# daily sales, (1e12 + 1e12 x 1e12 x 26) / (0.01 x 0.05 x 26), about
+# 2e27 -- is still eleven orders of magnitude inside float32.
+PLAN_INPUT_CEILING = 1e12
+
+# The scorecard -- seven feasibility-study aspects (Market, Financial,
+# Technical/Operational, Product), each scored 0-1, weighted to 1.00.
+# The weights are a STATED EDITORIAL CHOICE, documented in
+# Reference/FORECAST_MODEL.md: the market keeps the largest share
+# (stage 1 is still the best-evidenced signal the system has), capital
+# is next (running out of money before customers arrive is the most
+# common way a small business closes), and the rest share what is left.
+PLAN_COMPONENT_WEIGHTS = {
+    "market_opportunity": 0.40,
+    "capital_adequacy": 0.20,
+    "price_coverage": 0.10,
+    "operating_experience": 0.08,
+    "staffing": 0.07,
+    "offering_definition": 0.07,
+    "differentiation": 0.08,
+}
+assert abs(sum(PLAN_COMPONENT_WEIGHTS.values()) - 1.0) < 1e-9
+
+# RF2's input order -- the single source of truth for training
+# (train_model.train_plan_model) and inference
+# (services/plan_forecast_service.py). Both build the vector through
+# app/ml/plan_model.plan_feature_vector(), and the trained bundle on
+# disk records this list so a model trained on a different order is
+# refused rather than silently misread.
+PLAN_FEATURE_NAMES = [
+    "market_saturation",         # MSI* from stage 1 (after the sub-category adjustment), 0-100
+    "residents_per_business",    # population / (competitor_count + 1)
+    "monthly_fixed_cost",        # rent + employees x daily wage x 26, PHP/month
+    "capital",                   # PHP, the owner's own figure
+    "capital_runway_months",     # capital / monthly_fixed_cost
+    "ramp_up_months",            # months before the business pays for itself (plan_model.ramp_up_months)
+    "employee_count",
+    "is_existing",               # 0/1 from business_stage
+    "years_in_operation",        # from registration_date, 0 for a startup
+    "priced_item_count",         # price-list items with a price above zero, 0-30
+    "average_price",             # PHP, mean of the listed prices; 0 when none
+    "required_daily_sales",      # sales/day to cover fixed costs; 0 when no prices
+    "has_offering_description",  # 0/1: product_offering text OR any price-list item
+    "has_innovation_idea",       # 0/1
+]
+
+# Synthetic training set size for stage 2 and its own seed. A SEPARATE
+# seed (rather than continuing stage 1's generator) is what lets
+# `python -m app.ml.train_model --plan-only` reproduce exactly the model
+# a full run would have trained.
+N_PLAN_SAMPLES = 6000
+PLAN_RANDOM_STATE = 4242
+
+
+# =====================================================================
 # READING AN LGU PERMIT REGISTER'S "WHAT TRADE IS THIS" COLUMN
 # =====================================================================
 # BUSINESS_TYPES above is the PSIC section list (minus Public

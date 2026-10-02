@@ -193,7 +193,7 @@ changes as plain MySQL, for the ERD, are in `sql/2026-09_revisions.sql`.
 | **Broader business parameters**: industry → sub-category, what you sell, "what makes you different" (read by the AI), optional menu / price list. One parser for sign-up, Add New Plan and Settings | `app/ml/subcategories.py`, `app/services/plan_params.py`, `shared/_plan_fields.html`, `static/js/plan_form.js` |
 | **Direct competition**: the score is adjusted by how dense the plan's sub-category is (measured by Places or the LGU permit register); with no measurement it is left exactly as the industry score and labelled "estimated" | `app/services/subcategory_service.py`, table `subcategory_market_data` |
 | **Monthly revenue removed** from every form; the ROI window is now built from the model alone (column kept, no longer read) | `location_opportunity_service.estimate_roi_timeframe` |
-| **First-time walkthrough** (asks once; interactive, plain-language steps per role; replay from the sidebar) | `onboarding_controller.py`, `static/js/tour.js`, `tour_steps.js` |
+| **First-time walkthrough** (asks once; interactive, plain-language steps per role; replay any time from Settings › Tutorial) | `onboarding_controller.py`, `static/js/tour.js`, `tour_steps.js` |
 | **Community on Discord**: not in the menu; the footer's "Community Forum" link (and any `/community` URL) opens the Discord invite in a new tab. The invite is set in Admin > System Settings (Discord invites only). The earlier in-app forum was removed in favour of Discord's own channels, roles and AutoMod | `community_controller.py`, `shared/_footer.html` |
 | **Interior look matches sign-in** (navy/cyan frame; prototype content colours unchanged; remove `dss-skin` from `<body>` in `base.html` to revert) | `static/css/style.css` (INTERIOR SKIN block) |
 | **Location by map** on Home (Pick on map), visible Industry type box, **Clear** | `static/js/location_picker.js`, `static/js/sme_search.js` |
@@ -203,6 +203,19 @@ changes as plain MySQL, for the ERD, are in `sql/2026-09_revisions.sql`.
 | Map controls on the right; map fills to the side panel's height; side panel can be hidden | `sme/saturation_map.html`, `static/css/map.css` |
 | **Admin: archive, never delete** users and datasets (with a required reason; restore available); archived datasets drop out of every score | `admin_controller.py`, `app/models/archive.py` |
 | **Audit trail with the 5 W's** — who, what, when, where, why — with filters and CSV export | `app/utils/audit.py`, `admin/audit_log.html` |
+
+### October 2026: plans on Home, Trash, Tutorial, and a trained plan forecast
+
+The one database change (the Trash columns on `sme_profile`) is applied
+by the same start-up migration; the plain-MySQL version is
+`sql/2026-10_plan_trash_and_forecast.sql`.
+
+| Change | Where |
+|---|---|
+| **Plans are managed on Home**: each plan has icon-only Edit (pencil) and Move to Trash (bin) buttons. The Trash button lists removed plans and restores them. Nothing is deleted for good | `sme_controller` (`update_plan`, `trash_plan`, `restore_plan`), `sme/home.html`, `static/js/plan_manage.js` |
+| **Settings** sits in the sidebar footer next to Support; the tour moved into **Settings › Tutorial**. New accounts still get the tour automatically | `shared/_sidebar.html`, `shared/settings.html`, `profile_controller.py` |
+| **Capital** is required on every plan form and is part of the forecast | `app/services/plan_params.py`, `shared/_plan_fields.html` |
+| **Trained plan forecast**: a second model weighs every business parameter, and Gemini narrates its output (section 6, and the full formula in [`Reference/FORECAST_MODEL.md`](Reference/FORECAST_MODEL.md)) | `app/ml/plan_model.py`, `app/services/plan_forecast_service.py` |
 
 ## 1. Quick start
 
@@ -1082,15 +1095,24 @@ row). Pipeline:
 4. **Saturation Index (0–100)** — predicted by a trained
    **RandomForestRegressor** (100 trees). If the model hasn't been trained
    yet, falls back to the transparent weighted formula
-   `saturation = w1*CD + w2*DT + w3*SD` so the app never breaks.
+   `saturation = 100 × (w1*CD + w2*DT + w3*min(1, business_density/10))`
+   (labelled `formula_v1`, confidence 50) so the app never breaks.
 5. **Confidence level (0–100)** — NEW, and only possible because it's a
    Random Forest: computed from how much the individual trees agree with
    each other (low disagreement across `rf_model.estimators_` predictions =
    high confidence).
 6. **Cluster label** (Low/Moderate/High/Saturated) — derived live from
    `saturation_index` via fixed thresholds (see section 0.4) — NOT stored.
-7. **Viability Score (0–10)** — derived from the saturation index, shown to
-   users.
+7. **Viability Score (0–10)** — for a MARKET (map, trend reports, location
+   cards) it is `(100 − saturation) / 10`. For a PLAN
+   (`generate_forecast_for_profile`) it is the **Plan Viability Score**
+   from a second trained model, the Plan Viability Model
+   (`app/ml/plan_model.py`, `app/services/plan_forecast_service.py`,
+   `model_store/plan_model.pkl`). That model adds every business parameter
+   on the plan (capital, employees, stage, price list, offering, idea) and
+   the barangay's real population and rent to the market figures above.
+   The full formula, the training procedure and its metrics, and a worked
+   example are in **[`Reference/FORECAST_MODEL.md`](Reference/FORECAST_MODEL.md)**.
 8. **AI-Powered Recommendation** — `recommendation_service.py` builds the
    comparison: the SME's OWN input parameters from this step's
    `sme_profile` (sub-category, offering, innovation idea, price list,
@@ -1099,20 +1121,52 @@ row). Pipeline:
    `market_data` snapshot above, upgraded with real Google Places names
    when that snapshot isn't a simulated fallback) and this barangay's real
    PSA population, into a structured headline / opportunity type / summary
-   / "Why This Works" reasons / "Considerations" risks dict — rewritten by
-   GPT-4o-mini (or Claude) when `use_llm_recommendations` is on, otherwise
-   a deterministic rule-based version of the same shape — JSON-serialized
-   into the single `recommendation` TEXT column (see section 0.5).
+   / "Why This Works" reasons / "Considerations" risks dict, plus the plan
+   model's forecast payload and a plain-language **explanation** of it —
+   written by an LLM when `use_llm_recommendations` is on (Gemini first for
+   this call, then the provider in `LLM_PROVIDER`), otherwise a
+   deterministic rule-based version of the same shape. An LLM explanation
+   that quotes any number the model did not produce is discarded for the
+   rule-based one. All of it is JSON-serialized into the single
+   `recommendation` TEXT column (see section 0.5).
 9. **Early warning** — only for `generate_forecast_for_profile()`: if
    `saturation_index` crosses the alert threshold (default 75 on the 0–100
    scale, tunable in Admin > System Settings), a `Notification` row is
    created for that SME's profile owner.
 
+### How a plan's forecast is computed
+
+A plan's forecast chains two trained Random Forests:
+
+1. **Stage 1, the Market Saturation Model** (steps 1–6 above) scores the
+   market: the plan's industry in its barangay, adjusted for its
+   sub-category's direct competition. The output is MSI\*, 0–100.
+2. **Stage 2, the Plan Viability Model** takes MSI\* and every business
+   parameter on the plan as 14 features. The parameters are capital,
+   employees, business stage, the price list, the offering and the
+   innovation idea. Derived money figures are included too: monthly
+   fixed cost (rent + employees × ₱590/day × 26 days), capital runway,
+   ramp-up and required daily sales. The output is the **Plan Viability
+   Score** (0–10) shown on Home, a confidence figure, an exact breakdown
+   of which inputs moved the score, and a break-even window.
+
+The business name is not an input. Every formula, the assumptions and
+where an Admin changes them, the training procedure and its metrics, how
+Gemini's narration is checked against the numbers, and a fully worked
+example are in
+**[`Reference/FORECAST_MODEL.md`](Reference/FORECAST_MODEL.md)**.
+
 ### Training the model
 ```bash
-python -m app.ml.train_model
+python -m app.ml.train_model              # both stages
+python -m app.ml.train_model --plan-only  # stage 2 only, on the rf_model.pkl already on disk
 ```
-This is also run automatically once by `seed.py`. It trains on a
+`seed.py` runs this automatically whenever either model file is missing.
+The Plan Viability Model reports its own metrics under `"plan_model"` in
+the same `training_report.json`: MAE 3.05 points on its synthetic test
+split, and 1.90 against the noise-free formula it is trained on. Its
+labels are synthetic too; see the honesty note in `FORECAST_MODEL.md`.
+The rest of this section is about stage 1. It trains on a
 **synthetic dataset** derived from the paper's own MSI formula (see the
 big comment at the top of `app/ml/train_model.py` for exactly why and how)
 because no real historical SME survival data has been collected yet. It

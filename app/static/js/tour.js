@@ -382,7 +382,7 @@
         <p class="dss-tour-note" data-part="note"></p>
       </div>
       <div class="dss-tour-confirm" data-part="confirm">
-        <p class="dss-tour-confirm-text">Exit the tour? You can replay it anytime from <strong>Take the tour</strong> in the sidebar.</p>
+        <p class="dss-tour-confirm-text">Exit the tour? You can replay it anytime from <strong>Settings › Tutorial</strong>.</p>
         <div class="dss-tour-actions">
           <button type="button" class="dss-tour-btn dss-tour-btn-ghost" data-act="stay">Keep going</button>
           <button type="button" class="dss-tour-btn dss-tour-btn-primary" data-act="exit-yes">Yes, exit the tour</button>
@@ -423,7 +423,8 @@
     // Entry points
     // ---------------------------------------------------------------
 
-    // From step 1 -- after "Yes" at the prompt, or "Take the tour".
+    // From step 1 -- after "Yes" at the prompt, or "Start the tutorial"
+    // in Settings › Tutorial.
     begin() {
       this.returnFocus = document.activeElement;
       this.go(0);
@@ -1178,8 +1179,10 @@
     const tour = new Tour(config, steps, window.DSS_TOUR_PAGES);
     window.dssTour = tour; // handy from the browser console while testing
 
-    // "Take the tour" in the sidebar. Works on every page, including
-    // an error page, because it starts by going to step 1's own page.
+    // "Start the tutorial" in Settings › Tutorial -- or any other
+    // [data-tour-replay] element; it used to be "Take the tour" in the
+    // sidebar. Bound on every page, so the button works wherever it is
+    // put, because the tour starts by going to step 1's own page.
     document.querySelectorAll("[data-tour-replay]").forEach((button) => {
       button.addEventListener("click", () => {
         if (!steps.length) return;
@@ -1200,7 +1203,7 @@
     });
 
     // Error pages: no prompt and no auto-resume (the server marks them
-    // suppressed). The sidebar button above still works.
+    // suppressed). A replay button, were one on the page, still works.
     if (config.suppressed || !steps.length) return;
 
     // The prompt and a resumed tour wait until the page's own start-up

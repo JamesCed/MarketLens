@@ -3,8 +3,10 @@ tests/test_home_revisions.py
 ------------------------------
 The Home page after the revisions round:
 
-  * MAJOR 1 -- a plan "choice bar": every saved plan with its own market
-    score, one click to switch, nothing deleted or re-entered.
+  * MAJOR 1 -- a plan "choice bar": every saved plan with its own
+    viability score, one click to switch, nothing deleted or re-entered.
+    (Editing a plan and moving it to Trash from the same bar is covered
+    in tests/test_plan_trash.py.)
   * MAJOR 2 -- the mini map follows the chosen plan, and is bigger.
   * MINOR 2 -- location by map, a visible industry box, and Clear.
   * The Add New Plan dialog carries the broader business parameters and
@@ -109,9 +111,15 @@ def test_the_choice_is_remembered_and_both_plans_keep_their_scores(app, two_plan
         page = client.get("/home").get_data(as_text=True)
         assert f"{RETAIL} in Balibago I" in page, "coming back to Home should keep the chosen plan"
         # Both plans were scored by visiting them, and neither was lost.
-        assert page.count("Market score") == 2
+        # The chip label is the plan model's viability now, not the
+        # market-only score it used to be.
+        assert len(re.findall(r'dss-plan-chip-score[^"]*">\s*Viability \d+\.\d/10', page)) == 2
+        assert "Market score" not in page
         assert SmeProfile.query.count() == 2
-        selected = re.search(r'class="dss-plan-chip is-selected"[^>]*>\s*<span class="dss-plan-chip-name">([^<]+)', page)
+        # The chip is a container; its first child is the selection link.
+        selected = re.search(
+            r'class="dss-plan-chip is-selected"[^>]*>\s*<a [^>]*aria-current="true"[^>]*>\s*'
+            r'<span class="dss-plan-chip-name">([^<]+)', page)
         assert selected and selected.group(1) == "Balibago Gulong"
 
 
@@ -178,9 +186,11 @@ def test_the_add_plan_dialog_has_the_new_fields_and_no_revenue(app, two_plans):
     with app.app_context():
         page = _client(app).get("/home").get_data(as_text=True)
     assert 'name="monthly_revenue_est"' not in page
-    for name in ("subcategory", "product_offering", "innovation_idea", "offering_item"):
+    for name in ("subcategory", "product_offering", "innovation_idea", "offering_item", "capital"):
         assert f'name="{name}"' in page
     assert "window.DSS_SUBCATEGORIES" in page
+    add = page[page.index('id="addPlanModal"'):page.index('id="locationPickerModal"')]
+    assert re.search(r'id="ap-capital" name="capital"[^>]*required', add), "capital is required on a new plan"
 
 
 def test_a_new_plan_is_selected_without_logging_a_switch(app, two_plans):
@@ -188,7 +198,7 @@ def test_a_new_plan_is_selected_without_logging_a_switch(app, two_plans):
         client = _client(app)
         response = client.post("/home/analyze", data={
             "business_name": "Kape sa Tibag", "industry_type": FOOD, "subcategory": "coffee_shop",
-            "location": "Tibag", "product_offering": "Brewed coffee",
+            "location": "Tibag", "product_offering": "Brewed coffee", "capital": "150000",
             "offering_item": ["Americano"], "offering_price": ["85"],
         })
         assert response.status_code == 302
@@ -196,6 +206,7 @@ def test_a_new_plan_is_selected_without_logging_a_switch(app, two_plans):
         assert response.headers["Location"].endswith(f"/home?plan={created.sme_id}")
         assert created.subcategory == "coffee_shop"
         assert created.offering_items == [{"item": "Americano", "price": 85.0}]
+        assert created.capital == 150000.0
 
         client.get(response.headers["Location"])
         assert AuditLog.query.filter_by(action="select_plan").count() == 0
@@ -205,7 +216,8 @@ def test_a_new_plan_is_selected_without_logging_a_switch(app, two_plans):
 def test_a_bad_new_plan_is_refused_with_the_reason(app, two_plans):
     with app.app_context():
         client = _client(app)
-        page = client.post("/home/analyze", data={"business_name": "", "industry_type": FOOD, "location": "Tibag"},
+        page = client.post("/home/analyze", data={"business_name": "", "industry_type": FOOD, "location": "Tibag",
+                                                  "capital": "150000"},
                            follow_redirects=True).get_data(as_text=True)
         assert "Business name is required." in page
         assert SmeProfile.query.count() == 2

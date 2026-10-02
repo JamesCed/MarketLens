@@ -1662,6 +1662,143 @@ body.dss-body {
 [data-bs-theme="dark"] .dss-plan-chip-meta { color: #93a4b8; }
 [data-bs-theme="dark"] .dss-location-picker-map { border-color: #2b3746; }
 
+/* ---------------------------------------------------------------------
+   Plan management on Home: the chip's icon-only Edit / Move-to-Trash
+   buttons, the Trash button and dialog, the capital warning.
+
+   A chip is a CONTAINER, not a link. The selection <a> is stretched over
+   the whole chip with ::after, and the action buttons sit above that
+   layer (z-index), so clicking anywhere but an icon still picks the
+   plan and no interactive element is nested inside another.
+   Icon buttons are 32px square -- comfortably above the 24px minimum
+   touch target -- with a visible focus ring in both themes.
+   --------------------------------------------------------------------- */
+.dss-plan-chip { position: relative; flex-direction: row; align-items: flex-start; gap: .35rem; min-width: 220px; max-width: 300px; }
+.dss-plan-chip-link {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .2rem;
+  color: inherit; text-decoration: none;
+}
+.dss-plan-chip-link:hover { color: inherit; }
+.dss-plan-chip-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; z-index: 1; }
+.dss-plan-chip-link:focus-visible { outline: none; }
+.dss-plan-chip-link:focus-visible::after { outline: 3px solid var(--dss-blue); outline-offset: 2px; }
+.dss-plan-chip:has(.dss-plan-chip-link:hover) { border-color: var(--dss-blue); box-shadow: 0 4px 12px rgba(37,99,235,.12); }
+.dss-plan-chip-actions {
+  position: relative; z-index: 2; flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: .2rem; margin: -.25rem -.4rem -.25rem 0;
+}
+.dss-plan-chip-actions form { margin: 0; }
+.dss-plan-chip-warning {
+  align-self: flex-start; font-size: .72rem; font-weight: 600; color: #9a3412;
+  display: inline-flex; align-items: center; gap: .25rem;
+}
+
+.dss-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center; position: relative;
+  width: 32px; height: 32px; min-width: 32px; padding: 0;
+  border: 1px solid transparent; border-radius: 8px; background: transparent;
+  color: #475569; font-size: .95rem; line-height: 1; text-decoration: none; cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.dss-icon-btn:hover { background: var(--dss-blue-light); color: var(--dss-blue-dark); border-color: #c7dcfb; }
+.dss-icon-btn:focus-visible { outline: 3px solid var(--dss-blue); outline-offset: 1px; }
+.dss-icon-btn-danger:hover { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.dss-icon-btn-restore { color: var(--dss-green); border-color: #bbf7d0; background: #f0fdf4; }
+.dss-icon-btn-restore:hover { background: #dcfce7; color: #166534; border-color: #86efac; }
+
+/* The Trash button beside "Add New Plan": the same 32px icon button in
+   Bootstrap's outline frame, with a small count badge in the corner. */
+.dss-trash-btn.btn { width: 32px; height: 32px; padding: 0; border-color: #cbd5e1; }
+.dss-trash-count {
+  position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 4px;
+  border-radius: 999px; background: #475569; color: #fff;
+  font-size: .66rem; font-weight: 700; line-height: 18px; text-align: center;
+}
+
+.dss-trash-list { display: flex; flex-direction: column; gap: .5rem; }
+.dss-trash-item {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .6rem .75rem; border: 1px solid #dbe3ec; border-radius: .6rem; background: var(--dss-gray-bg);
+}
+
+.dss-capital-warning {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .35rem .35rem .35rem .65rem; border-radius: .5rem;
+  background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+}
+
+[data-bs-theme="dark"] .dss-icon-btn { color: #b9c9db; }
+[data-bs-theme="dark"] .dss-icon-btn:hover { background: var(--dss-blue-light); color: #9cc4ff; border-color: #2d4a6b; }
+[data-bs-theme="dark"] .dss-icon-btn-danger:hover { background: rgba(239,68,68,.14); color: #fca5a5; border-color: rgba(239,68,68,.35); }
+[data-bs-theme="dark"] .dss-icon-btn-restore { color: #86efac; background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.30); }
+[data-bs-theme="dark"] .dss-icon-btn-restore:hover { background: rgba(34,197,94,.18); color: #bbf7d0; }
+[data-bs-theme="dark"] .dss-trash-btn.btn { border-color: #33475c; color: #b9c9db; }
+[data-bs-theme="dark"] .dss-trash-count { background: #8ba0b6; color: #0f1720; }
+[data-bs-theme="dark"] .dss-trash-item { background: #111a24; border-color: #2b3746; }
+[data-bs-theme="dark"] .dss-plan-chip-warning { color: #fdba74; }
+[data-bs-theme="dark"] .dss-capital-warning { background: rgba(249,115,22,.10); border-color: rgba(249,115,22,.35); color: #fdba74; }
+
+/* ---------------------------------------------------------------------
+   "How this forecast was computed" (shared/_plan_insights.html): the
+   trained plan model's per-driver contributions as diverging bars from
+   a centre line -- right/green raises the score, left/red lowers it.
+   The signed number beside each bar carries the same information as
+   text, so nothing depends on telling the two colours apart.
+   --------------------------------------------------------------------- */
+.dss-forecast-how {
+  border: 1px solid #dbe3ec; border-radius: 10px; padding: .5rem .75rem; background: var(--dss-gray-bg);
+}
+.dss-forecast-how > summary {
+  cursor: pointer; font-weight: 600; font-size: .85rem; list-style: none;
+  display: flex; align-items: center; gap: .4rem;
+}
+.dss-forecast-how > summary::-webkit-details-marker { display: none; }
+.dss-forecast-how > summary::after {
+  content: "\F282"; font-family: "bootstrap-icons"; font-size: .75rem; margin-left: auto;
+  transition: transform .15s ease; color: var(--dss-blue);
+}
+.dss-forecast-how[open] > summary::after { transform: rotate(180deg); }
+.dss-forecast-how > summary:focus-visible { outline: 3px solid var(--dss-blue); outline-offset: 2px; border-radius: 4px; }
+
+.dss-drivers { display: flex; flex-direction: column; gap: .3rem; }
+.dss-driver {
+  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 3.4rem;
+  align-items: center; gap: .5rem; font-size: .76rem;
+}
+.dss-driver-label { min-width: 0; overflow-wrap: anywhere; }
+.dss-driver-track {
+  position: relative; height: 8px; border-radius: 4px; background: #e5e7eb; overflow: hidden;
+}
+.dss-driver-track::before {  /* the zero line */
+  content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: #94a3b8;
+}
+.dss-driver-bar { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.dss-driver-bar.is-up { background: #16a34a; }
+.dss-driver-bar.is-down { background: #dc2626; }
+.dss-driver-points { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.dss-driver-points.is-up { color: #15803d; }
+.dss-driver-points.is-down { color: #b91c1c; }
+@media (max-width: 420px) {
+  .dss-driver { grid-template-columns: minmax(0, 1fr) 3.4rem; }
+  .dss-driver-track { grid-column: 1 / -1; grid-row: 2; }
+}
+
+.dss-explain-badge {
+  display: inline-flex; align-items: center; gap: .3rem; font-size: .72rem; font-weight: 700;
+  padding: .12rem .5rem; border-radius: 999px; background: #eef2f7; color: #475569;
+}
+.dss-explain-badge.is-ai { background: var(--dss-blue-light); color: var(--dss-blue-dark); }
+
+[data-bs-theme="dark"] .dss-forecast-how { background: #111a24; border-color: #2b3746; }
+[data-bs-theme="dark"] .dss-driver-track { background: #253242; }
+[data-bs-theme="dark"] .dss-driver-track::before { background: #64798f; }
+[data-bs-theme="dark"] .dss-driver-bar.is-up { background: #22c55e; }
+[data-bs-theme="dark"] .dss-driver-bar.is-down { background: #f87171; }
+[data-bs-theme="dark"] .dss-driver-points.is-up { color: #86efac; }
+[data-bs-theme="dark"] .dss-driver-points.is-down { color: #fca5a5; }
+[data-bs-theme="dark"] .dss-explain-badge { background: #24313f; color: #cfe0f0; }
+[data-bs-theme="dark"] .dss-explain-badge.is-ai { background: var(--dss-blue-light); color: #9cc4ff; }
+
 /* =====================================================================
    INTERIOR SKIN (body.dss-skin) -- revision MINOR 1
    ---------------------------------------------------------------------

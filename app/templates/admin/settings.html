@@ -42,6 +42,38 @@
   </div>
 
   <div class="dss-card mb-4">
+    <h6 class="mb-1">Plan forecast assumptions</h6>
+    <p class="text-muted small mb-3">
+      The Plan Viability Model (stage 2 of every plan forecast) needs two figures no plan form collects.
+      Changing them does not retrain anything: they feed the forecast through monthly fixed cost, capital runway and
+      required daily sales. New values apply to forecasts generated from now on; a plan picks them up the next time
+      it is re-forecast (for example when its owner edits it) &mdash; until then its forecast, and the quarterly
+      outlook drawn beside it, keep the values they were computed with.
+    </p>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label" for="planDailyWage">Daily wage per employee (₱)</label>
+        <input type="number" step="0.01" min="1" max="100000" id="planDailyWage" name="plan_daily_wage_php" class="form-control"
+               value="{{ settings['plan_daily_wage_php'].setting_value if 'plan_daily_wage_php' in settings else 590 }}">
+        <div class="form-text">
+          Payroll = employees &times; wage &times; 26 working days. Default ₱590: DOLE Wage Order No. RBIII-26
+          (2nd tranche, effective 16 April 2026), Tarlac retail &amp; service establishments. Must be between
+          ₱1 and ₱100,000 a day.
+        </div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="planGrossMargin">Gross margin (0.05&ndash;0.95)</label>
+        <input type="number" step="0.01" min="0.05" max="0.95" id="planGrossMargin" name="plan_gross_margin" class="form-control"
+               value="{{ settings['plan_gross_margin'].setting_value if 'plan_gross_margin' in settings else 0.40 }}">
+        <div class="form-text">
+          Share of each sale left after the cost of goods (0.40 = 40%), used to turn a plan's prices into
+          the sales a day needed to cover its fixed costs. An assumption, not a measurement.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dss-card mb-4">
     <h6 class="mb-3">Google Places API</h6>
     <label class="form-label">Max competitor results per Text Search lookup</label>
     <input type="number" min="0" max="60" name="places_max_results" class="form-control"
@@ -60,14 +92,18 @@
     <div class="form-check form-switch">
       <input class="form-check-input" type="checkbox" name="use_llm_recommendations" id="llmToggle"
              {{ 'checked' if settings.get('use_llm_recommendations') and settings['use_llm_recommendations'].setting_value == 'true' }}>
-      <label class="form-check-label" for="llmToggle">Use an LLM (GPT or Claude) to write recommendation text</label>
+      <label class="form-check-label" for="llmToggle">Use an LLM to write recommendation text and explain the forecast</label>
     </div>
     <div class="form-text">
-      When off (default), the built-in rule-based text generator is used — no API key needed. When on, the
-      provider set by <code>LLM_PROVIDER</code> in .env (<code>openai</code> by default, or <code>anthropic</code>)
-      writes the text using <code>OPENAI_API_KEY</code> or <code>ANTHROPIC_API_KEY</code> respectively — set in
-      the .env file, not here (see README). If that key is missing, the other provider's key is tried
-      automatically; if neither is set, this falls back to the rule-based text with no error.
+      When off, the built-in rule-based text generator is used — no API key needed. When on, the forecast
+      narration (the recommendation and the plain-language explanation of the trained model's output) tries
+      <strong>Gemini</strong> first (<code>GEMINI_API_KEY</code>, which falls back to <code>OPENAI_API_KEY</code>;
+      an <code>sk-</code> key there is skipped, since Google would refuse it), then the provider set by
+      <code>LLM_PROVIDER</code>, then the remaining one (<code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code>).
+      Other AI text (alerts, location cards) tries the <code>LLM_PROVIDER</code> provider first. Keys are set in the
+      .env file, not here (see README). With no usable key it falls back to the rule-based text with no error.
+      Either way, every figure comes from the trained models &mdash; an AI explanation that quotes a number the
+      model did not produce is discarded for the rule-based one.
     </div>
   </div>
 

@@ -58,7 +58,8 @@ database.
 import hashlib
 from statistics import median
 
-from app.ml.constants import short_industry_label
+from app.ml.constants import MINIMUM_RAMP_MONTHS, short_industry_label
+from app.ml.plan_model import ramp_midpoint_months
 from app.ml.seed_data import get_real_population, get_barangay_profile
 from app.services.forecasting_service import compute_scores_batch
 from app.services.recommendation_service import competition_level_label
@@ -88,9 +89,12 @@ PLACES_RESULT_CEILING = 60
 
 # No new business earns its steady-state revenue in month one: there is
 # fit-out, permits, and the weeks it takes for customers to find you. So
-# the ROI window never reports faster than this, however favourable the
-# model's scores look. A stated assumption, editable here.
-MINIMUM_RAMP_MONTHS = 3
+# the ROI window never reports faster than MINIMUM_RAMP_MONTHS (3),
+# however favourable the model's scores look. A stated assumption -- it
+# now lives in app/ml/constants.py, because the plan forecast's ramp-up
+# period (app/ml/plan_model.ramp_up_months) is the same quantity and has
+# to use the same floor. Imported above, so this module still exports
+# the name it always did.
 
 
 # ---------------------------------------------------------------------
@@ -200,22 +204,25 @@ def estimate_roi_timeframe(viability_score, saturation_index, residents_per_busi
 
     This is an estimate built from a model prediction, not a measured
     return. It is labelled that way everywhere it appears.
+
+    ONE FORMULA, TWO USERS. The viability-and-saturation arithmetic is
+    app/ml/plan_model.ramp_midpoint_months(), which the plan forecast
+    also uses for its ramp-up period -- so "how long until this pays
+    for itself" cannot be answered two ways. Only the market-depth
+    nudge is specific to this card, and it is passed in as a
+    multiplier. A plan's forecast calls this with the PLAN's viability
+    (and no depth figures), which is how capital, staffing and pricing
+    reach the break-even window there.
     """
-    saturation = float(saturation_index or 0)
-    viability = float(viability_score or 0)
-
-    # Saturation multiplier, clamped so one extreme input can't dominate.
-    market_factor = 1.0 + (saturation - 50.0) / 100.0
-    market_factor = max(0.6, min(1.8, market_factor))
-
     # Market-depth nudge: deeper than the city median => slightly faster.
+    depth_multiplier = 1.0
     if residents_per_business and city_median_depth:
         if residents_per_business > city_median_depth:
-            market_factor *= 0.90
+            depth_multiplier = 0.90
         elif residents_per_business < city_median_depth * 0.5:
-            market_factor *= 1.10
+            depth_multiplier = 1.10
 
-    midpoint = (24.0 - (viability * 1.8)) * market_factor
+    midpoint = ramp_midpoint_months(viability_score, saturation_index, depth_multiplier)
 
     low = max(MINIMUM_RAMP_MONTHS, int(round(midpoint * 0.8)))
     high = max(low + 1, int(round(midpoint * 1.25)))
@@ -404,10 +411,22 @@ def _reasons_for(row, city, market_meta, sme_profile, industry_label):
             + (f" on {fetched:%B %d, %Y}" if fetched else "")
         )
 
-    if sme_profile is not None and sme_profile.startup_capital:
+    # What this card's number is NOT. It used to say "scored against your
+    # own plan parameters (capital on file: PHP X)", which was never
+    # true: these cards come from one city-wide stage-1 sweep that is
+    # the same for every user (_scored_and_ranked), and capital does not
+    # enter it -- change the capital and the card does not move. Since
+    # the plan forecast became the Plan Viability Model, which DOES weigh
+    # capital, the old line also sat next to a different viability
+    # number for the same barangay. So the card says what it is and
+    # where the plan's own figure lives.
+    if sme_profile is not None:
+        capital = float(getattr(sme_profile, "startup_capital", None) or 0)
+        weighs = f"your capital of PHP {capital:,.0f}" if capital > 0 else "your capital"
         reasons.append(
-            f"scored against your own plan parameters (capital on file: "
-            f"PHP {float(sme_profile.startup_capital):,.0f})"
+            f"a market-only score, the same for every {industry_label.lower()} plan in this barangay; "
+            f"your plan's own Plan Viability, which also weighs {weighs}, staff and prices, "
+            f"is on its forecast"
         )
 
     reasons.append(
@@ -522,8 +541,10 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
     the best `limit` of them as storyboard-shaped opportunity cards.
 
     `sme_profile` (optional) is the SME's own plan -- when given, the
-    cards mark its own barangay and quote its capital, so a card answers
-    "what would MY plan look like in this barangay", not a generic one. `market_meta_by_location` optionally carries
+    cards mark its own barangay and say plainly that their score is the
+    MARKET's (stage 1, identical for every plan in that industry), with
+    the plan's own capital-, staff- and price-aware Plan Viability on
+    its forecast. `market_meta_by_location` optionally carries
     {location: {"is_live": bool, "date_recorded": date}} so the cards can
     state the provenance of each competitor count without re-querying.
 

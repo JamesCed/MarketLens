@@ -50,7 +50,11 @@ ACTION_META = {
     "create_plan": ("Created a business plan", "Business planning"),
     "run_forecast": ("Ran an AI forecast", "Business planning"),
     "update_plan": ("Edited a business plan", "Business planning"),
-    "delete_plan": ("Deleted a business plan", "Business planning"),
+    # Plans are never deleted any more -- removing one moves it to Trash.
+    # delete_plan is kept so rows written before that still read well.
+    "trash_plan": ("Moved a business plan to Trash", "Business planning"),
+    "restore_plan": ("Restored a business plan from Trash", "Business planning"),
+    "delete_plan": ("Deleted a business plan (legacy)", "Business planning"),
     "select_plan": ("Switched the plan being viewed", "Business planning"),
     "save_recommended_location": ("Saved a recommended location as a plan", "Business planning"),
 

@@ -3,14 +3,30 @@ app/services/recommendation_service.py
 -----------------------------------------
 Turns the numbers from forecasting_service.py -- PLUS the SME's own
 input business parameters (industry and sub-category, what they sell,
-what makes them different, an optional price list, startup capital,
-employee count, business stage) compared against the real businesses
-already on file for that industry/location (seeded market_data and/or
-live Google Places API results) -- into the structured recommendation
-the capstone paper's storyboard calls for: a headline, an opportunity
-type, a one-sentence summary, a "Why This Works" reasons list, and a
+what makes them different, an optional price list, capital, employee
+count, business stage) compared against the real businesses already on
+file for that industry/location (seeded market_data and/or live Google
+Places API results) -- into the structured recommendation the capstone
+paper's storyboard calls for: a headline, an opportunity type, a
+one-sentence summary, a "Why This Works" reasons list, and a
 "Considerations" risks list (see app/templates/sme/recommendations.html
 and Reference/Figma_Storyboard's recommendations page).
+
+THE FORECAST ITSELF, AND ITS EXPLANATION. Since the two-stage model
+(app/services/plan_forecast_service.py, documented in
+Reference/FORECAST_MODEL.md) every plan forecast carries a payload: the
+market model's saturation, the trained plan model's viability, the
+driver decomposition that says which inputs moved the score and by how
+much, and the money figures (capital runway, ramp-up, fixed costs,
+required daily sales, break-even window). That payload is stored in the
+recommendation under "forecast" and is ALWAYS the model's -- an LLM
+never writes or edits it. Next to it sits "explanation": a few
+plain-language sentences that transcribe what the model forecast and
+why. A deterministic rule-based explanation is always built from the
+payload; when the LLM is on, Gemini is asked for its own wording, and
+that wording is kept only if every number in it can be found in the
+payload (see ungrounded_numbers below) -- otherwise the rule-based one
+stands. Either way the explanation records who wrote it.
 
 The real schema has only ONE text column for this
 (forecast_result.recommendation TEXT -- no separate reasons_json /
@@ -30,17 +46,21 @@ Two modes, controlled by the use_llm_recommendations system setting
     defense where you need to explain exactly why the system said
     what it said.
 
-  - LLM-ASSISTED (opt-in): calls app/services/llm_service.py (GPT via
-    OpenAI/OpenRouter, or Claude via Anthropic -- see LLM_PROVIDER in
-    .env) to turn the SAME grounded numbers into a more naturally
-    worded, GPT-written version of the same structured shape. If that
-    call fails for any reason (no key, no internet, quota, malformed
-    JSON back), this silently falls back to the rule-based dict above
-    -- the page never breaks because of this.
+  - LLM-ASSISTED (opt-in): calls app/services/llm_service.py to turn
+    the SAME grounded numbers into a more naturally worded version of
+    the same structured shape, plus the forecast explanation. Gemini is
+    tried FIRST for this call (it is the AI this system names for
+    narrating the forecast), then the provider configured in
+    LLM_PROVIDER (GPT via OpenAI/OpenRouter, or Claude via Anthropic),
+    then the rest. If every call fails for any reason (no key, no
+    internet, quota, malformed JSON back), this silently falls back to
+    the rule-based dict above -- the page never breaks because of this.
 """
 
 import json
+import numbers
 import re
+from collections import namedtuple
 
 from app.models import SystemSetting
 
@@ -48,8 +68,18 @@ from app.models import SystemSetting
 # out of storage -- has exactly these keys, so every template that
 # reads one (recommendations.html, home.html) can rely on the shape
 # without checking for missing pieces.
+#
+# "forecast" is the trained model's payload (plan_forecast_service.
+# forecast_plan) and "explanation" is {"text", "generated_by"}. Both are
+# None on rows written before the two-stage model existed, and on any
+# context built without a plan forecast.
 _KEYS = ("headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
-         "subcategory_analysis", "innovation")
+         "subcategory_analysis", "innovation", "forecast", "explanation")
+
+# The provenance stamp on an explanation nobody's LLM wrote. Hyphenated
+# (unlike the recommendation's own "rule_based") because it is shown
+# to the user as a label and matched by the templates as such.
+RULE_BASED_EXPLANATION = "rule-based"
 
 
 # ---------------------------------------------------------------------
@@ -74,8 +104,36 @@ def price_summary(items):
     }
 
 
+def _profile_capital(sme_profile):
+    """The plan's capital as a float. SmeProfile.capital is the read
+    property over the startup_capital column (the column keeps its old
+    name because renaming a live MySQL column is a destructive
+    migration); the column itself is the fallback for any object that
+    does not have the property."""
+    capital = getattr(sme_profile, "capital", None)
+    if capital is None:
+        capital = getattr(sme_profile, "startup_capital", None)
+    try:
+        return float(capital or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _capital(context):
+    """Capital from a context, whichever spelling built it. Contexts
+    written before the rename (and hand-built test contexts) only have
+    "startup_capital"."""
+    value = context.get("capital")
+    if value is None:
+        value = context.get("startup_capital")
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def build_recommendation_context(sme_profile, scores, competitor_sample=None, competitor_simulated=True,
-                                  population=0, subcategory_analysis=None):
+                                  population=0, subcategory_analysis=None, plan_forecast=None):
     """`sme_profile` is the SME's own SmeProfile row (their input
     business parameters). `scores` is the dict compute_scores() in
     forecasting_service.py just returned for that same profile -- after
@@ -87,10 +145,19 @@ def build_recommendation_context(sme_profile, scores, competitor_sample=None, co
     -- see forecasting_service.generate_forecast_for_profile().
     `subcategory_analysis` is subcategory_service.direct_competition()'s
     result, or None when the plan has no sub-category.
+    `plan_forecast` is plan_forecast_service.forecast_plan()'s payload
+    -- the trained plan model's output -- or None for a caller that has
+    not run it (the explanation and the capital/pricing lines are then
+    simply absent, and the rest reads exactly as before).
+
+    "capital" is the name used everywhere now. "startup_capital" stays
+    in the dict as an alias with the same value, because hand-built
+    contexts elsewhere (and older code paths) still read that key.
 
     Monthly revenue is deliberately absent: it is no longer collected
     (see app/services/plan_params.py)."""
     offering_items = list(getattr(sme_profile, "offering_items", None) or [])
+    capital = _profile_capital(sme_profile)
     return {
         "business_name": sme_profile.business_name,
         "industry_type": sme_profile.industry_type,
@@ -103,7 +170,8 @@ def build_recommendation_context(sme_profile, scores, competitor_sample=None, co
         "location": sme_profile.location,
         "business_stage": sme_profile.business_stage,
         "years_in_operation": sme_profile.years_in_operation(),
-        "startup_capital": float(sme_profile.startup_capital or 0),
+        "capital": capital,
+        "startup_capital": capital,
         "employee_count": sme_profile.employee_count or 0,
         "saturation_index": scores["saturation_index"],
         "industry_saturation_index": scores.get("industry_saturation_index", scores["saturation_index"]),
@@ -115,6 +183,7 @@ def build_recommendation_context(sme_profile, scores, competitor_sample=None, co
         "competitor_simulated": competitor_simulated,
         "competitor_sample": competitor_sample or [],
         "subcategory_analysis": subcategory_analysis,
+        "forecast": plan_forecast if isinstance(plan_forecast, dict) else None,
     }
 
 
@@ -146,12 +215,157 @@ def _kind_of_business(context):
     return f"{context['industry_type'].lower()} business"
 
 
+def _number(value, default=None):
+    """A payload figure as a plain float, or `default` when it is
+    missing or not a number. The payload is the model agent's contract
+    and is JSON-safe, but a row stored by an earlier build may lack a
+    key, and the writers below must never raise over that."""
+    if value is None or isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _figure(value, places=1):
+    """A payload figure as prose quotes it: whole numbers without a
+    decimal point, anything else to `places` decimals, with thousands
+    separators. Quoting the payload's own rounding (rather than
+    re-rounding to something prettier) is what lets the explanation
+    pass the same grounding check the LLM's wording has to pass."""
+    value = float(value or 0)
+    if value.is_integer():
+        return f"{value:,.0f}"
+    return f"{value:,.{places}f}"
+
+
+def _peso(value):
+    """₱ amounts: whole pesos when the figure is whole or large,
+    centavos only for small prices that actually have them."""
+    value = float(value or 0)
+    if value.is_integer() or abs(value) >= 1000:
+        return f"₱{value:,.0f}"
+    return f"₱{value:,.2f}"
+
+
+def _plural(count, word):
+    count = int(count or 0)
+    return f"{count} {word}" + ("" if count == 1 else "s")
+
+
+def _join(parts):
+    """"a", "a and b", "a, b and c"."""
+    parts = [p for p in parts if p]
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _forecast(context):
+    """The trained model's payload from a context, or None."""
+    forecast = context.get("forecast")
+    return forecast if isinstance(forecast, dict) else None
+
+
+def _plan_model_is_trained(forecast):
+    """True when the plan stage was the trained forest; False for the
+    scorecard-formula fallback used while no plan_model.pkl exists. The
+    prose says which, rather than calling a formula a trained model."""
+    plan = forecast.get("plan") or {}
+    return str(plan.get("model_version") or "").startswith("plan_rf")
+
+
+def _market_model_is_trained(forecast):
+    """The same question for the market stage: True for the trained
+    forest ("rf_v1"), False for forecasting_service's weighted-formula
+    fallback ("formula_v1") used while no rf_model.pkl exists. Asked
+    separately because the two stages can each be missing on their own
+    -- a trained plan model sitting on a formula market reading is a
+    real state, and the prose must not call that formula a model."""
+    market = forecast.get("market") or {}
+    return str(market.get("model_version") or "").startswith("rf")
+
+
+def _capital_and_pricing_lines(context):
+    """(reasons, risks) about the two things the plan model weighs that
+    the market model never sees: whether the capital carries the plan
+    through its ramp-up, and whether the price list can cover the fixed
+    costs at a sales volume the barangay can plausibly support.
+
+    Every figure quoted is the payload's own -- runway, ramp-up, fixed
+    cost, required daily sales, daily sales ceiling -- so these lines
+    can never disagree with the forecast they sit under. Empty when the
+    context carries no plan forecast."""
+    forecast = _forecast(context)
+    if forecast is None:
+        return [], []
+    financials = forecast.get("financials") or {}
+    inputs = forecast.get("inputs") or {}
+    reasons, risks = [], []
+
+    capital = _number(inputs.get("capital"), _capital(context))
+    runway = _number(financials.get("capital_runway_months"), 0.0)
+    ramp = _number(financials.get("ramp_up_months"))
+    fixed_cost = _number(financials.get("monthly_fixed_cost"))
+    if ramp is not None and fixed_cost is not None:
+        if capital <= 0:
+            risks.append(
+                f"no capital is on file for this plan, so the forecast counts no runway against the "
+                f"~{_figure(ramp)}-month ramp-up the model expects -- add your capital for an accurate forecast"
+            )
+        elif runway >= ramp:
+            reasons.append(
+                f"your capital of {_peso(capital)} covers about {_figure(runway)} months of fixed costs "
+                f"({_peso(fixed_cost)}/month), longer than the ~{_figure(ramp)}-month ramp-up the model expects"
+            )
+        else:
+            risks.append(
+                f"your capital of {_peso(capital)} covers only about {_figure(runway)} months of fixed costs "
+                f"({_peso(fixed_cost)}/month), shorter than the ~{_figure(ramp)}-month ramp-up the model "
+                f"expects -- more capital, fewer staff at the start, or a cheaper site would close the gap"
+            )
+
+    priced = int(_number(inputs.get("priced_item_count"), 0) or 0)
+    required = _number(financials.get("required_daily_sales"), 0.0)
+    ceiling = _number(financials.get("daily_sales_ceiling"), 0.0)
+    average = _number(inputs.get("average_price"), 0.0)
+    if priced > 0 and required > 0:
+        need = (f"at an average price of {_peso(average)} you need about {_figure(required)} sales a day "
+                f"to cover fixed costs")
+        if ceiling <= 0:
+            risks.append(f"{need}, and no local demand ceiling could be estimated for {context['location']}")
+        elif required <= ceiling / 2:
+            reasons.append(f"{need} -- well within the ~{_figure(ceiling)} a day this barangay's residents "
+                           f"could plausibly support")
+        elif required <= ceiling:
+            risks.append(f"{need} -- more than half of the ~{_figure(ceiling)} a day this barangay's residents "
+                         f"could plausibly support, so there is little slack; higher-margin items or lower "
+                         f"fixed costs would ease it")
+        else:
+            risks.append(f"{need} -- more than the ~{_figure(ceiling)} a day this barangay's residents could "
+                         f"plausibly support; raise prices, add higher-value items or cut fixed costs")
+    return reasons, risks
+
+
 def _summary_for(context):
-    summary = (
-        f"A {_kind_of_business(context)} in {context['location']} is currently classified as "
-        f"'{context['cluster_label']}' saturation ({round(context['saturation_index'])}%), with a viability "
-        f"score of {context['viability_score']}/10 for the parameters you entered."
-    )
+    forecast = _forecast(context)
+    if forecast is not None:
+        plan = forecast.get("plan") or {}
+        viability = _number(plan.get("viability_score"), _number(context.get("viability_score"), 0.0))
+        writer = "the trained plan model" if _plan_model_is_trained(forecast) else "the plan scorecard"
+        summary = (
+            f"A {_kind_of_business(context)} in {context['location']} is currently classified as "
+            f"'{context['cluster_label']}' saturation ({round(context['saturation_index'])}%); once your "
+            f"capital, staffing, pricing and offering are factored in, {writer} puts its viability at "
+            f"{_figure(viability)}/10."
+        )
+    else:
+        summary = (
+            f"A {_kind_of_business(context)} in {context['location']} is currently classified as "
+            f"'{context['cluster_label']}' saturation ({round(context['saturation_index'])}%), with a viability "
+            f"score of {context['viability_score']}/10 for the parameters you entered."
+        )
     analysis = context.get("subcategory_analysis")
     if analysis and analysis.get("adjusts_score"):
         summary += (
@@ -183,8 +397,12 @@ def _reasons_for(context):
             f"{context['location']} -- fewer than its {analysis['industry_count']} "
             f"{industry_lower} businesses would normally hold"
         )
-    if context["startup_capital"]:
-        reasons.append(f"your planned capital of PHP {context['startup_capital']:,.0f} is on file for this plan")
+    if _forecast(context) is not None:
+        # The plan model weighed the capital against the ramp-up, so
+        # say what it found rather than only that a figure exists.
+        reasons.extend(_capital_and_pricing_lines(context)[0])
+    elif _capital(context):
+        reasons.append(f"your capital of PHP {_capital(context):,.0f} is on file for this plan")
     reasons.append(f"model confidence for this estimate is {round(context['confidence_level'])}%")
     return reasons
 
@@ -213,6 +431,7 @@ def _risks_for(context):
                 f"{context['location']} -- denser than usual for its {analysis['industry_count']} "
                 f"{context['industry_type'].lower()} businesses"
             )
+    risks.extend(_capital_and_pricing_lines(context)[1])
     if context["competitor_simulated"]:
         risks.append("competitor count for this area is a simulated estimate -- connect a live Google "
                       "Places API key for exact figures")
@@ -295,6 +514,523 @@ def _rule_based_innovation(context):
     }
 
 
+# ---------------------------------------------------------------------
+# 2b. The forecast explanation -- a transcription of what the trained
+#     model said and why, written from the payload alone.
+# ---------------------------------------------------------------------
+
+def _rule_based_explanation_text(context):
+    """Four to six plain sentences built ONLY from the forecast payload:
+    the plan's viability and confidence, the market saturation and its
+    tier, the largest drivers with their signs, the capital runway
+    against the ramp-up (with the fixed cost broken into rent and
+    payroll), the required daily sales against the ceiling when there is
+    a price list, and the break-even window.
+
+    Deterministic: the same payload always produces the same words, so
+    this is the version that can be defended line by line -- and the
+    one that stands whenever the LLM is off, fails, or quotes a number
+    the model never produced. None when the context has no payload."""
+    forecast = _forecast(context)
+    if forecast is None:
+        return None
+    market = forecast.get("market") or {}
+    plan = forecast.get("plan") or {}
+    financials = forecast.get("financials") or {}
+    inputs = forecast.get("inputs") or {}
+    trained = _plan_model_is_trained(forecast)
+    sentences = []
+
+    # 1. The verdict. Each confidence is credited to the stage that
+    #    produced it: the plan stage's own figure goes with the plan's
+    #    viability, and when the market stage is the less sure of the
+    #    two, the forecast's overall confidence -- the lower of the two,
+    #    since a forecast is only as sure as its weaker half, and the
+    #    figure stored on the forecast and shown beside it -- is named
+    #    as the market stage's rather than passed off as the plan's.
+    viability = _number(plan.get("viability_score"), _number(context.get("viability_score"), 0.0))
+    market_confidence = _number(market.get("confidence"))
+    plan_confidence = _number(plan.get("confidence"))
+    verdict = ("The trained plan model rates this plan's viability" if trained else
+               "The plan scorecard formula (no trained plan model is available yet) rates this plan's viability")
+    verdict += f" {_figure(viability)}/10"
+    market_stage = "market model" if _market_model_is_trained(forecast) else "market formula"
+    if plan_confidence is not None:
+        verdict += f" with {_figure(plan_confidence)}% confidence"
+        if market_confidence is not None and market_confidence < plan_confidence:
+            verdict += (f"; the forecast's overall confidence is {_figure(market_confidence)}%, the "
+                        f"{market_stage}'s, since a forecast is only as sure as its less certain stage")
+    elif market_confidence is not None:
+        verdict += f"; the forecast's overall confidence is {_figure(market_confidence)}%, the {market_stage}'s"
+    sentences.append(verdict + ".")
+
+    # 2. The market stage it started from -- named for what produced it:
+    #    the trained market forest, or the weighted formula that stands
+    #    in for it while no rf_model.pkl exists.
+    saturation = _number(market.get("saturation_index"), _number(context.get("saturation_index"), 0.0))
+    tier = market.get("cluster_label") or context.get("cluster_label")
+    location = inputs.get("location") or context.get("location")
+    reader = ("The market model" if _market_model_is_trained(forecast) else
+              "The market formula (no trained market model is available yet)")
+    market_line = f"{reader} reads {location} as {_figure(saturation)}% saturated for this kind of business"
+    if tier:
+        market_line += f" (the '{tier}' tier)"
+    industry = _number(market.get("industry_saturation_index"))
+    if industry is not None and abs(industry - saturation) >= 0.05:
+        market_line += f", against {_figure(industry)}% for the industry as a whole"
+    sentences.append(market_line + ".")
+
+    # 3. The drivers -- the exact decomposition of the forest's answer,
+    #    or the scorecard's weighted components when no forest exists.
+    drivers = [d for d in (forecast.get("drivers") or [])
+               if isinstance(d, dict) and d.get("label") and abs(_number(d.get("points"), 0.0)) >= 0.05][:3]
+    if drivers:
+        def _label(d):
+            text = str(d["label"])
+            return text[:1].lower() + text[1:]
+
+        if trained:
+            parts = [f"{_label(d)} {'added' if _number(d['points']) > 0 else 'took off'} "
+                     f"{_figure(abs(_number(d['points'])))} points" for d in drivers]
+            baseline = _number(forecast.get("baseline"))
+            opener = (f"Starting from the model's baseline of {_figure(baseline)} points, "
+                      if baseline is not None else "Of the plan's inputs, ")
+            sentences.append(f"{opener}{_join(parts)}.")
+        else:
+            parts = [f"{_label(d)} ({_figure(abs(_number(d['points'])))} points)" for d in drivers]
+            sentences.append(f"The largest parts of the scorecard were {_join(parts)}.")
+
+    # 4. Capital against the ramp-up, with the fixed cost broken down.
+    fixed_cost = _number(financials.get("monthly_fixed_cost"))
+    ramp = _number(financials.get("ramp_up_months"))
+    if fixed_cost is not None and ramp is not None:
+        rent = _number(financials.get("monthly_rent"), 0.0)
+        employees = int(_number(inputs.get("employee_count"), _number(context.get("employee_count"), 0)) or 0)
+        wage = _number(financials.get("daily_wage"), 0.0)
+        days = _number(financials.get("operating_days"), 0.0)
+        if employees:
+            cost = (f"{_peso(fixed_cost)}/month (rent {_peso(rent)} plus {_plural(employees, 'employee')} "
+                    f"× {_peso(wage)}/day × {_figure(days)} days)")
+        else:
+            cost = f"{_peso(fixed_cost)}/month (rent {_peso(rent)}; no paid staff yet)"
+        capital = _number(inputs.get("capital"), _capital(context))
+        if capital <= 0:
+            sentences.append(
+                f"No capital is on file, so against fixed costs of {cost} the model counted no runway for the "
+                f"~{_figure(ramp)}-month ramp-up it expects -- add your capital for an accurate forecast."
+            )
+        else:
+            runway = _number(financials.get("capital_runway_months"), 0.0)
+            comparison = "longer than" if runway >= ramp else "shorter than"
+            sentences.append(
+                f"Fixed costs come to {cost}, so your capital of {_peso(capital)} covers about "
+                f"{_figure(runway)} months -- {comparison} the ~{_figure(ramp)}-month ramp-up the model expects."
+            )
+
+    # 5. Pricing, when there is a price list to read.
+    priced = int(_number(inputs.get("priced_item_count"), 0) or 0)
+    required = _number(financials.get("required_daily_sales"), 0.0)
+    if priced > 0 and required > 0:
+        margin = _number(financials.get("gross_margin"))
+        ceiling = _number(financials.get("daily_sales_ceiling"), 0.0)
+        pricing = f"At your average price of {_peso(_number(inputs.get('average_price'), 0.0))}"
+        if margin is not None:
+            pricing += f" and a {_figure(round(margin * 100, 1))}% gross margin"
+        pricing += f", covering those costs takes about {_figure(required)} sales a day"
+        if ceiling > 0:
+            pricing += (f", {'within' if required <= ceiling else 'more than'} the ~{_figure(ceiling)} a day "
+                        f"this barangay's residents could plausibly support")
+        sentences.append(pricing + ".")
+    elif fixed_cost is not None:
+        # "Neutral" is true only of the scorecard, which gives an unknown
+        # price coverage a middle score (C3 = 0.5). The trained forest
+        # measures every input against its baseline -- the average plan
+        # it learned from -- so a missing price list can and usually does
+        # cost points there, and the drivers sentence above already says
+        # so with its sign. Calling that "neutral" would contradict the
+        # very paragraph it sits in; say only what is true either way.
+        if trained:
+            sentences.append("No prices are listed yet, so your prices could not be checked against your "
+                             "fixed costs or what local demand can support.")
+        else:
+            sentences.append("No prices are listed yet, so the scorecard treated pricing as neutral "
+                             "(a middle score).")
+
+    # 6. Where it all lands.
+    break_even = financials.get("break_even") or {}
+    if isinstance(break_even, dict) and break_even.get("label"):
+        sentences.append(f"Taken together, the model's break-even window for this plan is {break_even['label']}.")
+
+    return " ".join(sentences)
+
+
+def _rule_based_explanation(context):
+    text = _rule_based_explanation_text(context)
+    if not text:
+        return None
+    return {"text": text, "generated_by": RULE_BASED_EXPLANATION}
+
+
+# THE GROUNDING CHECK.
+#
+# The LLM is asked to transcribe the model's output "using only the
+# numbers given". Asking is not checking: a fluent paragraph with one
+# invented figure in it ("you will break even in 6 months") reads exactly
+# as convincingly as a faithful one, and is precisely the failure an
+# explanation must never have. So every number in the LLM's text --
+# written in digits OR in words ("six months", "two million pesos") -- is
+# matched against the numbers the model and the owner actually supplied.
+# One that matches nothing discards the whole explanation in favour of
+# the rule-based one.
+#
+# WHICH numbers it may match is the first half of the check: the figures
+# the prompt SHOWS the LLM -- the context (the owner's inputs and the
+# market comparison) and the payload -- less the few payload figures the
+# prompt never prints (_UNSHOWN_PAYLOAD below) and the sub-category
+# analysis's internals (_UNSHOWN_ANALYSIS). Those are real, but the
+# LLM has never seen them, so a sentence that "matches" one matched by
+# accident: the scorecard's seven component weights (0.40, 0.20, 0.10,
+# 0.08, 0.07...) and scores sit in every payload, and counting them
+# grounded "break even in 8 months" and "scores 8/10" on every plan.
+#
+# WHAT counts as a match is the second half, deliberately narrow, and
+# each allowance has a reason:
+#   * +/-0.6 absolute or +/-2% relative -- the payload holds 8.2 and the
+#     text says "8.2", or 61,020 written as "61,020"; 42.1% quoted as
+#     "42%" is rounding, not invention;
+#   * x10 / /10, for the viability only -- it is shown both as a 0-100
+#     index and as a 0-10 score, and "6.1" and "61" are the same figure;
+#   * the gross margin as a percentage -- the prompt prints 0.4 as
+#     "40%", so "40%" matches it; but only a number written WITH a
+#     percent sign (or "percent") does, so the margin cannot ground "40
+#     months". No other fraction becomes a percentage;
+#   * an INTEGER of 12 or less ("3 employees", "8 months", "six") gets
+#     none of the slack above -- no x10, no /10, no percentage -- only
+#     ordinary rounding of a value the context itself holds: small
+#     integers are cheap to hit by accident, so "3" passes only when the
+#     context holds something between 2.5 and 3.5.
+# Denominators ("/10", "out of 100", "out of ten") are not figures and
+# are dropped first; nor is "one" used as a pronoun ("one of the
+# drivers", "no one"). What the check cannot read -- "twice", "half the
+# ceiling", a unit converted ("a year" for 12 months) -- it does not
+# pretend to; those are left to the prompt's instruction to copy every
+# figure exactly as written.
+#
+# HOW MONEY IS WRITTEN is read generously, because the cost of reading
+# too little is an invented figure on the page, and the cost of reading
+# too much is only the rule-based paragraph instead of the LLM's:
+#   * a peso prefix in any case, glued or spaced -- "PHP500", "Php
+#     2,400,000", "php500", "P500" -- is the peso sign;
+#   * a magnitude suffix in any case: glued "500k", "3.4m", "2.4bn",
+#     "1.5mil"; spaced "8.3 M", "2.4 mn", "2 Bn"; or a word, "1.5
+#     million", "2 mil". "k" counts only glued to the digits, and a
+#     lone spaced "m" or "b" not at all, so "5 km" and "a 5 m frontage"
+#     are not read as thousands or millions;
+#   * digits glued to letters ARE figures -- "x25", "USD500" -- unless
+#     the word they sit in is a code: a version or identifier ("v1",
+#     "rf_v1", anything with an underscore), a quarter ("Q1".."Q4"), or
+#     digits between letters ("B2B").
+
+_DENOMINATOR_RE = re.compile(r"\s*(?:/|\bout of)\s*(?:10{1,2}|ten|(?:a|one) hundred)\b", re.I)
+_NUMBER_RE = re.compile(
+    r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+    r"((?i:k|mn|mil|m|bn|b)\b"
+    r"|\s(?:[Mm]n|MN|[Bb]n|BN|M|B)\b"
+    r"|\s(?i:billion|million|thousand|hundred|mil)\b)?"
+)
+_PESO_PREFIX_RE = re.compile(r"\bphp\.?\s*(?=\d)|\bp(?=\d)", re.I)
+_CODE_WORD_RE = re.compile(r"v\d+|q[1-4]|[a-z]+\d+[a-z]+", re.I)
+_MAGNITUDES = {
+    "hundred": 100, "k": 1_000, "thousand": 1_000,
+    "m": 1_000_000, "mn": 1_000_000, "mil": 1_000_000, "million": 1_000_000,
+    "b": 1_000_000_000, "bn": 1_000_000_000, "billion": 1_000_000_000,
+}
+_PERCENT_RE = re.compile(r"\s?(?:%|per\s?cent\b)", re.I)
+_SMALL_INTEGER = 12
+
+# Numbers written in words. Ordinals ("first", "second") are positions,
+# not figures, and are deliberately absent.
+_WORD_VALUES = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+    "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+    "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_WORD_SCALES = {"hundred": 100, "thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
+_NUMBER_WORDS = frozenset(_WORD_VALUES) | frozenset(_WORD_SCALES) | {"dozen"}
+_WORD_RE = re.compile(r"[A-Za-z]+")
+# "one" in this company is a pronoun ("no one", "each one", "one of the
+# drivers"), not a count -- and it is common enough in plain prose that
+# reading it as the figure 1 would discard honest paragraphs for nothing.
+_PRONOUN_ONE_AFTER = frozenset({"no", "any", "each", "every", "the", "this", "that", "which"})
+_PRONOUN_ONE_BEFORE = frozenset({"of", "another"})
+
+# A number as the check reads it: its value, whether it is a small
+# integer (see above), whether it was written as a percentage, and the
+# text exactly as written (what the log line reports).
+_Figure = namedtuple("_Figure", "value small percent written")
+
+
+def _spelled_numbers(text):
+    """[(start, end, value, scaled), ...] for every number written in
+    words: "six", "twenty-five", "two hundred and fifty thousand", "a
+    dozen", "one and a half". A run is number words joined only by a
+    space or a hyphen -- "and" only after hundred/thousand/million, as in
+    "two hundred and fifty" -- so "between six and nine months" stays two
+    numbers rather than becoming fifteen. `scaled` is True when a scale
+    word or a half is involved (the figure is then never a small
+    integer)."""
+    words = [(m.group(0).lower(), m.start(), m.end()) for m in _WORD_RE.finditer(text)]
+
+    def joined(a, b):
+        gap = text[words[a][2]:words[b][1]]
+        return bool(gap) and re.fullmatch(r"[ \t]*-?[ \t]*", gap) is not None
+
+    found, i = [], 0
+    while i < len(words):
+        k, run = i, []
+        # "a dozen", "a hundred", "a million": the article is the one.
+        if words[k][0] in ("a", "an") and k + 1 < len(words) and joined(k, k + 1) \
+                and (words[k + 1][0] in _WORD_SCALES or words[k + 1][0] == "dozen"):
+            run.append("one")
+            k += 1
+        if words[k][0] not in _NUMBER_WORDS:
+            i += 1
+            continue
+        run.append(words[k][0])
+        k += 1
+        while k < len(words):
+            if words[k][0] in _NUMBER_WORDS and joined(k - 1, k):
+                run.append(words[k][0])
+                k += 1
+            elif (words[k][0] == "and" and run[-1] in _WORD_SCALES and k + 1 < len(words)
+                  and words[k + 1][0] in _WORD_VALUES and joined(k - 1, k) and joined(k, k + 1)):
+                k += 1
+            else:
+                break
+        half = (k + 2 < len(words) and [w[0] for w in words[k:k + 3]] == ["and", "a", "half"]
+                and joined(k - 1, k) and joined(k, k + 1) and joined(k + 1, k + 2))
+        if half:
+            k += 3
+        elif run == ["one"] and words[i][0] == "one":
+            before = words[i - 1][0] if i > 0 and joined(i - 1, i) else None
+            after = words[k][0] if k < len(words) and joined(k - 1, k) else None
+            if before in _PRONOUN_ONE_AFTER or after in _PRONOUN_ONE_BEFORE:
+                i = k
+                continue
+
+        total, current = 0, 0
+        for word in run:
+            if word in _WORD_VALUES:
+                current += _WORD_VALUES[word]
+            elif word == "hundred":
+                current = (current or 1) * 100
+            elif word == "dozen":
+                current = (current or 1) * 12
+            else:
+                total += (current or 1) * _WORD_SCALES[word]
+                current = 0
+        value = total + current + (0.5 if half else 0)
+        scaled = half or any(word in _WORD_SCALES for word in run)
+        found.append((words[i][1], words[k - 1][2], float(value), scaled))
+        i = k
+    return found
+
+
+def _in_code_word(text, start):
+    """True when the digits at `start` are glued to letters that make
+    the word a code rather than a figure -- "v1", "rf_v1", "Q4", "B2B"
+    (see the note above). Digits with no letter or underscore right
+    before them are never in one."""
+    if start == 0 or not (text[start - 1].isalpha() or text[start - 1] == "_"):
+        return False
+    left, right = start, start
+    while left > 0 and (text[left - 1].isalnum() or text[left - 1] == "_"):
+        left -= 1
+    while right < len(text) and (text[right].isalnum() or text[right] == "_"):
+        right += 1
+    word = text[left:right]
+    return "_" in word or _CODE_WORD_RE.fullmatch(word) is not None
+
+
+def _numbers_in(text):
+    """[_Figure(value, small, percent, written), ...] for every number in
+    `text`, in reading order: digits ("8.2", "61,020", "500k", "₱3.4m",
+    "1.5 million") and words ("six", "twenty-five", "a dozen"). A peso
+    prefix in any case -- "PHP500", "Php2,400,000", "P500" -- is read as
+    ₱, so a currency prefix glued to the figure cannot hide it from the
+    check; nor can a letter ("x25"), unless the word is a code ("rf_v1",
+    "Q1")."""
+    text = str(text or "")
+    text = _PESO_PREFIX_RE.sub("₱", text)
+    text = _DENOMINATOR_RE.sub(" ", text)
+    found = []
+    for match in _NUMBER_RE.finditer(text):
+        if _in_code_word(text, match.start()):
+            continue
+        digits, suffix = match.group(1), (match.group(2) or "").strip().lower()
+        value = float(digits.replace(",", "")) * _MAGNITUDES.get(suffix, 1)
+        small = not suffix and "." not in digits and value <= _SMALL_INTEGER
+        found.append((match.start(), match.end(), value, small, match.group(0)))
+    # The scale word of "1.5 million" is already part of that figure;
+    # read on its own as a word it would be a second, phantom million.
+    digit_spans = [(row[0], row[1]) for row in found]
+    for start, end, value, scaled in _spelled_numbers(text):
+        if any(start < span_end and span_start < end for span_start, span_end in digit_spans):
+            continue
+        small = not scaled and value.is_integer() and value <= _SMALL_INTEGER
+        found.append((start, end, value, small, text[start:end]))
+    found.sort(key=lambda row: row[0])
+    return [_Figure(value, small, _PERCENT_RE.match(text, end) is not None, written)
+            for _start, end, value, small, written in found]
+
+
+# Payload figures llm_service._model_output_prompt never prints, by path
+# from the context root. They are the model's own and true, but the LLM
+# has not seen them, so matching one can only be an accident -- see the
+# note above. (The scorecard_index equals the printed viability_index on
+# the formula path anyway, and there the components' points reach the
+# prompt as the drivers.)
+_UNSHOWN_PAYLOAD = frozenset({
+    ("forecast", "components"),
+    ("forecast", "plan", "scorecard_index"),
+    ("forecast", "financials", "capital_adequacy"),
+    ("forecast", "inputs", "residents_per_business"),
+})
+# The same holds for the sub-category analysis, which rides in the
+# context whole: llm_service._plan_detail_prompt prints only its
+# direct-competitor count (with its label and source), and the two
+# saturation figures it quotes beside it are the context's own. The
+# adjusted competitor count, the expected share, the density ratio, the
+# industry-level viability score and the rest are never shown -- yet on
+# any plan with a sub-category they would ground "break even in 4
+# months" or "an index of 36". So the analysis is skipped whole and its
+# direct_count added back by name (_grounding_numbers).
+_UNSHOWN_ANALYSIS = frozenset({("subcategory_analysis",)})
+# ...and the pricing figures, on a plan with no price list: the prompt
+# then prints "No price list" instead of the pricing line, so the demand
+# ceiling (and the zeros beside it) never reach the LLM either.
+_PRICING_PAYLOAD = frozenset({
+    ("forecast", "inputs", "average_price"),
+    ("forecast", "financials", "gross_margin"),
+    ("forecast", "financials", "required_daily_sales"),
+    ("forecast", "financials", "daily_sales_ceiling"),
+})
+
+
+def _prices_are_shown(forecast):
+    """True when the plan has a price list the model could read -- the
+    same test the explanation and llm_service's prompt use to decide
+    whether to print the pricing line at all."""
+    inputs = forecast.get("inputs") or {}
+    financials = forecast.get("financials") or {}
+    return int(_number(inputs.get("priced_item_count"), 0) or 0) > 0 and \
+        (_number(financials.get("required_daily_sales"), 0.0) or 0.0) > 0
+
+
+def _collect_numbers(value, out, path=(), skip=_UNSHOWN_PAYLOAD):
+    if path in skip or isinstance(value, bool) or value is None:
+        return
+    if isinstance(value, numbers.Number):
+        out.add(abs(float(value)))
+    elif isinstance(value, str):
+        for figure in _numbers_in(value):
+            out.add(figure.value)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _collect_numbers(item, out, path + (key,), skip)
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            _collect_numbers(item, out, path, skip)
+
+
+def _grounding_numbers(context):
+    """(plain, scaled, percents) -- the figures an explanation may quote:
+
+      plain    every number the prompt shows: the context and the
+               payload inside it as they stand, less _UNSHOWN_PAYLOAD
+               (and less _PRICING_PAYLOAD when there is no price list),
+               and of the sub-category analysis only its direct
+               competitor count (_UNSHOWN_ANALYSIS);
+      scaled   the viability in its other scale (score x10, index /10).
+               The VIABILITY only -- the one place two scales genuinely
+               exist -- and only the plan's, the one the prompt prints.
+               Applied to everything it would wave through nonsense:
+               "30 months" would pass because the plan has 3 employees;
+      percents the gross margin as the percentage the prompt prints it
+               as (0.4 -> 40), for numbers written with a percent sign --
+               and only when the pricing line that prints it is shown.
+
+    Small integers are matched against `plain` alone (plus `percents`
+    when written as one) -- see _matches."""
+    forecast = _forecast(context) or {}
+    prices_shown = bool(forecast) and _prices_are_shown(forecast)
+    plain = set()
+    skip = _UNSHOWN_PAYLOAD | _UNSHOWN_ANALYSIS
+    _collect_numbers(context, plain, skip=skip if prices_shown else skip | _PRICING_PAYLOAD)
+    analysis = context.get("subcategory_analysis")
+    if isinstance(analysis, dict) and _number(analysis.get("direct_count")) is not None:
+        plain.add(abs(_number(analysis.get("direct_count"))))
+
+    plan = forecast.get("plan") or {}
+    scaled = set()
+    for score in (plan.get("viability_score"), context.get("viability_score")):
+        if _number(score) is not None:
+            scaled.add(abs(_number(score)) * 10)
+    if _number(plan.get("viability_index")) is not None:
+        scaled.add(abs(_number(plan.get("viability_index"))) / 10)
+
+    percents = set()
+    margin = _number((forecast.get("financials") or {}).get("gross_margin"))
+    if margin is not None and prices_shown:
+        percents.add(round(abs(margin) * 100, 1))
+    return plain, scaled, percents
+
+
+def _matches(figure, allowed):
+    plain, scaled, percents = allowed
+    value = abs(figure.value)
+    if figure.small:
+        pool = (plain | percents) if figure.percent else plain
+        return any(abs(value - a) <= 0.5 for a in pool)
+    pool = plain | scaled | (percents if figure.percent else set())
+    return any(abs(value - a) <= 0.6 or abs(value - a) <= 0.02 * a for a in pool)
+
+
+def ungrounded_numbers(text, context):
+    """The numbers in `text`, as written, that match nothing in the
+    context's payload or inputs (see the note above for what "match"
+    allows). An empty list means the text is grounded."""
+    allowed = _grounding_numbers(context)
+    return [figure.written.strip() for figure in _numbers_in(text) if not _matches(figure, allowed)]
+
+
+def _choose_explanation(llm_text, llm_generated_by, rule_explanation, context):
+    """The LLM's explanation when it is present and grounded, else the
+    rule-based one. Only ever an explanation of a payload: with no
+    forecast in the context there is nothing to transcribe, and anything
+    the LLM wrote anyway is ignored."""
+    if _forecast(context) is None:
+        return None
+    text = " ".join(str(llm_text or "").split())
+    if not text:
+        return rule_explanation
+    invented = ungrounded_numbers(text, context)
+    if invented or len(text) > 1500:
+        try:
+            from flask import current_app
+
+            current_app.logger.info(
+                "LLM forecast explanation discarded (%s); using the rule-based explanation instead",
+                f"numbers not in the model output: {', '.join(invented)}" if invented else "too long",
+            )
+        except Exception:  # pragma: no cover - no app context
+            pass
+        return rule_explanation
+    return {"text": text, "generated_by": llm_generated_by}
+
+
 def _rule_based_recommendation(context):
     headline, opportunity_type = _headline_and_type_for(context["cluster_label"])
     return {
@@ -306,6 +1042,8 @@ def _rule_based_recommendation(context):
         "generated_by": "rule_based",
         "subcategory_analysis": context.get("subcategory_analysis"),
         "innovation": _rule_based_innovation(context),
+        "forecast": _forecast(context),
+        "explanation": _rule_based_explanation(context),
     }
 
 
@@ -344,16 +1082,23 @@ def llm_recommendations_enabled():
 
 def build_recommendation(context):
     """Returns a structured recommendation dict -- {headline,
-    opportunity_type, summary, reasons, risks, generated_by} -- ready
+    opportunity_type, summary, reasons, risks, generated_by,
+    subcategory_analysis, innovation, forecast, explanation} -- ready
     for serialize_recommendation() to store in
     forecast_result.recommendation.
 
-    Tries the configured LLM (GPT-4o-mini via OpenRouter, or Claude --
-    see LLM_PROVIDER / OPENAI_BASE_URL in .env) when
-    use_llm_recommendations is on; always falls back to the
-    deterministic rule-based recommendation above if the LLM is off,
-    unconfigured, or fails for any reason -- the page never breaks
-    because of this."""
+    When use_llm_recommendations is on, asks the LLM -- Gemini first for
+    this call, then the provider in LLM_PROVIDER, then the rest (see
+    llm_service.generate_recommendation_json) -- for the wording and the
+    forecast explanation; always falls back to the deterministic
+    rule-based recommendation above if the LLM is off, unconfigured, or
+    fails for any reason -- the page never breaks because of this.
+
+    "forecast" is the trained model's payload from the context, on both
+    paths: the LLM is asked to write ABOUT it and is never allowed to
+    supply it. The LLM's explanation replaces the rule-based one only
+    when it passes the grounding check (ungrounded_numbers); its
+    headline, summary, reasons and risks are used as before."""
     recommendation = _rule_based_recommendation(context)
 
     if llm_recommendations_enabled():
@@ -362,12 +1107,27 @@ def build_recommendation(context):
         llm_payload = generate_recommendation_json(context)
         if llm_payload:
             rule_innovation = recommendation["innovation"]
+            rule_explanation = recommendation["explanation"]
             llm_payload = dict(llm_payload)
             llm_innovation = llm_payload.pop("innovation", None)
+            llm_explanation = llm_payload.pop("explanation", None)
+            llm_model = llm_payload.pop("model", None)
+            llm_payload.pop("forecast", None)
             recommendation = dict(llm_payload)
             # The sub-category figures are measurements, never the
             # model's words -- they always come from the context.
             recommendation["subcategory_analysis"] = context.get("subcategory_analysis")
+            # Likewise the forecast: the trained model's output, never
+            # anything the LLM said about it.
+            recommendation["forecast"] = _forecast(context)
+            # "llm:gemini:gemini-3.8-flash" -- the provider AND the exact
+            # model, because "explained by Gemini" should be checkable.
+            writer = llm_payload.get("generated_by") or "llm"
+            if llm_model:
+                writer = f"{writer}:{llm_model}"
+            recommendation["explanation"] = _choose_explanation(
+                llm_explanation, writer, rule_explanation, context
+            )
             if llm_innovation and rule_innovation.get("has_idea"):
                 # The LLM judges the idea; the differentiation need stays
                 # the one read from the saturation model.
@@ -407,7 +1167,21 @@ def _empty_recommendation():
         "generated_by": "none",
         "subcategory_analysis": None,
         "innovation": None,
+        "forecast": None,
+        "explanation": None,
     }
+
+
+def _parse_explanation(value):
+    """{"text", "generated_by"} from storage, or None when the row has
+    no usable explanation (every row written before the two-stage
+    model)."""
+    if not isinstance(value, dict):
+        return None
+    text = str(value.get("text") or "").strip()
+    if not text:
+        return None
+    return {"text": text, "generated_by": str(value.get("generated_by") or RULE_BASED_EXPLANATION)}
 
 
 def _opportunity_type_from_headline(headline):
@@ -454,6 +1228,11 @@ def parse_recommendation(raw_text):
                 if isinstance(payload.get("subcategory_analysis"), dict) else None,
                 "innovation": payload.get("innovation")
                 if isinstance(payload.get("innovation"), dict) else None,
+                # Absent on forecasts written before the trained plan
+                # model; the Home page regenerates those once.
+                "forecast": payload.get("forecast")
+                if isinstance(payload.get("forecast"), dict) else None,
+                "explanation": _parse_explanation(payload.get("explanation")),
             }
 
     # Legacy plain-text fallback (pre-JSON format).
@@ -477,6 +1256,8 @@ def parse_recommendation(raw_text):
         "generated_by": "legacy",
         "subcategory_analysis": None,
         "innovation": None,
+        "forecast": None,
+        "explanation": None,
     }
 
 

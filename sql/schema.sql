@@ -56,6 +56,18 @@ CREATE TABLE user (
 -- ---------------------------------------------------------------------
 -- SME_PROFILE — a business plan/scenario an SME user wants analyzed.
 -- USER 1—M SME_PROFILE. `location` is free text (no barangays table).
+--
+-- startup_capital is shown everywhere as "Capital" and is REQUIRED
+-- (> 0) by the application (app/services/plan_params.py) because the
+-- plan viability model uses it. The column keeps its original name and
+-- stays NULLable: plans saved before it was required still load.
+--
+-- The columns after `status` are additive (see
+-- sql/2026-09_revisions.sql and sql/2026-10_plan_trash_and_forecast.sql);
+-- the app adds them to an existing database on its own at start-up.
+-- archived_at/archived_by/archive_reason are the plan Trash: removing a
+-- plan from Home archives it instead of deleting it, and restoring it
+-- clears them. A plan is never hard-deleted.
 -- ---------------------------------------------------------------------
 DROP TABLE IF EXISTS sme_profile;
 CREATE TABLE sme_profile (
@@ -64,12 +76,19 @@ CREATE TABLE sme_profile (
     business_name       VARCHAR(150)  NOT NULL,
     industry_type       VARCHAR(100)  NOT NULL,
     location            VARCHAR(150)  NOT NULL,
-    startup_capital     DECIMAL(12,2),
+    startup_capital     DECIMAL(12,2) COMMENT 'Shown as "Capital"; required (> 0) at the app level',
     registration_date   DATE,
     employee_count      INT,
     business_stage      ENUM('startup','existing') NOT NULL DEFAULT 'startup',
     monthly_revenue_est DECIMAL(12,2),
     status              ENUM('active','inactive') NOT NULL DEFAULT 'active',
+    subcategory         VARCHAR(100)  NULL,
+    product_offering    TEXT          NULL,
+    innovation_idea     TEXT          NULL,
+    offering_details    TEXT          NULL COMMENT 'JSON list of {"item", "price"}',
+    archived_at         DATETIME      NULL COMMENT 'Set when the plan is moved to Trash',
+    archived_by         INT           NULL,
+    archive_reason      VARCHAR(255)  NULL,
     CONSTRAINT fk_sme_profile_user FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 

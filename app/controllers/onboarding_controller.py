@@ -10,10 +10,18 @@ remembers it so that the question is asked once per account, not once
 per browser:
 
   NULL        never asked. Every account that existed before the
-              walkthrough did starts here, so each of them is asked once.
-  'touring'   said yes (or pressed "Take the tour"); a tour is under way.
+              walkthrough did starts here, so each of them is asked once
+              -- and so does every NEW account: this is what makes the
+              tour come up by itself on a first sign-in.
+  'touring'   said yes (or pressed "Start the tutorial" in Settings ›
+              Tutorial); a tour is under way.
   'completed' reached the last step.
   'skipped'   said no, or left the tour early.
+
+The replay button used to be "Take the tour" in the sidebar footer; it
+is now the Tutorial pane of Settings (shared/settings.html), which also
+shows this account's state in words -- see describe_walkthrough() below.
+Only the button moved. The first-time prompt is untouched.
 
 Which STEP someone is on is deliberately not stored here. It lives in
 the browser's sessionStorage, keyed by user id: it changes on every
@@ -42,6 +50,46 @@ onboarding_bp = Blueprint("onboarding", __name__, url_prefix="/onboarding")
 STATE_TOURING = "touring"
 STATE_COMPLETED = "completed"
 STATE_SKIPPED = "skipped"
+
+# What each state means, in words, for Settings › Tutorial:
+#   state -> (short label, one sentence, Bootstrap-icon name)
+# Keyed here, next to the states themselves, so the page can never
+# describe a state this module does not set. NULL ("never asked") has
+# its own entry under None.
+_WALKTHROUGH_WORDS = {
+    STATE_COMPLETED: (
+        "Completed",
+        "You finished every step of the tour.",
+        "bi-check-circle",
+    ),
+    STATE_SKIPPED: (
+        "Skipped",
+        "You said no to the tour, or left it before the end.",
+        "bi-skip-forward-circle",
+    ),
+    STATE_TOURING: (
+        "In progress",
+        "A tour is under way, and it picks up where you left off.",
+        "bi-hourglass-split",
+    ),
+    None: (
+        "Never started",
+        "You have not been through the tour yet.",
+        "bi-circle",
+    ),
+}
+
+
+def describe_walkthrough(state):
+    """This account's walkthrough state as {state, label, sentence, icon}
+    for the Tutorial pane in Settings.
+
+    A value this module never writes (a hand-edited row, say) is shown
+    as "never started" rather than raising: Settings has to render, and
+    the replay button works from any state anyway."""
+    label, sentence, icon = _WALKTHROUGH_WORDS.get(state or None, _WALKTHROUGH_WORDS[None])
+    known = state in _WALKTHROUGH_WORDS
+    return {"state": state if known else None, "label": label, "sentence": sentence, "icon": icon}
 
 
 def _clean_int(value, low=0, high=999):
@@ -86,13 +134,15 @@ def start():
 @onboarding_bp.route("/restart", methods=["POST"])
 @login_required
 def restart():
-    """Pressed "Take the tour" in the sidebar -- a replay, from step 1.
+    """Pressed "Start the tutorial" in Settings › Tutorial -- a replay,
+    from step 1. (It was "Take the tour" in the sidebar before; tour.js
+    binds any [data-tour-replay] element, so only the button moved.)
 
     Logged as onboarding_started too: it IS a walkthrough starting. The
     details say it was a replay, which is the only difference."""
     previous = current_user.onboarding_state or "never asked"
     return _set_state(STATE_TOURING, "onboarding_started",
-                      f"Replayed the tour from the sidebar (was {previous})")
+                      f"Replayed the tour from Settings › Tutorial (was {previous})")
 
 
 @onboarding_bp.route("/complete", methods=["POST"])
@@ -160,8 +210,9 @@ def inject_onboarding():
 # so instead of each of them passing a flag, this listens for any
 # template under errors/ (or auth/, belt and braces: those only render
 # for signed-out visitors today) and marks the onboarding config as
-# suppressed. "Take the tour" in the sidebar still works there -- it
-# navigates to the first page of the tour anyway.
+# suppressed. A [data-tour-replay] button would still work there -- it
+# navigates to the first page of the tour anyway -- though the only one
+# now lives in Settings › Tutorial, which is never an error page.
 SUPPRESSED_TEMPLATE_PREFIXES = ("errors/", "auth/")
 
 

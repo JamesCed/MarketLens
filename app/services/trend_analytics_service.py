@@ -415,6 +415,21 @@ def _sweep_baseline(industry_type=None):
     return _cached(_SWEEP_CACHE, cache_key, build)
 
 
+def _market_viability_of(forecast):
+    """A stored forecast's MARKET viability, (100 - saturation) / 10.
+
+    Trend Reports describe markets -- the baseline sweep they blend
+    forecasts with is stage 1 only -- so a forecast enters their
+    averages through its market figure. forecast_result.viability_score
+    used to be exactly this number; since the Plan Viability Model it is
+    the PLAN's viability (capital, staff, prices... weighed in), which
+    belongs on the plan's own pages, not averaged into a city's market
+    trend next to market-only baseline figures. Recomputing it from the
+    stored saturation_index gives every row -- old or new -- the same
+    value the Trend page always used."""
+    return round(max(0.0, min(10.0, (100.0 - float(forecast.saturation_index or 0)) / 10.0)), 1)
+
+
 def _real_forecasts(industry_type=None):
     query = ForecastResult.query
     if industry_type:
@@ -591,7 +606,7 @@ def get_overview_stats(baseline, real_forecasts):
         float(r.saturation_index or 0) for r in real_forecasts
     ]
     blended_viability = [s["viability_score"] for s in baseline] + [
-        float(r.viability_score or 0) for r in real_forecasts
+        _market_viability_of(r) for r in real_forecasts
     ]
 
     return {
@@ -770,7 +785,7 @@ def _forecast_averages_in_month(anchor, industry_type=None):
     if not rows:
         return 0.0, 0.0, 0
     saturation = [float(r.saturation_index or 0) for r in rows]
-    viability = [float(r.viability_score or 0) for r in rows]
+    viability = [_market_viability_of(r) for r in rows]
     return (
         round(sum(saturation) / len(saturation), 1),
         round(sum(viability) / len(viability), 1),
@@ -1384,7 +1399,7 @@ HORIZON_CONFIDENCE_PENALTY = 8.0
 
 
 def project_quarterly_outlook(saturation_index, viability_score, location,
-                              industry_type=None, quarters=4):
+                              industry_type=None, quarters=4, sme_profile=None):
     """The Home page's "Current vs. Projected Demand & Viability" chart:
     FOUR REAL MODEL RUNS, one per quarter.
 
@@ -1432,6 +1447,32 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
     `confidence`, the projected `competitors`, and `basis` -- "model"
     for a real run, "scaled" if the model was unavailable and the old
     arithmetic had to stand in.
+
+    WITH A PLAN (`sme_profile`): THE VIABILITY LINE IS THE PLAN'S
+    A plan's stored viability is no longer (100 - saturation) / 10 --
+    it is the Plan Viability Model's (stage 2,
+    plan_forecast_service), which also weighs the plan's capital,
+    staff, stage, price list, offering and idea. A chart that drew the
+    market formula next to a plan score would show two different
+    numbers called "viability" on one page. So with a plan, each
+    quarter runs BOTH stages:
+
+      1. stage 1 on that quarter's projected competitor count, with the
+         plan's own years in business (as its stored forecast was), and
+         -- when the plan's sub-category adjusted its competition --
+         the same direct-competition ratio applied to the projected
+         count and re-scored the way subcategory_service does;
+      2. stage 2 on that quarter's MSI* and competitor count, with
+         every plan input HELD as the owner entered it
+         (plan_forecast_service.plan_viability_for).
+
+    Q1 is today's market, so it reproduces the stored forecast's
+    viability -- which is why the plan inputs are held at the daily wage
+    and gross margin that forecast used, even after an Admin has changed
+    them (see _quarterly_plan_context). Confidence is the lower of the
+    two stages', less the horizon penalty. Without a plan the function
+    behaves exactly as it always did, and `viability_model` says which
+    of the two this is.
     """
     from app.services.forecasting_service import (
         _lgu_rows, _latest_market_rows, _predict_saturation, build_feature_vector,
@@ -1460,6 +1501,9 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
     # UI should not present them as the same one.
     observed = observed_competitor_growth(industry_type, location) if industry_type else None
 
+    plan = _quarterly_plan_context(sme_profile, industry_type, location, market, lgu,
+                                   current_competitors, saturation_index)
+
     labels, demand, saturation, viability = [], [], [], []
     confidence, competitors, basis = [], [], []
 
@@ -1480,15 +1524,21 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
 
         quarter_saturation = None
         quarter_confidence = None
+        quarter_viability = None
         projected_competitors = None
 
         if market is not None and lgu is not None and current_competitors is not None:
             projected_competitors = max(0, int(round(float(current_competitors) * growth)))
-            vector = build_feature_vector(
-                market, lgu, 0, industry_type, competitor_count=projected_competitors
-            )
-            predicted, model_confidence, _version = _predict_saturation(vector)
-            quarter_saturation = predicted
+            if plan is None:
+                vector = build_feature_vector(
+                    market, lgu, 0, industry_type, competitor_count=projected_competitors
+                )
+                predicted, model_confidence, _version = _predict_saturation(vector)
+                quarter_saturation = predicted
+            else:
+                quarter_saturation, model_confidence, quarter_viability = _quarterly_plan_run(
+                    plan, market, lgu, industry_type, projected_competitors,
+                )
             quarter_confidence = round(
                 max(0.0, model_confidence - HORIZON_CONFIDENCE_PENALTY * index), 1
             )
@@ -1500,11 +1550,15 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
             # mark the bar so nothing claims it was a model run.
             quarter_saturation = float(saturation_index or 0)
             quarter_confidence = None
+            if sme_profile is not None and viability_score is not None:
+                # The stored figure for a plan IS the plan's viability.
+                quarter_viability = round(max(0.0, min(10.0, float(viability_score))), 1)
             basis.append("scaled")
         else:
             basis.append("model")
 
-        quarter_viability = round(max(0.0, min(10.0, (100.0 - quarter_saturation) / 10.0)), 1)
+        if quarter_viability is None:
+            quarter_viability = round(max(0.0, min(10.0, (100.0 - quarter_saturation) / 10.0)), 1)
 
         labels.append(f"Q{index + 1}")
         competitors.append(projected_competitors)
@@ -1526,6 +1580,9 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
         "competitors": competitors,
         "basis": basis,
         "recalibrated": all(entry == "model" for entry in basis),
+        # "plan": the viability line is the Plan Viability Model's (stage
+        # 2, every plan input held); "market": (100 - saturation) / 10.
+        "viability_model": "plan" if sme_profile is not None else "market",
         "assumptions": {
             "projected": "competitor count",
             "source": "observed" if observed is not None else "national",
@@ -1535,11 +1592,117 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
                 "the PSA/DTI national MSME establishment series (published "
                 f"2019-2023, continued at {POST_RECOVERY_GROWTH:.0%}/year)"
             ),
+            # The MARKET inputs held. The plan's own inputs, held too in
+            # plan mode, are named under "viability" below, so a caption
+            # quoting both never says the same thing twice.
             "held": "population density, rent, foot traffic, historical success "
                     "rate and business density are held at today's values",
             "demand_proxy": "foot traffic scaled by the same growth rate",
+            "viability": (
+                "the Plan Viability Model re-run on each quarter's projected market, with the "
+                "plan's capital, employees, stage, price list, offering and idea held as entered"
+                if sme_profile is not None else
+                "(100 - saturation) / 10 of each quarter's projected market"
+            ),
         },
     }
+
+
+def _quarterly_plan_context(sme_profile, industry_type, location, market, lgu,
+                            current_competitors, saturation_index):
+    """What a plan-aware quarterly run needs, resolved once rather than
+    per quarter -- or None when there is no plan, or no market on file
+    to run the models on (the caller then falls back exactly as it
+    always has).
+
+    `direct_ratio` carries the plan's sub-category adjustment forward:
+    when the stored forecast scored a bakery against 0.4x the industry's
+    competitor count, every projected quarter is scored against 0.4x
+    that quarter's projected count too. It is the ratio of the counts
+    actually used (adjusted / industry) rather than the 2-decimal
+    density_ratio, so Q1 lands on exactly the stored count.
+
+    The plan inputs are held at the wage and gross margin the STORED
+    forecast was computed with (_stored_plan_assumptions), not today's
+    Admin settings. A stored forecast keeps its assumptions until the
+    plan is re-forecast; a chart that picked up a new wage at once would
+    put a Q1 bar next to the gauge that no longer equals it."""
+    if sme_profile is None or market is None or lgu is None or current_competitors is None:
+        return None
+
+    from app.services.plan_forecast_service import build_plan_inputs
+    from app.services.subcategory_service import direct_competition
+
+    analysis = None
+    subcategory = getattr(sme_profile, "subcategory", None)
+    if subcategory:
+        # allow_live=False: a chart must never spend a Places call. The
+        # stored forecast already fetched (and saved) any live count.
+        analysis = direct_competition(industry_type, subcategory, location, current_competitors,
+                                      allow_live=False)
+    direct_ratio = None
+    if analysis and analysis.get("adjusts_score") and current_competitors:
+        direct_ratio = float(analysis["adjusted_competitor_count"]) / float(current_competitors)
+
+    inputs = build_plan_inputs(
+        sme_profile,
+        {"saturation_index": float(saturation_index or 0), "competitor_count": current_competitors},
+        market,
+        get_real_population(location) or 0,
+        analysis,
+        # None (no stored payload) -> build_plan_inputs uses today's.
+        assumptions=_stored_plan_assumptions(sme_profile),
+    )
+    return {
+        "inputs": inputs,
+        "years": float(sme_profile.years_in_operation() or 0),
+        "direct_ratio": direct_ratio,
+    }
+
+
+def _stored_plan_assumptions(sme_profile):
+    """(daily_wage, gross_margin) the plan's latest stored forecast was
+    computed with -- the forecast the Home gauge shows -- or None when
+    there is no such forecast or it predates the plan model (the caller
+    then uses the current settings, which is all a forecast made now
+    would use too). One indexed query; never raises."""
+    import json
+
+    from app.services.plan_forecast_service import assumptions_from_payload
+
+    try:
+        latest = sme_profile.latest_forecast()
+        stored = json.loads(latest.recommendation) if latest is not None and latest.recommendation else None
+    except Exception:  # noqa: BLE001 -- a chart must not fail over a stored row
+        return None
+    if not isinstance(stored, dict):
+        return None
+    return assumptions_from_payload(stored.get("forecast"))
+
+
+def _quarterly_plan_run(plan, market, lgu, industry_type, projected_competitors):
+    """(MSI*, combined confidence, plan viability 0-10) for one quarter
+    -- both stages, as described in project_quarterly_outlook()."""
+    from app.services.forecasting_service import _predict_saturation, build_feature_vector
+    from app.services.plan_forecast_service import plan_viability_for
+
+    vector = build_feature_vector(
+        market, lgu, plan["years"], industry_type, competitor_count=projected_competitors
+    )
+    msi, stage1_confidence, _version = _predict_saturation(vector)
+    plan_competitors = projected_competitors
+
+    if plan["direct_ratio"] is not None:
+        plan_competitors = max(0, int(round(projected_competitors * plan["direct_ratio"])))
+        # Re-scored with years 0, exactly as saturation_for_counts() --
+        # and so the stored forecast's MSI* -- does.
+        direct_vector = build_feature_vector(
+            market, lgu, 0, industry_type, competitor_count=plan_competitors
+        )
+        msi, _direct_confidence, _version = _predict_saturation(direct_vector)
+
+    result = plan_viability_for(plan["inputs"], msi, plan_competitors)
+    return msi, min(stage1_confidence, result["confidence"]), result["viability_score"]
 
 
 # Widest per-quarter competitor growth this will believe from a

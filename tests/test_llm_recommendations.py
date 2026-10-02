@@ -415,6 +415,103 @@ def test_an_error_message_cannot_leak_the_key(app):
     assert "***redacted***" in failure["detail"]
 
 
+def test_the_gemini_key_is_redacted_too(app):
+    """Gemini is now asked first for every forecast narration, so its
+    errors are the ones most often recorded."""
+    from app.services import llm_service
+
+    secret = "AQ.AbTOTALLY_NOT_A_REAL_GEMINI_KEY_123"
+    with app.app_context():
+        app.config["GEMINI_API_KEY"] = secret
+        llm_service._record_failure("gemini", "api_call", f"HTTP 401 for {secret}")
+        failure = llm_service.last_failure()
+
+    assert secret not in failure["detail"]
+    assert "***redacted***" in failure["detail"]
+
+
+def test_a_real_error_is_not_overwritten_by_a_later_missing_key(app):
+    """The original rule: Gemini's 401 first, then "no key" from the
+    fallbacks -- the 401 is the one worth reading."""
+    from app.services import llm_service
+
+    with app.app_context():
+        llm_service._begin_attempt()
+        llm_service._record_failure("gemini", "api_call", "HTTP 401: API key not valid")
+        llm_service._record_failure("openai", "no_client", "OPENAI_API_KEY is not set")
+        failure = llm_service.last_failure()
+
+    assert failure["provider"] == "gemini"
+    assert failure["stage"] == "api_call"
+
+
+def test_a_skip_gives_way_to_a_later_real_error(app):
+    """The one exception to first-failure-wins. The forecast narration
+    asks Gemini first even where the operator never chose it, and passes
+    over it when it has no usable key; that skip must not hide the
+    error from the provider the operator did configure."""
+    from app.services import llm_service
+
+    with app.app_context():
+        llm_service._begin_attempt()
+        llm_service._record_failure("gemini", "skipped", "GEMINI_API_KEY is not set")
+        llm_service._record_failure("openai", "api_call", "model=openai/gpt-4o-mini: Error code: 404")
+        llm_service._record_failure("anthropic", "no_client", "ANTHROPIC_API_KEY is not set")
+        failure = llm_service.last_failure()
+
+    assert failure["provider"] == "openai"
+    assert failure["stage"] == "api_call"
+    assert "MODEL NAME" in failure["hint"], "the hint is recomputed for the replacing failure"
+
+
+def test_a_skip_gives_way_to_a_later_missing_client_too(app):
+    """...including a precondition failure: an OpenAI client that could
+    not be built is the real cause, not "Gemini skipped"."""
+    from app.services import llm_service
+
+    with app.app_context():
+        llm_service._begin_attempt()
+        llm_service._record_failure("gemini", "skipped", "the Gemini key is an sk-... key")
+        llm_service._record_failure("openai", "no_client", "OpenAI client could not be built: TypeError")
+        failure = llm_service.last_failure()
+
+    assert failure["provider"] == "openai"
+    assert failure["stage"] == "no_client"
+
+
+def test_a_missing_client_is_not_replaced_by_a_fallbacks_rejection(app, monkeypatch):
+    """First-failure-wins still holds for every other record, no_client
+    included. LLM_PROVIDER=openai with the `openai` package broken: the
+    alert wording falls through to Gemini, which is handed the inherited
+    sk- key and answers 400 "API key not valid". The package is the
+    cause; pointing the operator at the Gemini key would send them to
+    the wrong provider."""
+    import sys
+
+    import requests
+
+    from app.services import llm_service
+
+    class _Rejected:
+        status_code = 400
+        text = '{"error": {"message": "API key not valid. Please pass a valid API key."}}'
+
+    with app.app_context():
+        app.config["LLM_PROVIDER"] = "openai"
+        app.config["OPENAI_API_KEY"] = "sk-or-v1-0000000000000000"
+        app.config["GEMINI_API_KEY"] = "sk-or-v1-0000000000000000"
+        app.config["ANTHROPIC_API_KEY"] = ""
+        monkeypatch.setitem(sys.modules, "openai", None)  # `from openai import OpenAI` now fails
+        monkeypatch.setattr(requests, "post", lambda *a, **k: _Rejected())
+
+        assert llm_service.generate_alert_summary("anything") is None
+        failure = llm_service.last_failure()
+
+    assert failure["provider"] == "openai"
+    assert failure["stage"] == "no_client"
+    assert "could not be imported" in failure["detail"]
+
+
 def test_the_status_endpoint_is_admin_only(app):
     with app.app_context():
         sme = User(name="SME", email="sme@llm.test", role="SME")

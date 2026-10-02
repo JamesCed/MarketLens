@@ -4,9 +4,11 @@ tests/test_recommendation_llm.py
 Covers the 3rd item of the "improve the system" request: every SME
 forecast now generates its "AI-Powered Recommendation" from the SME's
 own input business parameters compared against real market/competitor
-data, optionally rewritten by GPT-4o-mini (via OpenRouter) or Claude
-when USE_LLM_RECOMMENDATIONS is on, and always falling back to a
-deterministic rule-based recommendation otherwise.
+data, optionally rewritten by an LLM when USE_LLM_RECOMMENDATIONS is on
+(Gemini first for the forecast narration, then the configured provider
+-- GPT via OpenAI/OpenRouter, or Claude), and always falling back to a
+deterministic rule-based recommendation otherwise. The forecast payload
+and its explanation have their own file: tests/test_forecast_narration.py.
 
 None of these tests make a real network call or need the `openai` /
 `anthropic` packages installed -- llm_service.py's _get_openai_client()
@@ -124,6 +126,9 @@ def test_serialize_then_parse_round_trip():
                                  "is_estimated": False, "density_ratio": 0.5, "adjusts_score": True},
         "innovation": {"has_idea": True, "differentiation_need": "Moderate", "novelty": None,
                        "summary": "...", "suggestions": ["a"], "generated_by": "rule_based"},
+        "forecast": {"version": "plan_v1", "plan": {"viability_score": 6.1}, "drivers": []},
+        "explanation": {"text": "The trained plan model rates this plan's viability 6.1/10.",
+                        "generated_by": "rule-based"},
     }
     stored = rec_service.serialize_recommendation(original)
     assert stored.startswith("{")
@@ -141,6 +146,9 @@ def test_a_forecast_stored_before_subcategories_still_parses():
     parsed = rec_service.parse_recommendation(old_row)
     assert parsed["subcategory_analysis"] is None
     assert parsed["innovation"] is None
+    # Nor the trained plan model's payload or its explanation.
+    assert parsed["forecast"] is None
+    assert parsed["explanation"] is None
 
 
 def test_parse_recommendation_legacy_plain_text_format():
@@ -168,7 +176,7 @@ def test_parse_recommendation_empty_or_none_returns_shaped_default():
     for value in (None, "", "   "):
         parsed = rec_service.parse_recommendation(value)
         assert set(parsed.keys()) == {"headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
-                                      "subcategory_analysis", "innovation"}
+                                      "subcategory_analysis", "innovation", "forecast", "explanation"}
         assert parsed["reasons"] == []
         assert parsed["risks"] == []
 
@@ -203,6 +211,7 @@ def _sample_context():
         "location": "Poblacion",
         "business_stage": "startup",
         "years_in_operation": 0.0,
+        "capital": 300000.0,
         "startup_capital": 300000.0,
         "employee_count": 3,
         "saturation_index": 35.0,
@@ -322,8 +331,19 @@ def test_generate_forecast_for_profile_stores_parseable_recommendation(app):
         stored = json.loads(forecast.recommendation)
         assert set(stored.keys()) == {
             "headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
-            "subcategory_analysis", "innovation",
+            "subcategory_analysis", "innovation", "forecast", "explanation",
         }
+        # Every forecast now carries the two-stage model's payload, and
+        # the payload always comes with an explanation of it -- rule-based
+        # here, because no LLM key is configured in the test environment.
+        # Asserted unconditionally: the Home page regenerates any stored
+        # forecast whose payload is missing, so a forecast written without
+        # one would be regenerated on every visit.
+        assert stored["forecast"] is not None
+        assert stored["forecast"]["version"] == "plan_v1"
+        assert stored["forecast"]["plan"]["viability_score"] == float(forecast.viability_score)
+        assert stored["explanation"]["generated_by"] == "rule-based"
+        assert stored["explanation"]["text"].strip()
 
         parsed = rec_service.parse_recommendation(forecast.recommendation)
         assert parsed["headline"]

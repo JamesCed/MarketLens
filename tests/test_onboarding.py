@@ -15,8 +15,11 @@ What is worth pinning down here:
   3. The endpoints are sign-in-only and POST-only.
   4. The tour cannot send anyone somewhere broken: every page a step
      names is a real route that step's role is allowed to open.
-  5. The assets are on the page exactly once, and "Take the tour" is in
-     the sidebar.
+  5. The assets are on the page exactly once, and the replay button is
+     "Start the tutorial" in Settings › Tutorial -- no longer "Take the
+     tour" in the sidebar, whose footer now holds Settings and Support.
+     Moving the button changed nothing about the first visit: an
+     account never asked still gets the prompt by itself (section 1).
 
 The engine's pure logic (step persistence, the missing-element
 fallback, card placement) is tested in tests/tour_logic_test.js, which
@@ -141,7 +144,8 @@ def test_the_prompt_is_not_shown_once_answered(app, state):
     assert PROMPT not in body
     assert "Is this your first time here?" not in body
     # The config is still there: a tour in progress resumes from it, and
-    # "Take the tour" needs it whatever the state.
+    # "Start the tutorial" (Settings › Tutorial) needs it whatever the
+    # state.
     assert _config(body)["state"] == state
 
 
@@ -175,7 +179,8 @@ def test_the_prompt_never_appears_on_an_error_page(app, path, status):
     assert response.status_code == status
     assert PROMPT not in body
     # Marked suppressed, so tour.js neither prompts nor resumes a tour
-    # here -- but the sidebar's "Take the tour" still has what it needs.
+    # here -- but the config is still on the page, so a replay button
+    # ([data-tour-replay]) would still have what it needs.
     assert _config(body)["suppressed"] is True
 
 
@@ -294,25 +299,51 @@ def test_base_includes_the_tour_assets_exactly_once(app, state):
     assert body.index("/static/css/tour.css") < body.index("</head>")
 
 
-def test_the_sidebar_has_take_the_tour(app):
-    _user()
-    body = _login(app).get("/settings").get_data(as_text=True)
-    footer = body[body.index('class="dss-sidebar-footer"'):body.index("</aside>")]
-    assert "data-tour-replay" in footer
-    assert "Take the tour" in footer
-    # Next to Support, not replacing it.
-    assert "#supportModal" in footer
+def _sidebar_footer(body):
+    return body[body.index('class="dss-sidebar-footer"'):body.index("</aside>")]
+
+
+@pytest.mark.parametrize("role", ["SME", "LGU", "Admin"])
+def test_the_replay_button_is_in_settings_tutorial_not_the_sidebar(app, role):
+    """"Take the tour" moved from the sidebar footer to Settings ›
+    Tutorial. The footer now holds Settings, then Support."""
+    _user(role=role, state="completed")
+    body = _login(app).get("/settings?section=tutorial").get_data(as_text=True)
+
+    footer = _sidebar_footer(body)
+    assert "data-tour-replay" not in footer
+    assert "Take the tour" not in body
+    assert 'data-tour="nav-settings"' in footer
+    assert footer.index('data-tour="nav-settings"') < footer.index("#supportModal"), \
+        "Settings sits above Support"
+
+    pane = body[body.index('id="section-tutorial"'):]
+    pane = pane[:pane.index("</section>")]
+    assert "data-tour-replay" in pane
+    assert "Start the tutorial" in pane
+    # Exactly one replay button on the page -- the Tutorial pane's.
+    assert len(re.findall(r"<[a-z]+\b[^>]*\bdata-tour-replay\b[^>]*>", body)) == 1
+
+
+def test_moving_the_button_left_the_first_visit_alone(app):
+    """An account never asked is still asked, on whatever signed-in page
+    it lands on first, without going anywhere near Settings."""
+    _user(email="fresh@tour.test")
+    body = _login(app, "fresh@tour.test").get("/trend-reports").get_data(as_text=True)
+    assert PROMPT in body
+    assert _config(body)["state"] is None
+    assert "data-tour-replay" not in body, "the replay button belongs to Settings only"
 
 
 @pytest.mark.parametrize("role, expected", [
     # No Community entry: the community is the Discord server, opened
-    # from the footer (see tests/test_community_discord.py).
-    ("SME", ["nav-home", "nav-saturation-map", "nav-trend-reports", "nav-recommendations",
-             "nav-settings"]),
+    # from the footer (see tests/test_community_discord.py). No Settings
+    # entry either: it is in the sidebar FOOTER now (checked below).
+    ("SME", ["nav-home", "nav-saturation-map", "nav-trend-reports", "nav-recommendations"]),
     ("LGU", ["nav-lgu-dashboard", "nav-saturation-map", "nav-trend-reports",
-             "nav-data-upload", "nav-settings"]),
+             "nav-data-upload"]),
     ("Admin", ["nav-admin-dashboard", "nav-users", "nav-audit", "nav-datasets",
-               "nav-system-settings", "nav-settings"]),
+               "nav-system-settings"]),
 ])
 def test_the_sidebar_links_carry_tour_anchors(app, role, expected):
     _user(role=role)
@@ -320,6 +351,8 @@ def test_the_sidebar_links_carry_tour_anchors(app, role, expected):
     nav = body[body.index('class="dss-nav"'):body.index("dss-sidebar-footer")]
     for name in expected:
         assert f'data-tour="{name}"' in nav, name
+    assert 'data-tour="nav-settings"' not in nav
+    assert 'data-tour="nav-settings"' in _sidebar_footer(body)
 
 
 def test_the_tour_needs_no_cdn(app):

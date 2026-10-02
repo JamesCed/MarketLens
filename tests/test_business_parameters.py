@@ -30,7 +30,7 @@ from app.ml.subcategories import (
     match_subcategory,
 )
 from app.services import subcategory_service as subsvc
-from app.services.plan_params import MAX_OFFERING_ITEMS, apply_plan_data, parse_plan_form
+from app.services.plan_params import MAX_EMPLOYEE_COUNT, MAX_OFFERING_ITEMS, apply_plan_data, parse_plan_form
 
 FOOD = "Food and Beverage"
 RETAIL = "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"
@@ -48,7 +48,9 @@ def app():
 
 
 def _form(**fields):
-    base = {"business_name": "Tibag Pandesal", "industry_type": FOOD, "location": "Tibag"}
+    # Capital is required (> 0) since the plan viability model reads it;
+    # see tests/test_plan_trash.py for the capital rules themselves.
+    base = {"business_name": "Tibag Pandesal", "industry_type": FOOD, "location": "Tibag", "capital": "500000"}
     base.update(fields)
     md = MultiDict()
     for key, value in base.items():
@@ -131,6 +133,68 @@ def test_the_price_list_is_capped():
     names = [f"Item {i}" for i in range(MAX_OFFERING_ITEMS + 10)]
     data, _errors = parse_plan_form(_form(offering_item=names, offering_price=["1"] * len(names)))
     assert len(data["offering_items"]) == MAX_OFFERING_ITEMS
+
+
+# float() accepts "nan", "inf" and "1e400" (infinity), and every
+# comparison with NaN is False, so a plain `< 0` check let them through.
+# Both numbers now feed the plan viability model, and a NaN price ended
+# up in the JSON reply to the Edit dialog, which the browser refuses.
+@pytest.mark.parametrize("raw,message", [
+    ("inf", "Employee count must be a number."),
+    ("-inf", "Employee count must be a number."),
+    ("1e400", "Employee count must be a number."),
+    ("nan", "Employee count must be a number."),
+    ("lots", "Employee count must be a number."),
+    ("-1", "Employee count cannot be negative."),
+    # An INT column: this used to reach MySQL and fail at commit, as a 500.
+    ("99999999999", f"Employee count must be {MAX_EMPLOYEE_COUNT:,} or fewer."),
+])
+def test_a_bad_employee_count_is_a_message_not_a_crash(raw, message):
+    data, errors = parse_plan_form(_form(employee_count=raw))
+    assert errors == [message]
+    assert data["employee_count"] is None
+
+
+def test_a_large_but_real_employee_count_is_kept():
+    data, errors = parse_plan_form(_form(employee_count=str(MAX_EMPLOYEE_COUNT)))
+    assert errors == []
+    assert data["employee_count"] == MAX_EMPLOYEE_COUNT
+
+
+@pytest.mark.parametrize("raw,message", [
+    ("nan", 'The price for "Bread" must be a number.'),
+    ("inf", 'The price for "Bread" must be a number.'),
+    ("1e400", 'The price for "Bread" must be a number.'),
+    ("20000000", 'The price for "Bread" must be ₱10,000,000 or less.'),
+])
+def test_a_non_finite_or_absurd_price_is_refused(raw, message):
+    data, errors = parse_plan_form(_form(offering_item=["Bread"], offering_price=[raw]))
+    assert errors == [message]
+    assert data["offering_items"] == []
+    json.dumps(data, allow_nan=False)   # strict JSON, as the browser parses it
+
+
+def test_the_edit_reply_is_strict_json_after_a_bad_number(app):
+    """The reviewer's case end to end: an Edit posted over fetch() with a
+    'nan' price or an 'inf' employee count gets a 400 with a message --
+    not a 500, and not a 200 whose body the browser cannot parse."""
+    with app.app_context():
+        owner = _owner()
+        plan = SmeProfile(user_id=owner.user_id, business_name="Bakery", industry_type=FOOD,
+                          location="Tibag", startup_capital=250000)
+        db.session.add(plan)
+        db.session.commit()
+        client = app.test_client()
+        client.post("/login", data={"email": owner.email, "password": "password123"})
+        base = {"business_name": "Bakery", "industry_type": FOOD, "location": "Tibag", "capital": "250000"}
+        for extra in ({"employee_count": "inf"}, {"offering_item": "Bread", "offering_price": "nan"}):
+            response = client.post(f"/home/plans/{plan.sme_id}/update", data={**base, **extra},
+                                   headers={"Accept": "application/json"})
+            assert response.status_code == 400, extra
+            body = json.loads(response.get_data(as_text=True))   # strict: NaN would raise
+            assert body["success"] is False and "must be a number" in body["error"]
+        db.session.expire_all()
+        assert db.session.get(SmeProfile, plan.sme_id).offering_details is None
 
 
 def test_a_subcategory_from_another_industry_is_dropped_not_refused():
@@ -332,7 +396,7 @@ def _context(**overrides):
     base = {
         "business_name": "Pan", "industry_type": FOOD, "subcategory": "bakery", "subcategory_label": "Bakery / Pastries",
         "product_offering": "Pandesal", "innovation_idea": "", "offering_items": [], "price_summary": None,
-        "location": "Tibag", "business_stage": "startup", "years_in_operation": 0, "startup_capital": 0,
+        "location": "Tibag", "business_stage": "startup", "years_in_operation": 0, "capital": 0, "startup_capital": 0,
         "employee_count": 0, "saturation_index": 82.0, "industry_saturation_index": 82.0, "cluster_label": "Saturated",
         "viability_score": 1.8, "confidence_level": 70.0, "population": 9000, "competitor_count": 30,
         "competitor_simulated": False, "competitor_sample": [], "subcategory_analysis": None,

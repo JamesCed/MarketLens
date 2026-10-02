@@ -10,8 +10,10 @@
      app/controllers/onboarding_controller.py and written with |tojson,
      which escapes it safely for a <script> block. Rendered on EVERY
      signed-in page, whatever the state: a tour in progress resumes on
-     each page load, and "Take the tour" in the sidebar has to work for
-     people who finished or skipped it long ago.
+     each page load, and the "Start the tutorial" button in Settings ›
+     Tutorial (any [data-tour-replay] element -- tour.js binds them on
+     every page) has to work for people who finished or skipped it long
+     ago.
 
   2. "Welcome to MarketLens! Is this your first time here?" -- ONLY for
      an account that has never been asked (onboarding_state is NULL),

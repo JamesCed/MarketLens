@@ -2,9 +2,9 @@
 tests/test_settings_page.py
 -----------------------------
 The Settings page: the panes that replaced the old single "Profile
-Settings" page -- Profile, Business Preferences (SME only),
-Notifications, Appearance, Security -- plus the per-account preferences
-it saves.
+Settings" page -- Profile, Notifications, Appearance, Security and
+Tutorial, the same five for every role -- plus the per-account
+preferences it saves.
 
 What is worth pinning down here:
 
@@ -15,6 +15,13 @@ What is worth pinning down here:
   3. The switches do something. A theme is rendered into the page that
      follows it, and turning early warnings off actually stops the
      notification being created -- not merely hidden.
+  4. Business Preferences is GONE, not hidden: the plans are managed on
+     the Home page now (edit, move to Trash, restore -- see
+     tests/test_plan_trash.py, which owns the plan routes' tests), and
+     an old ?section=plans link still lands somewhere useful.
+
+The Tutorial pane and where the Settings link sits in the sidebar are
+tested in tests/test_settings_tutorial.py.
 """
 
 from datetime import date
@@ -79,13 +86,16 @@ def test_the_old_profile_settings_url_still_works(app):
         assert followed.status_code == 200
 
 
-def test_the_nav_says_settings_not_profile_settings(app):
+def test_the_sidebar_says_settings_not_profile_settings(app):
+    """The link is in the sidebar FOOTER now, above Support, rather than
+    in the list of pages -- but it still says "Settings"."""
     with app.app_context():
         _user(app)
         body = _client(app).get("/settings").get_data(as_text=True)
-        nav = body[body.index('class="dss-nav"'):body.index("dss-sidebar-footer")]
-        assert ">Settings" in nav.replace("\n", "").replace("  ", "") or "Settings\n" in nav
-        assert "Profile Settings" not in nav
+        sidebar = body[body.index('class="dss-sidebar"'):body.index("</aside>")]
+        footer = sidebar[sidebar.index('class="dss-sidebar-footer"'):]
+        assert "</i> Settings" in footer
+        assert "Profile Settings" not in sidebar
 
 
 def _active_pane(body):
@@ -102,7 +112,7 @@ def _active_pane(body):
     return None
 
 
-@pytest.mark.parametrize("section", ["profile", "plans", "notifications", "appearance", "security"])
+@pytest.mark.parametrize("section", ["profile", "notifications", "appearance", "security", "tutorial"])
 def test_each_section_can_be_opened_directly(app, section):
     with app.app_context():
         _user(app)
@@ -428,13 +438,17 @@ def test_every_role_can_open_settings(app, role, email):
 
 
 # ---------------------------------------------------------------------
-# 6. Business Preferences -- where "My Plans" went
+# 6. Business Preferences is gone -- the plans are managed on Home
 # ---------------------------------------------------------------------
-# The plans used to live in a Bootstrap modal in shared/_topbar.html,
-# which base.html includes on every authenticated page. These pin down
-# that the move is complete in both directions: the popup is gone from
-# every page, and the pane that replaced it really carries the plans and
-# their controls.
+# The plans first lived in a "My Plans" modal in shared/_topbar.html
+# (on every authenticated page), then in a Settings pane called Business
+# Preferences. They are now managed on the Home page, next to the plan
+# itself: a pencil edits, a bin moves the plan to Trash, Trash restores.
+# These pin down that the Settings side of that move is complete -- no
+# pane, no tab, no plan forms or script left behind -- and that an old
+# link still lands somewhere useful. The plan routes themselves (update,
+# trash, restore, the legacy /delete alias) are tested in
+# tests/test_plan_trash.py.
 
 def _plan(user, name="Carinderia ni Nena", industry="Food and Beverage",
           location="San Nicolas", stage="startup"):
@@ -449,9 +463,8 @@ def _plan(user, name="Carinderia ni Nena", industry="Food and Beverage",
 
 
 def test_the_my_plans_popup_is_gone_from_every_page(app):
-    """The whole point of the move. If the modal is still being shipped,
-    the page weight it cost is still being paid and there are now two
-    places to edit a plan."""
+    """If the modal were still being shipped, the page weight it cost
+    would still be paid and there would be two places to edit a plan."""
     with app.app_context():
         user = _user(app)
         _plan(user)
@@ -463,158 +476,112 @@ def test_the_my_plans_popup_is_gone_from_every_page(app):
             assert "dss-myplans-btn" not in body, f"the top-bar button is still on {path}"
 
 
-def test_the_pane_lists_the_plans_and_their_controls(app):
+@pytest.mark.parametrize("role,email", [("SME", "s@x.com"), ("LGU", "l@x.com"), ("Admin", "a@x.com")])
+def test_no_role_gets_a_business_preferences_pane(app, role, email):
+    """Not for an LGU or Admin (who never had one) and, now, not for an
+    SME either: there is no plans tab, no plans pane, and no leftover
+    plan list in Settings at all."""
     with app.app_context():
-        user = _user(app)
-        _plan(user)
-        body = _client(app).get("/settings?section=plans").get_data(as_text=True)
-
-        assert "Business Preferences" in body
-        assert "Carinderia ni Nena" in body
-        assert "dss-plan-edit-btn" in body
-        assert "dss-plan-delete-btn" in body
-
-
-def test_the_plans_are_rendered_by_the_server_not_fetched(app):
-    """The popup fetched /api/my-plans every time it opened, so the list
-    flashed empty first. As a pane the rows are already in the HTML --
-    which is also what makes it work with scripting off."""
-    with app.app_context():
-        user = _user(app)
-        _plan(user, name="Bagong Tindahan")
-        body = _client(app).get("/settings?section=plans").get_data(as_text=True)
-
-        assert "Bagong Tindahan" in body
-        assert "Loading your plans" not in body
-
-
-def test_the_edit_form_posts_to_the_real_route(app):
-    """With scripting off the Save button must still save, so the form
-    needs a real action -- not a bare submit the JS intercepts."""
-    with app.app_context():
-        user = _user(app)
-        profile = _plan(user)
-        body = _client(app).get("/settings?section=plans").get_data(as_text=True)
-        assert f'action="/home/plans/{profile.sme_id}/update"' in body
-
-
-def test_editing_a_plan_from_settings_saves_it(app):
-    """End to end against the route the pane posts to."""
-    with app.app_context():
-        user = _user(app)
-        profile = _plan(user)
-        sme_id = profile.sme_id
-
-        response = _client(app).post(f"/home/plans/{sme_id}/update", data={
-            "business_name": "Renamed Carinderia",
-            "industry_type": "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles",
-            "location": "Matatalaib",
-            "business_stage": "existing",
-            "startup_capital": "500000",
-            "employee_count": "9",
-            "subcategory": "tires_auto_parts",
-            "product_offering": "Tires and vulcanizing",
-            "innovation_idea": "Mobile vulcanizing for tricycles",
-            "offering_item": ["Vulcanizing", "Tire (14 in)"],
-            "offering_price": ["80", "1800"],
-            # An old cached form may still post it; it is ignored.
-            "monthly_revenue_est": "150000",
-        })
-
-        assert response.status_code == 200
-        payload = response.get_json()
-        assert payload["success"] is True
-        assert payload["plan"]["subcategory_label"]
-        assert "monthly_revenue_est" not in payload["plan"]
-
-        saved = SmeProfile.query.get(sme_id)
-        assert saved.business_name == "Renamed Carinderia"
-        assert saved.industry_type == "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"
-        assert saved.location == "Matatalaib"
-        assert saved.employee_count == 9
-        assert saved.subcategory == "tires_auto_parts"
-        assert saved.innovation_idea == "Mobile vulcanizing for tricycles"
-        assert saved.offering_items == [
-            {"item": "Vulcanizing", "price": 80.0}, {"item": "Tire (14 in)", "price": 1800.0},
-        ]
-        assert saved.monthly_revenue_est is None
-
-
-def test_editing_keeps_a_registration_date_the_form_did_not_send(app):
-    from datetime import date
-
-    with app.app_context():
-        user = _user(app)
-        profile = _plan(user, stage="existing")
-        profile.registration_date = date(2019, 5, 1)
-        db.session.commit()
-
-        _client(app).post(f"/home/plans/{profile.sme_id}/update", data={
-            "business_name": profile.business_name, "industry_type": profile.industry_type,
-            "location": profile.location, "business_stage": "existing",
-        })
-        assert SmeProfile.query.get(profile.sme_id).registration_date == date(2019, 5, 1)
-
-
-def test_editing_keeps_a_legacy_industry_name(app):
-    """The Edit form offers a dropped industry name as "(current)";
-    saving without touching it must not be refused."""
-    with app.app_context():
-        user = _user(app)
-        profile = _plan(user, industry="Sari-sari Store (legacy)")
-        response = _client(app).post(f"/home/plans/{profile.sme_id}/update", data={
-            "business_name": "Renamed", "industry_type": "Sari-sari Store (legacy)",
-            "location": profile.location,
-        })
-        assert response.get_json()["success"] is True
-
-
-def test_the_edit_form_has_the_new_fields_and_no_revenue(app):
-    with app.app_context():
-        user = _user(app)
-        _plan(user)
-        body = _client(app).get("/settings?section=plans").get_data(as_text=True)
-        assert 'name="monthly_revenue_est"' not in body
-        assert "Est. Revenue" not in body
-        for name in ("subcategory", "product_offering", "innovation_idea", "offering_item"):
-            assert f'name="{name}"' in body
-        assert "data-plan-form" in body
-        assert "js/plan_form.js" in body
-
-
-def test_a_bad_price_is_reported_as_text_not_markup(app):
-    with app.app_context():
-        user = _user(app)
-        profile = _plan(user)
-        response = _client(app).post(f"/home/plans/{profile.sme_id}/update", data={
-            "business_name": "X", "industry_type": profile.industry_type, "location": profile.location,
-            "offering_item": ["<img src=x onerror=alert(1)>"], "offering_price": ["abc"],
-        })
-        assert response.status_code == 400
-        assert "must be a number" in response.get_json()["error"]
-        body = _client(app).get("/settings?section=plans").get_data(as_text=True)
-        assert 'querySelector("span").textContent = message' in body
-
-
-def test_a_plan_can_be_deleted_from_settings(app):
-    with app.app_context():
-        user = _user(app)
-        sme_id = _plan(user).sme_id
-
-        response = _client(app).post(f"/home/plans/{sme_id}/delete")
-
-        assert response.get_json()["success"] is True
-        assert SmeProfile.query.get(sme_id) is None
-
-
-def test_non_sme_accounts_get_no_business_preferences_tab(app):
-    """An LGU has no sme_profile rows and never will, so a tab that can
-    only ever say "you have no plans" would be noise."""
-    with app.app_context():
-        _user(app, email="lgu@example.com", role="LGU")
-        body = _client(app, email="lgu@example.com").get("/settings").get_data(as_text=True)
+        user = _user(app, email=email, role=role)
+        if role == "SME":
+            _plan(user)
+        body = _client(app, email=email).get("/settings").get_data(as_text=True)
         assert "Business Preferences" not in body
         assert 'id="section-plans"' not in body
+        assert 'data-section="plans"' not in body
+        assert "Carinderia ni Nena" not in body, "a plan is still listed in Settings"
+
+
+def test_settings_ships_no_plan_editing_forms_or_script(app):
+    """The pane took its forms, plan_form.js and the inline edit/delete
+    script with it. Leaving any of that behind would be dead weight on
+    every Settings load -- and a second, stale way to change a plan."""
+    with app.app_context():
+        user = _user(app)
+        profile = _plan(user)
+        body = _client(app).get("/settings").get_data(as_text=True)
+        assert "js/plan_form.js" not in body
+        assert "data-plan-form" not in body
+        assert "dss-plan-edit-btn" not in body and "dss-plan-delete-btn" not in body
+        assert f"/home/plans/{profile.sme_id}/" not in body
+        assert "/home/plans/" not in body
+
+
+def test_the_profile_pane_still_counts_saved_plans(app):
+    """Only the list moved. The activity summary keeps its counts."""
+    with app.app_context():
+        _user(app)
+        body = _client(app).get("/settings?section=profile").get_data(as_text=True)
+        assert "Saved Plans" in body
+        assert "Forecasts Run" in body
+
+
+def _profile_counts(client):
+    """The two activity numbers on the Profile pane, as rendered."""
+    import re
+
+    body = client.get("/settings?section=profile").get_data(as_text=True)
+    counts = {}
+    for label in ("Saved Plans", "Forecasts Run"):
+        match = re.search(rf"{label}</span><strong>(\d+)</strong>", body)
+        assert match, f"the {label} count is not on the Profile pane"
+        counts[label] = int(match.group(1))
+    return counts
+
+
+def test_a_plan_in_trash_drops_out_of_both_profile_counts(app):
+    """Trash hides a plan from every ordinary query -- the settings
+    counts included. Trashing keeps the plan's forecast_result and
+    plan_saves rows (that is what makes restore lossless), and neither
+    table carries an archive stamp of its own, so a "Saved Plans" count
+    that read plan_saves alone kept counting the trashed plan while
+    "Forecasts Run", which joins to the plan, dropped it: the two
+    numbers side by side disagreed. Restoring brings both back."""
+    from app.models import ForecastResult, PlanSave
+    from app.services.forecasting_service import find_or_create_lgu_data
+
+    with app.app_context():
+        user = _user(app)
+        profile = _plan(user)
+        market = MarketData(
+            industry_type="Food and Beverage", location="San Nicolas", competitor_count=12,
+            population_density=8000, historical_success_rate=0.5, foot_traffic_index=50,
+            average_rent=15000, source="Google Places API", date_recorded=date.today(),
+        )
+        db.session.add(market)
+        db.session.commit()
+        lgu = find_or_create_lgu_data("San Nicolas")
+        forecast = ForecastResult(
+            sme_id=profile.sme_id, market_id=market.market_id, lgu_id=lgu.lgu_id,
+            input_industry_type="Food and Beverage", input_location="San Nicolas",
+            saturation_index=40.0, viability_score=6.0, forecast_date=date.today(),
+        )
+        db.session.add(forecast)
+        db.session.commit()
+        db.session.add(PlanSave(user_id=user.user_id, forecast_result_id=forecast.forecast_id))
+        db.session.commit()
+        sme_id = profile.sme_id
+
+        client = _client(app)
+        assert _profile_counts(client) == {"Saved Plans": 1, "Forecasts Run": 1}
+
+        assert client.post(f"/home/plans/{sme_id}/trash").status_code == 302
+        assert _profile_counts(client) == {"Saved Plans": 0, "Forecasts Run": 0}
+        # Kept, not deleted: the bookmark row is still there to come back.
+        assert PlanSave.query.filter_by(user_id=user.user_id).count() == 1
+
+        assert client.post(f"/home/plans/{sme_id}/restore").status_code == 302
+        assert _profile_counts(client) == {"Saved Plans": 1, "Forecasts Run": 1}
+
+
+def test_a_stale_plans_link_sends_an_sme_to_home(app):
+    """?section=plans was the top-bar shortcut and is in bookmarks. For an
+    SME it now goes where the plans are."""
+    with app.app_context():
+        _user(app)
+        response = _client(app).get("/settings?section=plans")
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/home")
 
 
 def test_a_stale_plans_link_does_not_blank_the_page_for_an_lgu(app):
@@ -624,31 +591,14 @@ def test_a_stale_plans_link_does_not_blank_the_page_for_an_lgu(app):
     would render empty."""
     with app.app_context():
         _user(app, email="lgu2@example.com", role="LGU")
-        body = _client(app, email="lgu2@example.com").get(
-            "/settings?section=plans"
-        ).get_data(as_text=True)
-        assert _active_pane(body) == "profile"
+        response = _client(app, email="lgu2@example.com").get("/settings?section=plans")
+        assert response.status_code == 200
+        assert _active_pane(response.get_data(as_text=True)) == "profile"
 
 
-def test_the_plans_pane_is_reachable_from_the_user_menu(app):
-    """Removing the top-bar button without leaving a way in would just
-    hide the feature."""
+def test_the_user_menu_no_longer_links_to_business_preferences(app):
+    """The top-bar shortcut pointed at a pane that no longer exists."""
     with app.app_context():
         _user(app)
         body = _client(app).get("/settings").get_data(as_text=True)
-        assert "/settings?section=plans" in body
-
-
-def test_an_industry_the_list_no_longer_has_is_not_silently_reclassified(app):
-    """The taxonomy has been migrated once already. If a plan is still
-    on an old industry name, the Edit select must keep it -- otherwise
-    opening the form and pressing Save, changing nothing, would move the
-    business to whatever industry happens to sort first."""
-    with app.app_context():
-        user = _user(app)
-        profile = _plan(user)
-        profile.industry_type = "Sari-sari Store"  # not in BUSINESS_TYPES
-        db.session.commit()
-
-        body = _client(app).get("/settings?section=plans").get_data(as_text=True)
-        assert '<option value="Sari-sari Store" selected>' in body
+        assert "section=plans" not in body

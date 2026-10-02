@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Recommendations{% endblock %}
-{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel %}
+{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, explanation_paragraph %}
 
 {% block content %}
 <div class="mb-4">
@@ -92,28 +92,54 @@
             <div class="small text-muted mt-1"><i class="bi bi-basket"></i> {{ profile.product_offering }}</div>
           {% endif %}
         </div>
+        {#
+          Named for what the stored row holds. A forecast written by the
+          plan viability model stores the PLAN's viability; one written
+          before it (no rec.forecast payload) stores the old market-only
+          figure, and this page does not re-run forecasts -- so that card
+          says "Market score" and links to Home, where opening the plan
+          re-runs it, rather than passing it off as a plan viability.
+        #}
         <div class="text-end">
-          <div class="text-muted small">Viability Score</div>
-          <div class="fs-2 text-success">{{ f.viability_score }}<span class="fs-6 text-muted">/10</span></div>
+          {% if rec.forecast %}
+            <div class="text-muted small">Plan Viability</div>
+            <div class="fs-2 text-success">{{ f.viability_score }}<span class="fs-6 text-muted">/10</span></div>
+          {% else %}
+            <div class="text-muted small">Market Score</div>
+            <div class="fs-2 text-success">{{ f.viability_score }}<span class="fs-6 text-muted">/10</span></div>
+            <a class="small" href="{{ url_for('sme.home', plan=profile.sme_id) }}"
+               title="Scored before the plan viability model: the market alone, not your capital, staff or prices">
+              Open on Home to update
+            </a>
+          {% endif %}
         </div>
       </div>
 
       {% if rec.headline %}<p class="fw-semibold mb-2">{{ rec.headline }}</p>{% endif %}
       {% if rec.summary %}<p class="text-muted small mb-3">{{ rec.summary }}</p>{% endif %}
+      {# The trained model's output, put into words -- by Gemini when the
+         AI is on and its wording passed the number check, by the
+         rule-based writer otherwise. The badge says which. #}
+      {{ explanation_paragraph(rec) }}
       {{ subcategory_compare(rec) }}
 
       <!-- Key Metrics -- real, derived figures (no fabricated ranges):
-           your own capital, the model's ROI window, this barangay's real
-           PSA population, and a competition level derived from the
-           actual (Places API or seeded) competitor count. -->
+           your own capital, the plan's break-even window, this
+           barangay's real PSA population, and a competition level
+           derived from the actual (Places API or seeded) competitor
+           count. Break-even comes from the plan model's stored payload
+           (it carries the capital, staff and prices); a forecast written
+           before that model falls back to the market-only estimate. -->
+      {% set plan_fin = rec.forecast.financials if rec.forecast and rec.forecast.financials else {} %}
+      {% set break_even = plan_fin.break_even.label if plan_fin.break_even and plan_fin.break_even.label else item.roi.label %}
       <div class="row row-cols-2 row-cols-md-4 g-3 mb-4 p-3 bg-light rounded">
         <div>
-          <div class="text-muted small mb-1"><i class="bi bi-currency-exchange"></i> Startup Capital</div>
-          <div class="fw-bold">₱{{ "{:,.0f}".format(profile.startup_capital or 0) }}</div>
+          <div class="text-muted small mb-1"><i class="bi bi-currency-exchange"></i> Capital</div>
+          <div class="fw-bold">{% if profile.capital > 0 %}₱{{ "{:,.0f}".format(profile.capital) }}{% else %}<span class="text-warning-emphasis">Not given</span>{% endif %}</div>
         </div>
         <div>
-          <div class="text-muted small mb-1"><i class="bi bi-graph-up-arrow"></i> ROI Timeframe</div>
-          <div class="fw-bold">{{ item.roi.label }}</div>
+          <div class="text-muted small mb-1"><i class="bi bi-graph-up-arrow"></i> Break-even</div>
+          <div class="fw-bold">{{ break_even }}</div>
         </div>
         <div>
           <div class="text-muted small mb-1"><i class="bi bi-people"></i> Population</div>
@@ -274,13 +300,12 @@
         </div>
       </div>
 
-      <!-- Key metrics: real figures only. "Your Capital"/"Est.
-           Break-even" come from the SME's own plan inputs rather than a
-           made-up investment range. -->
+      <!-- Key metrics: real figures only. "Your Capital" comes from the
+           SME's own plan rather than a made-up investment range. -->
       <div class="row row-cols-2 row-cols-md-4 g-3 mb-3 p-3 bg-light rounded">
         <div>
           <div class="text-muted small mb-1"><i class="bi bi-currency-exchange"></i> Your Capital</div>
-          <div class="fw-bold">₱{{ "{:,.0f}".format(opportunity_plan.startup_capital or 0) }}</div>
+          <div class="fw-bold">₱{{ "{:,.0f}".format(opportunity_plan.capital) }}</div>
         </div>
         <div>
           <div class="text-muted small mb-1"><i class="bi bi-graph-up-arrow"></i> ROI Timeframe</div>

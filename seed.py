@@ -27,8 +27,9 @@ WHAT IT DOES
      nobody is meant to log in as it.
   4. Creates login accounts -- SEE THE NEXT SECTION, this is the step
      that behaves differently on a public host.
-  5. Trains the Random Forest, unless a trained model is already on
-     disk. See "Retraining" below.
+  5. Trains the AI models -- the market Random Forest and the Plan
+     Viability Model built on it -- unless both are already on disk.
+     See "Retraining" below.
 
 =====================================================================
 DEMO ACCOUNTS AND WHY THEY TURN THEMSELVES OFF IN PRODUCTION
@@ -65,14 +66,21 @@ decision rather than an accident, which is the point.
 =====================================================================
 RETRAINING
 =====================================================================
-Training takes real time and CPU, and the model does not change unless
-the reference dataset does -- so this script SKIPS training when
-app/ml/model_store/rf_model.pkl already exists. That matters on a host:
-it means `python seed.py` is cheap to re-run, so it can sit in front of
-the start command without adding a minute to every restart.
+Training takes real time and CPU, and the models do not change unless
+the reference dataset does -- so this script SKIPS training when both
+app/ml/model_store/rf_model.pkl and plan_model.pkl already exist. That
+matters on a host: it means `python seed.py` is cheap to re-run, so it
+can sit in front of the start command without adding a minute to every
+restart.
 
-Force it with `python seed.py --retrain` (or FORCE_RETRAIN=true) after
-changing app/ml/seed_data.py or anything in app/ml/train_model.py.
+When only plan_model.pkl is missing (an install from before the Plan
+Viability Model existed), only that model is trained, on top of the
+market model already on disk (`python -m app.ml.train_model
+--plan-only`) -- the market model is left exactly as it was.
+
+Force a full retrain with `python seed.py --retrain` (or
+FORCE_RETRAIN=true) after changing app/ml/seed_data.py, app/ml/plan_model.py
+or anything in app/ml/train_model.py.
 """
 
 import argparse
@@ -87,6 +95,10 @@ from app.services.forecasting_service import SYSTEM_USER_EMAIL
 
 MODEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "app", "ml", "model_store", "rf_model.pkl")
+# Stage 2 of the forecast, the Plan Viability Model. Checked separately
+# because an install that predates it has rf_model.pkl and not this --
+# and that install needs stage 2 trained, not stage 1 retrained.
+PLAN_MODEL_FILE = os.path.join(os.path.dirname(MODEL_FILE), "plan_model.pkl")
 
 DEMO_ACCOUNTS = [
     ("System Administrator", "admin@dss.local", "admin123", "Admin"),
@@ -188,21 +200,35 @@ def run(argv=None):
 
         db.session.commit()
 
+        # Train when EITHER model is missing. Stage 2 alone when only it
+        # is missing: retraining stage 1 is not needed for it, and
+        # leaving stage 1 alone keeps every market score on the site
+        # exactly where it was.
+        plan_only = False
         if args.retrain or _bool(os.environ.get("FORCE_RETRAIN")):
             reason = "forced"
         elif not os.path.exists(MODEL_FILE):
             reason = "no model on disk"
+        elif not os.path.exists(PLAN_MODEL_FILE):
+            reason = "no plan viability model on disk"
+            plan_only = True
         else:
             reason = None
 
-        if reason:
-            print(f"Training AI model (Random Forest + a K-Means evaluation pass) -- {reason}...")
+        if reason and plan_only:
+            print(f"Training the Plan Viability Model (stage 2) on the existing market model -- {reason}...")
+            from app.ml.train_model import train_plan_only
+
+            train_plan_only()
+        elif reason:
+            print("Training AI models (market Random Forest + a K-Means evaluation pass, "
+                  f"then the Plan Viability Model) -- {reason}...")
             from app.ml.train_model import train_and_save
 
             train_and_save()
         else:
-            print("AI model already on disk, skipping training.")
-            print("  Use --retrain after changing app/ml/seed_data.py or train_model.py.")
+            print("AI models already on disk, skipping training.")
+            print("  Use --retrain after changing app/ml/seed_data.py, plan_model.py or train_model.py.")
 
         print("\nDone. Start the app with:  python app.py")
         print(

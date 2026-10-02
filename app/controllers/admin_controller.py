@@ -708,6 +708,55 @@ def restore_market_data(market_id):
 
 
 # ------------------------------------------------------------ settings
+def _save_plan_assumptions(form):
+    """Save the plan forecast's two Admin-editable assumptions -- the
+    daily wage (P1-P100,000) and the gross margin (0.05-0.95) -- and
+    return a list of messages for any value refused. A blank field
+    leaves the stored value alone, as the other numeric settings do.
+
+    The wage has an UPPER bound as well as "more than zero": 1e37 is
+    more than zero, and saved it overflowed the plan model's float32
+    input for every plan with staff, so Home and Add Plan failed for all
+    of them. DAILY_WAGE_RANGE is the same range plan_assumptions() reads
+    the setting back with."""
+    from app.ml.constants import DAILY_WAGE_RANGE, GROSS_MARGIN_RANGE
+    from app.services.plan_forecast_service import MARGIN_SETTING_KEY, WAGE_SETTING_KEY
+
+    rejected = []
+
+    raw_wage = (form.get(WAGE_SETTING_KEY) or "").strip().replace(",", "")
+    if raw_wage:
+        low, high = DAILY_WAGE_RANGE
+        try:
+            wage = float(raw_wage)
+        except ValueError:
+            wage = None
+        if wage is None or not (low <= wage <= high):  # also refuses NaN and infinity
+            rejected.append(f"Settings saved, except the daily wage: it must be between ₱{low:,.0f} and "
+                            f"₱{high:,.0f} a day.")
+        else:
+            # Stored at centavo precision -- the precision the forecast
+            # uses and records it at (plan_forecast_service.WAGE_DECIMALS)
+            # -- written out in full ("12345.67", where :g would have
+            # cut it to six significant digits), trailing zeros dropped.
+            SystemSetting.set(WAGE_SETTING_KEY, f"{wage:.2f}".rstrip("0").rstrip("."))
+
+    raw_margin = (form.get(MARGIN_SETTING_KEY) or "").strip()
+    if raw_margin:
+        low, high = GROSS_MARGIN_RANGE
+        try:
+            margin = float(raw_margin)
+        except ValueError:
+            margin = None
+        if margin is None or not (low <= margin <= high):
+            rejected.append(f"Settings saved, except the gross margin: it must be between {low:.2f} and {high:.2f} "
+                            "(e.g. 0.40 for 40%).")
+        else:
+            SystemSetting.set(MARGIN_SETTING_KEY, f"{margin:g}")
+
+    return rejected
+
+
 @admin_bp.route("/settings", methods=["GET", "POST"])
 @role_required("Admin")
 def settings():
@@ -726,6 +775,14 @@ def settings():
 
         SystemSetting.set("use_llm_recommendations", "true" if request.form.get("use_llm_recommendations") else "false")
 
+        # Plan forecast assumptions (stage 2 of the forecast). Unlike the
+        # MSI weights above, these ARE validated: a wage of 0 would make
+        # every plan's payroll free and a margin of 1.0 would make every
+        # price list break even on one sale -- both would quietly become
+        # forecasts. plan_forecast_service also refuses such values at
+        # read time, but refusing them here is what tells the Admin.
+        rejected = _save_plan_assumptions(request.form)
+
         # The Discord invite behind the footer's Community Forum link.
         # Only a discord.gg / discord.com invite is accepted -- anything
         # else would make /community an open redirect.
@@ -740,8 +797,10 @@ def settings():
         if invite_rejected:
             flash("Settings saved, except the community link: it must be a Discord invite "
                   "such as https://discord.gg/yourcode.", "warning")
-        else:
+        elif not rejected:
             flash("System settings updated.", "success")
+        for message in rejected:
+            flash(message, "warning")
         return redirect(url_for("admin.settings"))
 
     SystemSetting.ensure_defaults()

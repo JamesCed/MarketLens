@@ -1,7 +1,7 @@
 {#
   shared/_plan_insights.html
   ----------------------------
-  The two readouts the broader business parameters add to a forecast,
+  The readouts a plan's forecast carries beyond its headline score,
   shared by the Home forecast panel and the Recommendations page so both
   say the same thing the same way.
 
@@ -11,10 +11,19 @@
     innovation_panel(rec)     -- what the plan's "what makes you
                                  different" is up against, and (when the
                                  AI wrote it) how new the idea looks.
+    forecast_breakdown(rec)   -- "How this forecast was computed": the
+                                 trained plan model's baseline, how many
+                                 points each group of inputs added or
+                                 took away, the fixed-cost arithmetic,
+                                 and the plain-language explanation.
+    explanation_paragraph(rec)-- just that explanation, with its badge.
+    explanation_badge(ex)     -- who wrote the explanation: Gemini,
+                                 another AI, or the rule-based writer.
 
-  Both take the parsed recommendation (recommendation_service
+  All take the parsed recommendation (recommendation_service
   .parse_recommendation) and render nothing for forecasts written before
-  these existed -- those carry None for both keys.
+  these existed -- those carry None for the keys they read. They only
+  DISPLAY the stored payload; no figure is computed in a template.
 #}
 
 {% macro subcategory_compare(rec, compact=False) -%}
@@ -71,13 +80,154 @@
         </ul>
       {% endif %}
       <div class="text-muted" style="font-size:.7rem;">
+        {#
+          "It never changes the market score" stopped being the whole
+          truth once the plan viability model existed: having an idea at
+          all is its differentiation input. What stays true is that the
+          AI's READING of the words moves no score, and that nothing
+          about the idea moves the market saturation figure.
+        #}
         {% if i.generated_by and i.generated_by.startswith('llm:') %}
-          Read by the AI from your own description. It never changes the market score.
+          Read by the AI from your own description. The AI's reading changes no score; having an idea
+          counts towards plan viability, never towards market saturation.
         {% else %}
-          Based on the market score and competitor count. When AI-written recommendations are switched on,
+          Based on the market saturation and competitor count. When AI-written recommendations are switched on,
           the AI also rates the idea itself.
         {% endif %}
       </div>
     </div>
+  {% endif %}
+{%- endmacro %}
+
+
+
+{% macro explanation_badge(ex) -%}
+  {#
+    Provenance, always shown, because "the AI said so" and "a fixed rule
+    said so" are different claims. The explanation's numbers are the
+    trained model's either way -- an AI explanation that quoted a figure
+    not in the model's output is discarded for the rule-based one before
+    it is ever stored (see recommendation_service).
+  #}
+  {% set by = ((ex.generated_by if ex else None) or '') %}
+  {% if by.startswith('llm:gemini') %}
+    <span class="dss-explain-badge is-ai" title="Written by {{ by[4:] }} from the trained model's output">
+      <i class="bi bi-stars" aria-hidden="true"></i> Explained by Gemini
+    </span>
+  {% elif by.startswith('llm:') %}
+    <span class="dss-explain-badge is-ai" title="Written by {{ by[4:] }} from the trained model's output">
+      <i class="bi bi-stars" aria-hidden="true"></i> AI-written
+    </span>
+  {% else %}
+    <span class="dss-explain-badge" title="Written by a fixed template from the trained model's output">
+      <i class="bi bi-list-check" aria-hidden="true"></i> Rule-based explanation
+    </span>
+  {% endif %}
+{%- endmacro %}
+
+
+{% macro explanation_paragraph(rec, compact=False) -%}
+  {% set ex = rec.explanation if rec else None %}
+  {% if ex and ex.text %}
+    <div class="dss-explanation {{ 'mb-2' if compact else 'mb-3' }}">
+      <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+        <span class="small fw-semibold"><i class="bi bi-chat-square-text" aria-hidden="true"></i> What the model forecast, and why</span>
+        {{ explanation_badge(ex) }}
+      </div>
+      <p class="small mb-0">{{ ex.text }}</p>
+    </div>
+  {% endif %}
+{%- endmacro %}
+
+
+{% macro forecast_breakdown(rec, compact=False) -%}
+  {#
+    The trained plan model's output, explained. The drivers are an EXACT
+    decomposition of the forest's prediction (each tree's decision path
+    credits every split's change to the feature it split on, averaged
+    over the trees), so baseline + the points shown = the viability index
+    -- rounding aside. Bars are drawn from the centre: right and green
+    raises the score, left and red lowers it; the signed number beside
+    each bar says the same thing in text, for anyone who cannot see the
+    colours. See Reference/FORECAST_MODEL.md for every formula.
+  #}
+  {% set fc = rec.forecast if rec else None %}
+  {% if fc and fc.plan %}
+    {% set fin = fc.financials or {} %}
+    {% set inputs = fc.inputs or {} %}
+    {% set drivers = fc.drivers or [] %}
+    {% set ns = namespace(maxabs=0) %}
+    {% for d in drivers %}{% if (d.points|abs) > ns.maxabs %}{% set ns.maxabs = d.points|abs %}{% endif %}{% endfor %}
+    <details class="dss-forecast-how {{ 'mb-2' if compact else 'mb-3' }}">
+      <summary><i class="bi bi-calculator" aria-hidden="true"></i> How this forecast was computed</summary>
+      <div class="pt-2">
+        {{ explanation_paragraph(rec, compact=True) }}
+
+        {% if drivers %}
+          <p class="small text-muted mb-1">
+            The plan model starts from a baseline of <strong>{{ fc.baseline }}</strong>
+            (out of 100) and each part of your plan moves it up or down:
+          </p>
+          <ul class="dss-drivers list-unstyled mb-1">
+            {% for d in drivers %}
+              {% set pct = ((d.points|abs) / ns.maxabs * 50) if ns.maxabs else 0 %}
+              <li class="dss-driver">
+                <span class="dss-driver-label">{{ d.label }}</span>
+                <span class="dss-driver-track" aria-hidden="true">
+                  <span class="dss-driver-bar {{ 'is-up' if d.points >= 0 else 'is-down' }}"
+                        style="{{ 'left:50%' if d.points >= 0 else 'left:%.1f%%'|format(50 - pct) }}; width:{{ '%.1f'|format(pct) }}%;"></span>
+                </span>
+                <span class="dss-driver-points {{ 'is-up' if d.points >= 0 else 'is-down' }}">
+                  {{ ('%+.1f'|format(d.points|float))|replace('-', '−') }}<span class="visually-hidden"> points</span>
+                </span>
+              </li>
+            {% endfor %}
+          </ul>
+          <p class="small mb-2">
+            = plan viability index <strong>{{ fc.plan.viability_index }}</strong>/100, shown as
+            <strong>{{ fc.plan.viability_score }}</strong>/10.
+          </p>
+        {% endif %}
+
+        {% if fin.monthly_fixed_cost %}
+          <p class="small text-muted mb-1">
+            Monthly fixed cost &#8369;{{ '{:,.0f}'.format(fin.monthly_fixed_cost) }} =
+            rent &#8369;{{ '{:,.0f}'.format(fin.monthly_rent or 0) }}
+            + {{ inputs.employee_count or 0 }} employee{{ '' if (inputs.employee_count or 0) == 1 else 's' }}
+            &times; &#8369;{{ '{:,.0f}'.format(fin.daily_wage or 0) }}/day &times; {{ fin.operating_days or 26 }} days.
+            {% if fin.get('capital_runway_months') and fin.get('ramp_up_months') %}
+              Your capital covers {{ '%.1f'|format(fin.capital_runway_months) }} months of it, against a
+              ramp-up of about {{ '%.1f'|format(fin.ramp_up_months) }} months.
+            {% elif fin.get('ramp_up_months') %}
+              No capital is on file, so none of the expected
+              {{ '%.1f'|format(fin.ramp_up_months) }}-month ramp-up is covered.
+            {% endif %}
+          </p>
+        {% endif %}
+        {% if fin.required_daily_sales %}
+          <p class="small text-muted mb-1">
+            To cover fixed costs from your price list you would need about
+            {{ '%.0f'|format(fin.required_daily_sales) }} sales a day
+            {%- if fin.daily_sales_ceiling %}; the area's residents can support about
+            {{ '%.0f'|format(fin.daily_sales_ceiling) }} a day{% endif %}.
+          </p>
+        {% endif %}
+
+        <p class="text-muted mb-0" style="font-size:.7rem;">
+          {% if 'fx' in (fc.plan.model_version or '') or 'formula' in (fc.plan.model_version or '') %}
+            Scored with the documented scorecard formula &mdash; the trained plan model was not available
+            on this server.
+          {% else %}
+            Trained models: market saturation ({{ fc.market.model_version if fc.market else 'rf' }}) and plan
+            viability ({{ fc.plan.model_version }}, {{ fc.plan.confidence }}% tree agreement). The plan model
+            is trained on synthetic plans scored by a documented formula, not on real business outcomes yet.
+          {% endif %}
+        </p>
+      </div>
+    </details>
+  {% else %}
+    {# A forecast from before the plan model: nothing to break down,
+       but its explanation (if any) is still worth showing. #}
+    {{ explanation_paragraph(rec, compact=compact) }}
   {% endif %}
 {%- endmacro %}

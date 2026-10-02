@@ -21,7 +21,7 @@ Why an LLM for this piece specifically (and only this piece):
     Reference/Figma_Storyboard's recommendations page, and
     app/templates/sme/recommendations.html).
 
-Two providers are supported -- pick with LLM_PROVIDER in .env:
+Three providers are supported -- pick with LLM_PROVIDER in .env:
   - "openai"    -- GPT (the `openai` package). Default. Also used to
     reach OpenRouter (openrouter.ai): OpenRouter is intentionally
     OpenAI-SDK-compatible, so pointing OPENAI_BASE_URL at
@@ -29,14 +29,26 @@ Two providers are supported -- pick with LLM_PROVIDER in .env:
     "sk-or-v1-..." format) and OPENAI_MODEL="openai/gpt-4o-mini" routes
     through OpenRouter with no other code change.
   - "anthropic" -- Claude (the `anthropic` package).
+  - "gemini"    -- Google Gemini over its native endpoint (see
+    _generate_with_gemini).
 
-generate_recommendation_json() tries the configured provider first; if
-that provider has no API key set, it automatically tries the OTHER one
-(so setting either key alone just works); if NEITHER key is set, or the
-call fails for any reason (network, quota, bad key, malformed JSON
-back), this returns None and the caller (recommendation_service.py)
-keeps using its rule-based recommendation -- the page never breaks
-because of this.
+THE FORECAST NARRATION GOES TO GEMINI FIRST. The forecast itself is
+the trained two-stage model's (plan_forecast_service.forecast_plan);
+generate_recommendation_json() hands that output to the LLM in a
+"TRAINED MODEL OUTPUT" block and asks it to transcribe it into plain
+language (the "explanation" key) alongside the usual recommendation.
+Gemini is the AI this system names for that job, so this one call tries
+Gemini first whatever LLM_PROVIDER says, then the configured provider,
+then the rest. Every other call (alerts, opportunity cards, forum
+pre-screen) keeps the configured provider first. The explanation the
+LLM writes is then checked number by number against the model output
+in recommendation_service.ungrounded_numbers before it is shown.
+
+Each entry point tries its first provider, then the others (so setting
+any one key alone just works); if NO key is set, or every call fails for
+any reason (network, quota, bad key, malformed JSON back), it returns
+None and the caller (recommendation_service.py) keeps using its
+rule-based recommendation -- the page never breaks because of this.
 """
 
 import json
@@ -82,7 +94,10 @@ def _redact(text):
     try:
         from flask import current_app
 
-        for config_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        # GEMINI_API_KEY too: Gemini is now asked first for every
+        # forecast narration, so its errors are the ones most often
+        # recorded.
+        for config_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
             secret = (current_app.config.get(config_key) or "").strip()
             if len(secret) >= 8:
                 message = message.replace(secret, "***redacted***")
@@ -103,7 +118,8 @@ def _begin_attempt():
 
 def _record_failure(provider, stage, detail):
     """Remember and log why a call did not produce usable text.
-    `stage` is one of "no_client", "api_call", "parse".
+    `stage` is one of "no_client", "api_call", "parse" -- or "skipped",
+    below.
 
     THE FIRST FAILURE OF AN ATTEMPT IS THE ONE KEPT, not the last.
 
@@ -119,9 +135,30 @@ def _record_failure(provider, stage, detail):
     key". The 401 is the one worth reading. So a failure is recorded
     only when the slot is empty, and the slot is emptied at the START
     of an attempt by _begin_attempt().
+
+    THE ONE EXCEPTION IS "skipped", and it is narrow on purpose. The
+    forecast narration asks Gemini first whatever LLM_PROVIDER says (see
+    generate_recommendation_json), so on a deployment that never chose
+    Gemini that attempt comes BEFORE the provider the operator actually
+    configured. When Gemini is passed over there -- its key is empty, or
+    is an inherited sk- key Google would refuse -- that is recorded as
+    "skipped": it is kept when nothing else goes wrong (so the
+    diagnostics still say why Gemini did not write the text), and ANY
+    later record in the same attempt replaces it, a "no_client" one
+    included. Without that, an OpenRouter-only deployment whose OpenAI
+    client could not even be built would report "Gemini skipped" and
+    hide the real cause, and an Anthropic-only one would report "no
+    Gemini key".
+
+    Every other record keeps first-failure-wins exactly as before,
+    "no_client" included: when the configured provider's own package
+    is missing, that is the real cause, and a fallback's later "API key
+    not valid" must not replace it.
     """
     if _LAST_FAILURE:
-        return
+        if _LAST_FAILURE.get("stage") != "skipped":
+            return
+        _LAST_FAILURE.clear()
     _LAST_FAILURE.update({
         "provider": provider,
         "stage": stage,
@@ -140,8 +177,9 @@ def _record_failure(provider, stage, detail):
         # would bury the failures that do matter -- a 401, a 404 on the
         # model name, a spent quota -- under noise from a deployment
         # that is working exactly as intended. It is still recorded
-        # above, so /admin/llm-status can report it on request.
-        log = current_app.logger.info if stage == "no_client" else current_app.logger.warning
+        # above, so /admin/llm-status can report it on request. A
+        # deliberate skip is the same kind of state.
+        log = current_app.logger.info if stage in ("no_client", "skipped") else current_app.logger.warning
         log(
             "LLM recommendation unavailable (provider=%s stage=%s): %s",
             provider, stage, _LAST_FAILURE["detail"],
@@ -225,13 +263,151 @@ def _prompt_for(context):
     market_data and/or live Google Places API results) -- so the LLM is
     writing ABOUT this specific plan and this specific market, not
     generic advice. `context` is the dict built by
-    recommendation_service.build_recommendation_context()."""
+    recommendation_service.build_recommendation_context(). When it
+    carries the trained model's forecast payload, the prompt ends with
+    the TRAINED MODEL OUTPUT block and asks for the "explanation" key."""
     competitor_lines = (
         "\n".join(f"  - {name}" for name in context["competitor_sample"])
         if context["competitor_sample"]
         else "  (none found on file)"
     )
-    return _base_prompt(context, competitor_lines) + _plan_detail_prompt(context)
+    return (_base_prompt(context, competitor_lines) + _plan_detail_prompt(context)
+            + _model_output_prompt(context))
+
+
+def _fig(value):
+    """A payload figure exactly as the payload holds it -- whole numbers
+    without ".0", everything else as stored, thousands separated. The
+    prompt must show the model the very figures the grounding check will
+    later look for, so nothing here re-rounds."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if number.is_integer():
+        return f"{number:,.0f}"
+    return f"{number:,}"
+
+
+def _signed(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return ("+" if number >= 0 else "-") + _fig(abs(number))
+
+
+def _model_output_prompt(context):
+    """The trained model's forecast, laid out for the LLM to transcribe:
+    the market stage, the plan stage, the signed driver contributions
+    that add up to the plan's index, and the money figures the plan
+    model used. Then the instruction for the "explanation" key.
+
+    The block labels carry no digits of their own ("Market model", not
+    "Stage 1") so that every number in it is a number from the payload,
+    which is what the explanation is later checked against.
+
+    Empty when the context has no payload: there is then nothing for the
+    LLM to transcribe, and it is not asked to."""
+    forecast = context.get("forecast")
+    if not isinstance(forecast, dict):
+        return ""
+    market = forecast.get("market") or {}
+    plan = forecast.get("plan") or {}
+    financials = forecast.get("financials") or {}
+    inputs = forecast.get("inputs") or {}
+    trained = str(plan.get("model_version") or "").startswith("plan_rf")
+    # Each stage is named for what actually produced it. The market stage
+    # has its own fallback -- forecasting_service's weighted formula
+    # ("formula_v1") while no rf_model.pkl exists -- and the LLM must not
+    # be told to describe that formula as a trained forest.
+    market_trained = str(market.get("model_version") or "").startswith("rf")
+
+    lines = []
+    market_name = ("Market model (Random Forest, trained)" if market_trained else
+                   "Market formula (weighted formula -- no trained market model is available yet, say so)")
+    market_line = (f"{market_name}: Market Saturation Index "
+                   f"{_fig(market.get('saturation_index'))}% (tier: {market.get('cluster_label')})")
+    if market.get("industry_saturation_index") is not None and \
+            market.get("industry_saturation_index") != market.get("saturation_index"):
+        market_line += f"; industry-wide {_fig(market.get('industry_saturation_index'))}%"
+    market_line += (f"; competitors counted: {_fig(market.get('competitor_count'))}; "
+                    f"confidence {_fig(market.get('confidence'))}%")
+    lines.append(market_line)
+
+    if trained:
+        lines.append(f"Plan model (Random Forest, trained): Plan Viability Index {_fig(plan.get('viability_index'))} "
+                     f"out of 100, shown to the owner as a viability score of {_fig(plan.get('viability_score'))}/10; "
+                     f"confidence {_fig(plan.get('confidence'))}%")
+    else:
+        lines.append(f"Plan scorecard (formula -- no trained plan model is available yet, say so): Plan Viability "
+                     f"Index {_fig(plan.get('viability_index'))} out of 100, shown as a viability score of "
+                     f"{_fig(plan.get('viability_score'))}/10; confidence {_fig(plan.get('confidence'))}%")
+
+    drivers = [d for d in (forecast.get("drivers") or []) if isinstance(d, dict) and d.get("label")]
+    if drivers:
+        if trained:
+            lines.append(f"How the plan model reached {_fig(plan.get('viability_index'))}: it starts from a baseline "
+                         f"of {_fig(forecast.get('baseline'))} and each group of inputs adds or removes points:")
+        else:
+            lines.append("The scorecard's weighted parts, in points:")
+        lines.extend(f"  - {d['label']}: {_signed(d.get('points'))} points" for d in drivers)
+
+    if financials:
+        employees = inputs.get("employee_count")
+        lines.append("Money and demand figures the plan model used:")
+        lines.append(f"  - Capital: PHP {_fig(inputs.get('capital', context.get('capital', 0)))}")
+        lines.append(f"  - Monthly fixed cost: PHP {_fig(financials.get('monthly_fixed_cost'))} = rent PHP "
+                     f"{_fig(financials.get('monthly_rent'))} + payroll PHP {_fig(financials.get('monthly_payroll'))} "
+                     f"({_fig(employees)} employee(s) x PHP {_fig(financials.get('daily_wage'))}/day x "
+                     f"{_fig(financials.get('operating_days'))} days)")
+        lines.append(f"  - Capital runway: {_fig(financials.get('capital_runway_months'))} months of fixed costs; "
+                     f"expected ramp-up before steady sales: {_fig(financials.get('ramp_up_months'))} months")
+        if inputs.get("priced_item_count") and financials.get("required_daily_sales"):
+            margin = financials.get("gross_margin")
+            margin_text = f"{_fig(round(float(margin) * 100, 1))}%" if margin is not None else "assumed"
+            lines.append(f"  - Average price PHP {_fig(inputs.get('average_price'))} with a {margin_text} gross "
+                         f"margin: about {_fig(financials.get('required_daily_sales'))} sales a day are needed to "
+                         f"cover fixed costs, against a ceiling of about "
+                         f"{_fig(financials.get('daily_sales_ceiling'))} sales a day the barangay's residents can "
+                         f"plausibly support")
+        elif trained:
+            # Not "neutral": the trained forest measures every input
+            # against its baseline (the average plan it learned from),
+            # and a missing price list usually costs points there -- the
+            # pricing driver above says how many. Only the scorecard
+            # gives an unknown price coverage a neutral middle score.
+            pricing_listed = any(d.get("key") == "pricing" for d in drivers)
+            lines.append("  - No price list yet: prices could not be checked against fixed costs or local demand"
+                         + ("; the Pricing (price list) driver above is how their absence moved the score "
+                            "-- do not call it neutral" if pricing_listed else ""))
+        else:
+            lines.append("  - No price list: the scorecard treated pricing as neutral (a middle score)")
+        break_even = financials.get("break_even") or {}
+        if isinstance(break_even, dict) and break_even.get("label"):
+            lines.append(f"  - Break-even window: {break_even['label']}")
+
+    if trained and market_trained:
+        provenance = "Every figure below was produced by the models this system trained"
+    else:
+        provenance = ("Every figure below was produced by this system's forecasting stages (a stage "
+                      "marked as a formula is not a trained model -- say so)")
+    return (
+        f"\nTRAINED MODEL OUTPUT -- the forecast itself. {provenance}; they are final. Do not "
+        "recompute, re-round or change them:\n"
+        + "\n".join(f"  {line}" for line in lines)
+        + "\n\nALSO include the key \"explanation\": 3-5 plain-language sentences, written for the "
+        f"business owner, that transcribe what the {'trained model' if trained else 'model'} forecast "
+        "for this plan and why -- "
+        "the viability score and its confidence, the market saturation, the two or three biggest "
+        "drivers and whether each raised or lowered the score, the capital runway against the "
+        "ramp-up, and the break-even window. Use ONLY figures that appear in the TRAINED MODEL "
+        "OUTPUT block, copied exactly as written there; never change, recompute, combine or invent "
+        "a number -- an explanation containing any figure that is not in the block is discarded. "
+        "Write every figure in digits, as the block shows it; numbers spelled out in words "
+        "(\"six months\", \"the three biggest drivers\") are checked the same way. "
+        "Do not mention model version names.\n"
+    )
 
 
 def _quoted(text, limit):
@@ -314,7 +490,7 @@ def _base_prompt(context, competitor_lines):
         f"Business stage: {context['business_stage']}"
         + (f", {context['years_in_operation']} year(s) operating" if context["years_in_operation"] else " (not yet opened)")
         + "\n"
-        f"Startup capital: PHP {context['startup_capital']:,.0f}\n"
+        f"Capital: PHP {float(context.get('capital', context.get('startup_capital')) or 0):,.0f}\n"
         f"Employee count: {context['employee_count']}\n\n"
         f"AI Market Saturation Index: {round(context['saturation_index'])}%\n"
         f"Saturation cluster: {context['cluster_label']}\n"
@@ -540,7 +716,7 @@ _GENERATORS = {
 }
 
 
-def _provider_order():
+def _provider_order(prefer=None):
     """Which generators to try, in order: the configured one first, then
     the rest as fallbacks.
 
@@ -569,6 +745,11 @@ def _provider_order():
     explicitly chosen provider, is left alone -- the point is to stop
     wasting a guaranteed-failing attempt, not to second-guess a
     configuration that works.
+
+    `prefer` puts one named provider ahead of all that, keeping the rest
+    in the order above. Only the forecast narration passes it
+    (prefer="gemini" -- see generate_recommendation_json); every other
+    caller gets the configured provider first, exactly as before.
     """
     from flask import current_app
 
@@ -581,7 +762,82 @@ def _provider_order():
         if key.startswith("AQ."):
             provider = "gemini"
 
-    return [provider] + [name for name in _GENERATORS if name != provider]
+    order = [provider] + [name for name in _GENERATORS if name != provider]
+    if prefer in _GENERATORS:
+        order = [prefer] + [name for name in order if name != prefer]
+    return order
+
+
+def _gemini_key_is_foreign():
+    """True when the key Gemini would be sent is plainly not a Google
+    key: an `sk-` key is OpenAI's or OpenRouter's format.
+
+    This happens without anyone typing it: GEMINI_API_KEY falls back to
+    OPENAI_API_KEY in app/config.py (so an AQ. key in the OpenAI slot
+    works), which means a deployment with an OpenRouter key and no
+    Gemini key hands that OpenRouter key to Google. Google refuses it,
+    every time. With Gemini tried first for every forecast narration,
+    that would be a guaranteed-failing round trip on every forecast, so
+    it is skipped -- and the skip recorded, so the diagnostics still say
+    why Gemini did not write the text (see _narration_gemini_skip)."""
+    from flask import current_app
+
+    return (current_app.config.get("GEMINI_API_KEY") or "").strip().startswith("sk-")
+
+
+def _narration_gemini_skip():
+    """(stage, detail) when the forecast narration should pass over
+    Gemini without calling it, else None.
+
+    Two cases, and the stage each is recorded at depends on whether
+    Gemini is in front only BECAUSE the narration prefers it:
+
+      * an sk- key (_gemini_key_is_foreign) -- always skipped, since
+        Google can only refuse it;
+      * no key at all -- skipped only when Gemini was moved to the
+        front by the narration's preference. When Gemini is the
+        configured provider anyway, the call goes ahead and
+        _generate_with_gemini records "GEMINI_API_KEY is not set"
+        exactly as it always has.
+
+    When Gemini was moved ahead of the configured provider, the skip is
+    recorded as "skipped" -- the lowest kind of record, which whatever
+    the configured provider then reports replaces (see _record_failure).
+    The operator did not choose Gemini, so "Gemini has no usable key"
+    must not hide the failure of the provider they did choose. When
+    Gemini IS the configured provider, an sk- key in its slot is that
+    provider's own misconfiguration and is recorded as "no_client", the
+    first-failure-wins kind, as any other provider's would be."""
+    from flask import current_app
+
+    borrowed = _provider_order()[0] != "gemini"
+    if _gemini_key_is_foreign():
+        return ("skipped" if borrowed else "no_client",
+                "the Gemini key is an sk-... key (OpenAI/OpenRouter format), usually "
+                "OPENAI_API_KEY inherited because GEMINI_API_KEY is empty -- Google would "
+                "refuse it, so Gemini was skipped. Set GEMINI_API_KEY to an AI Studio key "
+                "to have Gemini narrate the forecast.")
+    if borrowed and not (current_app.config.get("GEMINI_API_KEY") or "").strip():
+        return ("skipped",
+                "GEMINI_API_KEY is not set, so Gemini was skipped and the configured provider "
+                "asked instead. Set GEMINI_API_KEY to an AI Studio key to have Gemini narrate "
+                "the forecast.")
+    return None
+
+
+def _model_for(provider):
+    """The exact model id a provider's generator sends, read the same way
+    the generator reads it -- recorded on the explanation so "explained
+    by Gemini" names the model that actually wrote it."""
+    from flask import current_app
+
+    if provider == "gemini":
+        return (current_app.config.get("GEMINI_MODEL") or "gemini-3-flash").strip()
+    if provider == "openai":
+        return current_app.config.get("OPENAI_MODEL", "gpt-4o-mini")
+    if provider == "anthropic":
+        return current_app.config.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
+    return None
 
 
 def _strip_code_fence(raw_text):
@@ -626,6 +882,14 @@ def _coerce_llm_payload(raw_text):
     innovation = _coerce_innovation(payload.get("innovation"))
     if innovation:
         result["innovation"] = innovation
+    # Optional, like "innovation": only asked for when the context
+    # carried the trained model's output. Taken as plain text here and
+    # checked against that output by the caller
+    # (recommendation_service._choose_explanation); a missing or
+    # non-string one simply leaves the rule-based explanation in place.
+    explanation = payload.get("explanation")
+    if isinstance(explanation, str) and explanation.strip():
+        result["explanation"] = " ".join(explanation.split())
     return result
 
 
@@ -772,25 +1036,46 @@ def generate_opportunity_cards_json(industry_type, city, cards):
 
 
 def generate_recommendation_json(context):
-    """Tries the configured LLM provider (falling back to the other one
-    if only its key is set) and returns a validated recommendation dict
-    -- {headline, opportunity_type, summary, reasons, risks} -- or None
-    if every provider is unavailable or every response was unusable.
-    Never raises."""
+    """Asks the LLM to write the recommendation and to transcribe the
+    trained model's forecast, and returns a validated dict --
+    {headline, opportunity_type, summary, reasons, risks, generated_by,
+    model} plus "innovation" and "explanation" when the model supplied
+    usable ones -- or None if every provider is unavailable or every
+    response was unusable. Never raises.
+
+    GEMINI FIRST. This is the forecast narration, and Gemini is the AI
+    this system names for it, so the order is Gemini, then the provider
+    in LLM_PROVIDER, then the rest (_provider_order(prefer="gemini")) --
+    even when LLM_PROVIDER says openai. Gemini is skipped (and the skip
+    recorded) when the key it would be sent is an sk- key, which is what
+    GEMINI_API_KEY inherits from OPENAI_API_KEY on an OpenRouter-only
+    deployment, or when it has no key and was only in front because of
+    that preference; see _narration_gemini_skip. Such a skip never hides
+    what the configured provider reports after it (_record_failure).
+
+    "model" is the exact model id that answered, so the explanation's
+    provenance can name it. The forecast payload is never part of what
+    comes back: the caller takes that from the context."""
     _begin_attempt()
     prompt = _prompt_for(context)
-    order = _provider_order()
+    order = _provider_order(prefer="gemini")
 
     for name in order:
         generate = _GENERATORS.get(name)
         if generate is None:
             continue
+        if name == "gemini":
+            skip = _narration_gemini_skip()
+            if skip:
+                _record_failure("gemini", *skip)
+                continue
         raw_text = generate(prompt)
         if not raw_text:
             continue  # the generator already recorded why
         payload = _coerce_llm_payload(raw_text)
         if payload:
             payload["generated_by"] = f"llm:{name}"
+            payload["model"] = _model_for(name)
             return payload
         _record_failure(name, "parse",
                         f"response did not contain the required keys: {raw_text[:160]}")
@@ -802,16 +1087,28 @@ def generate_alert_summary(prompt):
 
     Used by market_alert_service for notification wording, and it goes
     through THIS function rather than reaching into _GENERATORS itself
-    so that the alerts get exactly what the Recommendations page gets:
+    so that the alerts use the same AI as the rest of the system -- the
+    same providers, keys, transports and diagnostics:
 
-      * the same provider order -- _provider_order(), including its
-        correction for `AQ.` keys -- so a deployment whose LLM_PROVIDER
-        is misconfigured but which has a usable key still produces real
-        AI text instead of quietly falling back to rule-based wording;
+      * the configured-provider order -- _provider_order(), including
+        its correction for `AQ.` keys -- the same order the
+        Recommendations page's location-opportunity cards and the forum
+        pre-screen use, so a deployment whose LLM_PROVIDER is
+        misconfigured but which has a usable key still produces real AI
+        text instead of quietly falling back to rule-based wording;
       * the same _begin_attempt()/_record_failure() diagnostics, so
         "why is my alert text rule-based?" is answerable from Admin >
         LLM status, the same page that answers it for recommendations;
       * the same response handling, including the code-fence strip.
+
+    ONE DELIBERATE DIFFERENCE: the per-plan forecast narration
+    (generate_recommendation_json) asks Gemini FIRST, whatever
+    LLM_PROVIDER says, and passes over a Gemini key that is plainly an
+    sk- one. That preference belongs to the narration alone -- Gemini is
+    the AI named for transcribing the trained model's forecast -- and
+    alerts keep the configured provider first, so an alert's wording
+    and a plan's explanation may come from different providers when
+    LLM_PROVIDER is not gemini.
 
     Returns (summary, "llm:<provider>") or None. Never raises: an alert
     whose wording could not be generated still has to go out in the

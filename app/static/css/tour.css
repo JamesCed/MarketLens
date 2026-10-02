@@ -329,10 +329,9 @@ html.dss-tour-prompt-open { overflow: hidden; }
   font-size: 1rem; color: var(--tour-ink);
 }
 
-/* ---------------- The sidebar's "Take the tour" ----------------
-   Sits in the footer with Support and borrows its look
-   (.dss-nav-support); this only spaces the two apart. */
-.dss-sidebar-footer .dss-nav-tour { margin-bottom: .2rem; }
+/* (The sidebar's "Take the tour" button, and the rule that spaced it
+   from Support, are gone: the replay button is "Start the tutorial" in
+   Settings › Tutorial, an ordinary .btn that needs nothing from here.) */
 
 /* ---------------- Motion and print ---------------- */
 @media (prefers-reduced-motion: reduce) {

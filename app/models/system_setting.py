@@ -4,8 +4,9 @@ app/models/system_setting.py
 SYSTEM_SETTINGS table -- Admin Module "system configuration and
 settings management". A simple key/value store so an Admin can tune
 the AI engine (clustering K, MSI weights, early-warning threshold,
-whether to use the optional LLM for recommendation text) without
-touching code or redeploying.
+the plan forecast's wage and gross-margin assumptions, whether to use
+the optional LLM for recommendation text) without touching code or
+redeploying.
 """
 
 from datetime import datetime
@@ -41,8 +42,27 @@ DEFAULT_SETTINGS = {
     ),
     "use_llm_recommendations": (
         "true",
-        "true = use an LLM (GPT-4o-mini via OpenRouter, or Claude, see LLM_PROVIDER/OPENAI_* in .env) to write "
-        "the recommendation text, false = the built-in rule-based generator",
+        "true = an LLM writes the recommendation text and explains the forecast (Gemini first for the forecast, "
+        "then LLM_PROVIDER, then the other; keys in .env), false = the built-in rule-based generator. "
+        "Figures always come from the trained models.",
+    ),
+    # The two ASSUMPTIONS the Plan Viability Model (stage 2 of the
+    # forecast, app/services/plan_forecast_service.py) needs that no plan
+    # form collects. Defaults and their sources are in app/ml/constants.py;
+    # they are editable here so the next wage order does not need a
+    # redeploy. Neither requires retraining: the model sees the wage only
+    # through monthly fixed cost / capital runway, and the margin only
+    # through required daily sales. Descriptions stay under 255
+    # characters (the column's width).
+    "plan_daily_wage_php": (
+        "590",
+        "Daily wage per employee (PHP) used for plan payroll = employees x wage x 26 days. Default: DOLE "
+        "Wage Order RBIII-26 (2nd tranche, eff. 16 Apr 2026), Tarlac retail & service, P590/day. P1-P100,000.",
+    ),
+    "plan_gross_margin": (
+        "0.40",
+        "Assumed gross margin (share of each sale left after cost of goods, 0.05-0.95) used to turn a plan's "
+        "prices into required daily sales. An assumption, not a measurement: no plan form collects costs.",
     ),
 }
 
@@ -99,15 +119,18 @@ class SystemSetting(db.Model):
         # businesses it really has instead of flat-lining at 20. An
         # install that still carries the old default gets the new one.
         "places_max_results": ("20", "0"),
-        # Recommendations now support a real GPT-4o-mini (via
-        # OpenRouter) / Claude call grounded in the SME's own inputs
-        # and real market/competitor data (see recommendation_service.py
-        # + llm_service.py) -- an existing install that never touched
-        # this setting now defaults to using it, as long as an API key
-        # is actually configured in .env (if not, generate_recommendation_json()
-        # simply returns None and the app quietly falls back to the
-        # rule-based generator -- nothing breaks either way).
-        "use_llm_recommendations": ("false", "true"),
+        # use_llm_recommendations used to be here too ("false" -> "true",
+        # from when the LLM recommendation became the default). It was
+        # removed because, on a two-valued switch, "still the old
+        # default" and "the Admin turned it off" are the same string.
+        # ensure_defaults() runs at every boot AND on every visit to
+        # Admin > System Settings, so unticking "Use an LLM..." was
+        # undone by the redirect that followed the save. The switch
+        # could not be turned off, although the page and
+        # Reference/FORECAST_MODEL.md promise rule-based text when it
+        # is. Every install that booted since the default changed has
+        # already been upgraded, so the entry had nothing left to do
+        # except that.
     }
 
     @staticmethod
@@ -126,6 +149,18 @@ class SystemSetting(db.Model):
             upgrade = SystemSetting._DEFAULT_UPGRADES.get(key)
             if upgrade and str(row.setting_value).strip() == upgrade[0]:
                 row.setting_value = upgrade[1]
+                row.description = description
+                changed = True
+
+            # The DESCRIPTION is the code's own note on what a setting
+            # does -- no screen edits it, and nothing passes one to set()
+            # -- so an install created before a setting's meaning changed
+            # gets the current note, while its VALUE (the Admin's choice)
+            # is left alone. Without this, use_llm_recommendations kept
+            # saying "GPT-4o-mini via OpenRouter, or Claude" on every
+            # existing install after the forecast narration went Gemini
+            # first.
+            if row.description != description:
                 row.description = description
                 changed = True
         if changed:

@@ -5,22 +5,37 @@ SETTINGS -- one page, shared by every role, split into sections:
 
     Profile        name, contact number, profile picture, and a summary
                    of this account's activity
-    Business       (SME only) the business plans themselves, with the
-    Preferences    inline edit/delete that used to be the "My Plans"
-                   popup in the top bar -- see the note below
     Notifications  the notification preference switches, plus the inbox
                    itself: mark everything read, clear what has been read
     Appearance     light or dark theme
     Security       change password, and what the account actually is
+    Tutorial       replay the guided tour from step 1, and what this
+                   account's walkthrough state is, in words
 
-WHY "MY PLANS" MOVED HERE. It was a Bootstrap modal living in
-shared/_topbar.html, which base.html includes on every authenticated
-page. That put its markup and ~130 lines of script into every response
-for every role -- including LGU and Admin accounts, which have no
-sme_profile rows and could never see anything in it. As a Settings pane
-it is rendered once, by the server, only for the accounts it applies to,
-and it still uses the same /home/plans/<id>/update and /delete endpoints
-the popup did.
+The link to this page sits in the sidebar FOOTER, directly above
+Support (shared/_sidebar.html), not in the list of pages: it looks
+after the account, not the market.
+
+WHERE THE PLANS WENT. Settings used to have a sixth, SME-only pane,
+"Business Preferences", holding the business plans and their inline
+Edit/Delete. The plans are managed on the Home page now, next to the
+plan they act on: a pencil edits a plan, a bin moves it to Trash (an
+archive -- nothing is deleted for good), and the Trash button restores
+it (see sme_controller's update_plan / trash_plan / restore_plan). Two
+places to edit the same plan would only invite the question of which
+one was authoritative, so the pane is gone rather than kept alongside.
+A stale ?section=plans link -- a bookmark, the old top-bar shortcut in
+someone's history -- still lands somewhere useful: an SME is redirected
+to Home, where the plans now are; any other account falls back to
+Profile, exactly as before.
+
+WHY "TAKE THE TOUR" MOVED HERE. It was a button in the sidebar footer.
+It now lives in the Tutorial pane, as a [data-tour-replay] button that
+static/js/tour.js binds on every page -- so the replay itself is
+unchanged, only where it is found. What did NOT change is the first
+visit: an account whose onboarding_state is NULL is still asked "Is
+this your first time here?" on its first signed-in page
+(shared/_onboarding.html + tour.js boot()), Settings or not.
 
 The blueprint and endpoint are still named `profile` / `profile.settings`
 even though the page is now "Settings". Renaming them would mean touching
@@ -52,6 +67,7 @@ import base64
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
 
+from app.controllers.onboarding_controller import describe_walkthrough
 from app.extensions import db
 from app.models import SmeProfile, PlanSave, ForecastResult, Notification, SystemSetting
 from app.models.user import User
@@ -67,13 +83,23 @@ MAX_AVATAR_BYTES = 2 * 1024 * 1024
 # The panes the Settings page offers, in order. ?section= picks which one
 # opens; anything else falls back to the first.
 #
-# "plans" is Business Preferences, and it is SME-ONLY: the template
-# renders neither the tab nor the pane for an LGU or Admin account,
-# which have no sme_profile rows. SME_ONLY_SECTIONS is what stops a
-# stale ?section=plans link from leaving one of those accounts looking
-# at a Settings page with every pane hidden and no tab selected.
-SETTINGS_SECTIONS = ("profile", "plans", "notifications", "appearance", "security")
-SME_ONLY_SECTIONS = ("plans",)
+# Every pane is now offered to every role -- Tutorial included, since
+# all three roles have a tour (static/js/tour_steps.js) -- so
+# SME_ONLY_SECTIONS is empty. It is kept, rather than deleted, because
+# the check below that reads it is what stops a role-specific pane from
+# ever leaving another role looking at a Settings page with every pane
+# hidden and no tab selected; the next SME-only pane only has to be
+# listed here.
+SETTINGS_SECTIONS = ("profile", "notifications", "appearance", "security", "tutorial")
+SME_ONLY_SECTIONS = ()
+
+# Sections that no longer exist, and where a link to one should go
+# instead. "plans" was Business Preferences: the plans are managed on
+# Home now, so for an SME an old ?section=plans link is redirected there
+# (302 -- a bookmark that keeps working, not a permanent rename of
+# Settings). Any other role never had that pane and simply gets Profile,
+# as it always did.
+SME_SECTION_REDIRECTS = {"plans": "sme.home"}
 
 # The Notification Preferences switches, in the order they are shown.
 #
@@ -253,21 +279,41 @@ def settings():
         flash("Profile updated.", "success")
         return redirect(url_for("profile.settings"))
 
-    saved_plans_count = PlanSave.query.filter_by(user_id=current_user.user_id).count()
+    # `section` only picks which pane opens first; an unknown value is
+    # ignored rather than 404'd, because it arrives from a redirect or a
+    # bookmark, not from anything security-relevant. Read before any
+    # query so a retired section's redirect costs nothing.
+    section = (request.args.get("section") or "profile").strip().lower()
+    if section in SME_SECTION_REDIRECTS and current_user.is_sme():
+        return redirect(url_for(SME_SECTION_REDIRECTS[section]))
+    if section not in SETTINGS_SECTIONS:
+        section = "profile"
+    if section in SME_ONLY_SECTIONS and not current_user.is_sme():
+        section = "profile"
+
+    # Both counts JOIN through to the plan, and that join is what makes
+    # them counts of live plans. A plan moved to Trash keeps its
+    # forecast_result and plan_saves rows -- that is what lets restore
+    # bring everything back -- and neither table carries an archive
+    # stamp of its own, so the global archive filter (app/models/
+    # archive.py) can only drop a trashed plan's rows where SmeProfile
+    # is in the query. Counting plan_saves on its own kept a trashed
+    # plan in "Saved Plans" while "Forecasts Run", right beside it,
+    # dropped it: two numbers on one card disagreeing about the same
+    # plan. Before Trash this never showed, because deleting a plan
+    # cascaded its bookmarks away.
+    saved_plans_count = (
+        PlanSave.query.join(ForecastResult, PlanSave.forecast_result_id == ForecastResult.forecast_id)
+        .join(SmeProfile, ForecastResult.sme_id == SmeProfile.sme_id)
+        .filter(PlanSave.user_id == current_user.user_id)
+        .count()
+    )
     reports_viewed_count = (
         ForecastResult.query.join(SmeProfile, ForecastResult.sme_id == SmeProfile.sme_id)
         .filter(SmeProfile.user_id == current_user.user_id)
         .count()
         if current_user.is_sme()
         else 0
-    )
-    # The plans shown in Business Preferences, newest first. Rendered
-    # server-side so the pane is correct before any script runs; the
-    # Edit and Delete buttons on each row then POST to sme_controller's
-    # JSON routes via fetch(), which is why this page itself never
-    # redirects for those actions.
-    sme_profiles = (
-        current_user.sme_profiles.order_by(SmeProfile.sme_id.desc()).all() if current_user.is_sme() else []
     )
 
     notifications = (
@@ -279,25 +325,20 @@ def settings():
     unread_count = Notification.query.filter_by(user_id=current_user.user_id, is_read=False).count()
     read_count = Notification.query.filter_by(user_id=current_user.user_id, is_read=True).count()
 
-    # `section` only picks which pane opens first; an unknown value is
-    # ignored rather than 404'd, because it arrives from a redirect or a
-    # bookmark, not from anything security-relevant.
-    section = (request.args.get("section") or "profile").strip().lower()
-    if section not in SETTINGS_SECTIONS:
-        section = "profile"
-    if section in SME_ONLY_SECTIONS and not current_user.is_sme():
-        section = "profile"
-
     return render_template(
         "shared/settings.html",
         saved_plans_count=saved_plans_count,
         reports_viewed_count=reports_viewed_count,
-        sme_profiles=sme_profiles,
         notifications=notifications,
         unread_count=unread_count,
         read_count=read_count,
         active_section=section,
         notification_prefs=NOTIFICATION_PREFS,
+        # The Tutorial pane says where this account's walkthrough stands
+        # -- completed, skipped, in progress, never started -- in words
+        # rather than as the raw onboarding_state value. Worded by
+        # onboarding_controller, which owns what those states mean.
+        walkthrough=describe_walkthrough(current_user.onboarding_state),
         # Shown read-only in Notifications: the threshold is a single
         # system-wide value an Admin controls, not a per-account one, so
         # displaying it as an editable field here would be a lie.

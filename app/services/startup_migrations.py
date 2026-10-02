@@ -98,6 +98,11 @@ _ADDITIVE_COLUMNS = {
         "product_offering": ("TEXT NULL", "TEXT NULL"),
         "innovation_idea": ("TEXT NULL", "TEXT NULL"),
         "offering_details": ("TEXT NULL", "TEXT NULL"),
+        # The plan Trash: removing a plan from Home archives it instead
+        # of deleting it -- see app/models/sme_profile.py. Without these
+        # an upgraded install would fail every plan query the moment
+        # SmeProfile gained the archive filter.
+        **_ARCHIVE_COLUMNS,
     },
     # The five W's -- see app/models/audit_log.py.
     "audit_logs": {

@@ -82,6 +82,7 @@ from datetime import datetime, date
 
 from app.extensions import db
 from app.models import MarketData, SmeProfile, ForecastResult, SystemSetting, IndustryMigrationLog
+from app.models.archive import get_including_archived
 
 # Set once the migration has run, so it never runs twice.
 MIGRATION_FLAG_KEY = "industry_taxonomy_psic_migrated_at"
@@ -309,7 +310,15 @@ def migrate(force=False):
     plan_map = dict(OLD_TO_PSIC)
     plan_map.update(micro_fallbacks)
 
-    for profile in SmeProfile.query.filter(SmeProfile.industry_type.in_(tuple(plan_map))).all():
+    # include_archived: a plan sitting in the owner's Trash is still
+    # their plan, and restoring it must bring it back speaking the
+    # current vocabulary -- so it is remapped like every other one. The
+    # archive filter (app/models/archive.py) would otherwise skip it.
+    for profile in (
+        SmeProfile.query.execution_options(include_archived=True)
+        .filter(SmeProfile.industry_type.in_(tuple(plan_map)))
+        .all()
+    ):
         new_value = plan_map[profile.industry_type]
         _log("sme_profile", profile.sme_id, profile.industry_type, new_value, "remapped",
              location=profile.location)
@@ -388,7 +397,8 @@ def undo():
                     row.industry_type = entry.old_industry_type
                     summary["reverted_remaps"] += 1
             elif entry.table_name == "sme_profile":
-                row = SmeProfile.query.get(entry.row_id)
+                # Trashed plans were remapped too, so they are reverted too.
+                row = get_including_archived(SmeProfile, entry.row_id)
                 if row is not None:
                     row.industry_type = entry.old_industry_type
                     summary["reverted_remaps"] += 1

@@ -72,7 +72,17 @@
     "Press Next to go forward and Back to go back. A few steps ask you to try something " +
     "yourself — that's the best way to learn. You can leave anytime with Exit tour.";
   const PHONE_MENU_TIP = "On a phone, tap the ☰ button at the top left to open this menu.";
-  const REPLAY_TIP = "You can replay this tour anytime from Take the tour in the sidebar.";
+  // The whole sidebar, not just its list of pages (.dss-nav): Settings
+  // and Support sit in the sidebar's FOOTER, below that list, and the
+  // menu step tells people to look "at the bottom of the menu" for them
+  // -- so the bottom has to be lit up too, not left under the dimmer.
+  const MENU_TARGET = "#dssSidebar";
+  // Where the replay button lives now. It used to be "Take the tour" in
+  // the sidebar; it is the Tutorial section of Settings (and Settings
+  // itself sits at the bottom of the menu, just above Support).
+  const REPLAY_TIP =
+    "You can replay this tour anytime: open Settings at the bottom of the menu, " +
+    "choose Tutorial, and press Start the tutorial.";
   const MAP_CLICK = {
     // The list of barangays on the right counts too: for someone who
     // finds the map fiddly, picking a name is the same action.
@@ -99,7 +109,7 @@
     {
       id: "sme-menu",
       page: "/home",
-      target: "#dssSidebar .dss-nav",
+      target: MENU_TARGET,
       placement: "right",
       title: "Your main menu",
       what: "This menu is how you move between the pages of MarketLens. It stays in the same place on every page.",
@@ -108,7 +118,7 @@
         "Saturation Map — how crowded each barangay is",
         "Trend Reports — how the market has changed over time",
         "Recommendations — where we suggest you open, and why",
-        "Settings — your account and your saved plans",
+        "Settings and Support — at the bottom of the menu: your account, your notices, and the Tutorial",
       ],
       how: "Click a name to open that page. The highlighted one is the page you're on now. " + PHONE_MENU_TIP,
     },
@@ -120,7 +130,7 @@
       what:
         "A business plan is one business idea — for example, a milk tea shop in San Vicente. " +
         "If you have saved more than one, this lets you choose which plan the page is showing.",
-      how: "Click it and pick a plan. The scores and forecast on this page change to match the plan you chose.",
+      how: "Click a plan's name. The scores and forecast on this page change to match the plan you chose.",
     },
     {
       id: "sme-search",
@@ -180,7 +190,11 @@
       what:
         "Every business idea you save is kept here, so you never have to type it again. MarketLens keeps " +
         "checking your plans and can warn you when a barangay gets more crowded.",
-      how: "Click a plan to see its results. To change or delete a plan, go to Settings, then Business Preferences.",
+      how:
+        "Click a plan to see its results. Press the pencil on a plan to edit it — MarketLens runs a fresh " +
+        "forecast straight away. Press the bin to move a plan to Trash; nothing is deleted for good. The " +
+        "Trash button next to Add New Plan shows the plans you removed, and Restore brings one back with " +
+        "all its forecasts.",
     },
     {
       id: "sme-add-plan",
@@ -204,9 +218,11 @@
       title: "Filling in a plan",
       what:
         "The form asks for your business name, the type of business and what kind it is (for example, " +
-        "a bakery rather than just \"food\"), what you will sell, and the barangay — type it, or press " +
-        "Pick on map and click the place. You can also say what makes your business different, and add " +
-        "a menu or price list. Only the name, type and barangay are required.",
+        "a bakery rather than just \"food\"), the barangay — type it, or press Pick on map and click the " +
+        "place — and your capital: the money you have to start or run the business. You can also add how " +
+        "many people you'll employ, what you will sell, a menu or price list, and what makes your business " +
+        "different. The name, type, barangay and capital are required, and everything you fill in is used " +
+        "in your forecast.",
       how:
         "When you're ready for real, fill it in and press the button at the bottom to get your forecast. " +
         "For now, just press Next — we'll close the form and nothing will be saved.",
@@ -234,11 +250,12 @@
       target: '[data-tour="forecast-panel"]',
       title: "Your forecast",
       what:
-        "This is MarketLens's forecast for your plan. The Viability Score (out of 10) shows how likely the " +
-        "business is to do well there — higher is better. The Saturation Level shows how crowded the market " +
-        "already is: Low means few competitors, Saturated means there are already too many.",
+        "This is MarketLens's forecast for your plan. Plan viability (out of 10) shows how likely the " +
+        "business is to do well there — higher is better. It weighs the market AND your own plan: your " +
+        "capital, staff, prices and idea. The Saturation Level shows how crowded the market already is: " +
+        "Low means few competitors, Saturated means there are already too many.",
       how:
-        "Use it to compare places before you spend money. A high Viability Score with a low Saturation Level " +
+        "Use it to compare places before you spend money. A high Plan viability with a low Saturation Level " +
         "is a good sign. The chart shows how things may change over the coming months.",
     },
     {
@@ -332,25 +349,19 @@
       placement: "right",
       title: "Settings",
       what:
-        "Settings is where you look after your account: your profile, your saved business plans, " +
-        "the notices MarketLens sends you, and how the screen looks.",
+        "Settings is where you look after your account. You open it from the bottom of the menu, just " +
+        "above Support. (Your business plans are not here — you edit them on Home.)",
+      list: [
+        "Profile — your name, photo and contact number",
+        "Notifications — which warnings MarketLens sends you, and your messages",
+        "Appearance — a light or a dark screen",
+        "Security — your password",
+        "Tutorial — replay this tour from the start",
+      ],
       how: "Click a section name to open it.",
-      tryIt: "Try it: click Business Preferences.",
-      advanceOn: { selector: '#settingsNav [data-section="plans"]', event: "click" },
-      success: "Nice! These are your saved business plans.",
-    },
-    {
-      id: "sme-settings-plans",
-      page: "/settings",
-      target: "#section-plans",
-      prepare: { click: '#settingsNav [data-section="plans"]' },
-      title: "Edit or delete a plan",
-      what:
-        "Each saved plan can be changed or deleted here. When you change a plan, MarketLens runs a " +
-        "fresh forecast for it straight away.",
-      how:
-        "Press Edit, change the details, and save. Delete asks you to confirm first, because it can't be " +
-        "undone. To choose which warnings you get, open Notifications in the list of sections.",
+      tryIt: "Try it: click Tutorial.",
+      advanceOn: { selector: '#settingsNav [data-section="tutorial"]', event: "click" },
+      success: "Nice! Press Start the tutorial here anytime to see this tour again.",
     },
     {
       id: "sme-finish",
@@ -360,12 +371,12 @@
       labels: { what: "Where to find things", how: "Need a reminder?" },
       what: "That's the whole tour — you know your way around now.",
       list: [
-        "Home — search a barangay, see Market Scores, and add plans",
+        "Home — search a barangay, see Market Scores, and add, edit or remove your plans (removed plans wait in Trash)",
         "Saturation Map — see which barangays are crowded",
         "Trend Reports — see how the market is changing",
         "Recommendations — where to open, and why",
         "Community Forum (bottom of Home) — our Discord community",
-        "Settings — edit your plans and choose your notices",
+        "Settings (bottom of the menu) — your account, your notices, and the Tutorial",
         "The bell at the top — your messages from MarketLens",
       ],
       how: REPLAY_TIP,
@@ -390,7 +401,7 @@
     {
       id: "lgu-menu",
       page: "/lgu/dashboard",
-      target: "#dssSidebar .dss-nav",
+      target: MENU_TARGET,
       placement: "right",
       title: "Your main menu",
       what: "This menu is how you move between the pages. It stays in the same place on every page.",
@@ -399,7 +410,7 @@
         "Saturation Map — how crowded each barangay is",
         "Trend Reports — how the market has changed",
         "Gov't Data Upload — add the city's official records",
-        "Settings — your account",
+        "Settings and Support — at the bottom of the menu: your account and the Tutorial",
       ],
       how: "Click a name to open that page. " + PHONE_MENU_TIP,
     },
@@ -510,7 +521,9 @@
       target: "#settingsNav",
       placement: "right",
       title: "Settings",
-      what: "Your profile, your password, the notices MarketLens sends you, and how the screen looks.",
+      what:
+        "Your profile, your password, the notices MarketLens sends you, how the screen looks — and " +
+        "Tutorial, which replays this tour from the start. You open Settings from the bottom of the menu.",
       how: "Click a section name to open it.",
     },
     {
@@ -526,7 +539,7 @@
         "Saturation Map — see which barangays are crowded",
         "Trend Reports — see how the market is changing",
         "Community Forum (bottom of the dashboard) — our Discord community",
-        "Settings — your account and notices",
+        "Settings (bottom of the menu) — your account, your notices, and the Tutorial",
       ],
       how: REPLAY_TIP,
     },
@@ -550,7 +563,7 @@
     {
       id: "admin-menu",
       page: "/admin/dashboard",
-      target: "#dssSidebar .dss-nav",
+      target: MENU_TARGET,
       placement: "right",
       title: "Your main menu",
       what:
@@ -562,6 +575,7 @@
         "Audit Trail — who did what, and when",
         "Datasets — the data behind every score",
         "System Settings — how the forecasting engine behaves",
+        "Settings and Support — at the bottom of the menu: your own account and the Tutorial",
       ],
       how: "Click a name to open that page. " + PHONE_MENU_TIP,
     },
@@ -671,6 +685,7 @@
         "Audit Trail — who did what, when, where and why",
         "Datasets — archive and restore data rows",
         "System Settings — tune the forecasting engine, and set the Discord community link",
+        "Settings (bottom of the menu) — your own account, and the Tutorial",
       ],
       how: REPLAY_TIP,
     },

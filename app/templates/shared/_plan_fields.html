@@ -3,21 +3,27 @@
   --------------------------
   The broader business parameters, as macros, used by all three places a
   plan is entered: the sign-up wizard (auth/register.html), the Home
-  page's Add New Plan dialog, and the Edit form in Settings > Business
-  Preferences. One copy of the markup, driven by one script
-  (static/js/plan_form.js), so the three forms cannot drift apart --
-  which is exactly how "monthly revenue" had survived in one form after
-  being dropped from another.
+  page's Add New Plan dialog, and the Home page's per-plan Edit dialog
+  (which used to be a form in Settings > Business Preferences). One copy
+  of the markup, driven by one script (static/js/plan_form.js), so the
+  forms cannot drift apart -- which is exactly how "monthly revenue" had
+  survived in one form after being dropped from another.
+
+  plan_core_fields() is the WHOLE plan form body -- name, industry,
+  sub-category, offering, location, stage, capital, employees, idea,
+  price list -- and is what Add and Edit both render, so the two dialogs
+  are the same form by construction rather than by care. The sign-up
+  wizard keeps its own layout (input-group icons, per-step `required`
+  applied by its script) but uses the same per-field macros below.
 
   Each macro takes a `prefix` so the same fields can appear more than
-  once on a page (Settings renders an Edit form per plan) with unique
-  ids for their <label for="..."> links.
+  once on a page (Home renders an Edit dialog per plan) with unique ids
+  for their <label for="..."> links.
 
   The container that holds a plan's fields must carry data-plan-form,
   its industry <select> data-plan-industry; the script does the rest.
 
-  `small=True` renders the compact variant the Settings Edit form uses
-  (form-control-sm, small labels) so the fields match their neighbours.
+  `small=True` renders a compact variant (form-control-sm, small labels).
 #}
 
 {% macro _label_cls(small) %}form-label{{ ' small mb-1' if small }}{% endmacro %}
@@ -61,9 +67,20 @@
   </label>
   <textarea id="{{ prefix }}-innovation" name="innovation_idea" class="form-control{{ ' form-control-sm' if small }}" rows="2" maxlength="1000"
             placeholder="e.g. Malunggay and ube pandesal, delivered door-to-door before 6am">{{ value or '' }}</textarea>
+  {#
+    Honest about what the idea does to the numbers. It used to say the
+    idea "never changes the market score itself", which was true when
+    the only score was the market's. The plan viability model now counts
+    WHETHER there is an idea (has_innovation_idea -> the differentiation
+    component, weighted more in a crowded market -- see
+    Reference/FORECAST_MODEL.md), and that model's score is the one on
+    the gauge and the plan chips. The words themselves are read only by
+    the AI, and nothing here moves the market saturation figure.
+  #}
   <div class="form-text">
-    <i class="bi bi-stars"></i> The AI reads this and tells you how much it could help you stand out.
-    It never changes the market score itself.
+    <i class="bi bi-stars"></i> Having one counts towards your plan's viability score (differentiation,
+    which matters more in a crowded market). The AI also reads the words and tells you how much they
+    could help you stand out. It never changes the market saturation figure.
   </div>
 {%- endmacro %}
 
@@ -88,7 +105,7 @@
         <div class="dss-subplan-row" data-plan-item>
           <input type="text" name="offering_item" class="form-control form-control-sm" maxlength="80"
                  value="{{ it.item }}" aria-label="Item or service">
-          <input type="number" name="offering_price" class="form-control form-control-sm" min="0" step="0.01"
+          <input type="number" name="offering_price" class="form-control form-control-sm" min="0" max="10000000" step="0.01"
                  value="{{ it.price if it.price is not none else '' }}" aria-label="Price in pesos">
           <button type="button" class="btn btn-sm btn-link text-danger" data-plan-remove-item
                   aria-label="Remove this item"><i class="bi bi-x-lg"></i></button>
@@ -98,7 +115,7 @@
         <div class="dss-subplan-row" data-plan-item>
           <input type="text" name="offering_item" class="form-control form-control-sm" maxlength="80"
                  placeholder="e.g. Pandesal (10 pcs)" aria-label="Item or service">
-          <input type="number" name="offering_price" class="form-control form-control-sm" min="0" step="0.01"
+          <input type="number" name="offering_price" class="form-control form-control-sm" min="0" max="10000000" step="0.01"
                  placeholder="30" aria-label="Price in pesos">
           <button type="button" class="btn btn-sm btn-link text-danger" data-plan-remove-item
                   aria-label="Remove this item"><i class="bi bi-x-lg"></i></button>
@@ -109,4 +126,117 @@
       </button>
     </div>
   </details>
+{%- endmacro %}
+
+
+{% macro plan_core_fields(prefix, plan=None, business_types=(), business_stages=('startup', 'existing'),
+                          subcategories=None, default_location='', datalist_id='locationOptions') -%}
+  {#
+    The full plan form body shared by Home's Add New Plan and Edit
+    dialogs. `plan` is the SmeProfile being edited, or None for a new
+    plan. Every field here feeds the forecast (see
+    Reference/FORECAST_MODEL.md) except the business name, which is an
+    identifier.
+
+    `datalist_id` names a <datalist> of barangays rendered ONCE by the
+    page, so N Edit dialogs do not repeat 76 <option>s each.
+  #}
+  {% set p = plan %}
+  {% set stage = (p.business_stage if p else None) or 'startup' %}
+  <div class="row">
+    <div class="col-md-6 mb-3">
+      <label class="form-label" for="{{ prefix }}-name">Business name</label>
+      <input type="text" id="{{ prefix }}-name" name="business_name" class="form-control" maxlength="150"
+             placeholder="e.g., Juan's Coffee Corner" value="{{ p.business_name if p else '' }}" required>
+    </div>
+    <div class="col-md-6 mb-3">
+      <label class="form-label" for="{{ prefix }}-industry">Industry type</label>
+      <select id="{{ prefix }}-industry" name="industry_type" class="form-select" required data-plan-industry>
+        {#
+          A plan saved under an industry name the current list no longer
+          contains (the taxonomy has been migrated once already -- see
+          app/services/industry_migration.py) keeps its own value as the
+          selected option. Without this the select would quietly fall
+          back to the FIRST industry, and merely opening Edit and
+          pressing Save would reclassify the business.
+        #}
+        {% if p and p.industry_type and p.industry_type not in business_types %}
+          <option value="{{ p.industry_type }}" selected>{{ p.industry_type }} (current)</option>
+        {% elif not p %}
+          <option value="">Choose an industry&hellip;</option>
+        {% endif %}
+        {% for bt in business_types %}
+          <option value="{{ bt }}" {{ 'selected' if p and bt == p.industry_type }}>{{ bt }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="mb-3">
+    {{ subcategory_field(prefix, p.industry_type if p else None, p.subcategory if p else None, subcategories or {}) }}
+  </div>
+  <div class="mb-3">
+    {{ offering_field(prefix, p.product_offering if p else None) }}
+  </div>
+  <div class="mb-3">
+    <label class="form-label" for="{{ prefix }}-location">Location / Barangay</label>
+    <div class="input-group">
+      <span class="input-group-text"><i class="bi bi-geo-alt" aria-hidden="true"></i></span>
+      <input type="text" id="{{ prefix }}-location" name="location" class="form-control" list="{{ datalist_id }}"
+             maxlength="150" placeholder="e.g., Poblacion" value="{{ p.location if p else default_location }}" required>
+      <button type="button" class="btn btn-outline-primary" data-location-picker-toggle
+              aria-expanded="false" aria-controls="{{ prefix }}-picker">
+        <i class="bi bi-map" aria-hidden="true"></i> Pick on map
+      </button>
+    </div>
+    <div id="{{ prefix }}-picker" class="dss-location-picker-inline mt-2" hidden>
+      <div class="dss-location-picker-map" data-location-picker-map></div>
+      <div class="form-text" data-location-picker-status>Click a barangay on the map to choose it.</div>
+    </div>
+    <div class="form-text">Type a barangay, or pick it on the map.</div>
+  </div>
+  <div class="row">
+    <div class="col-md-6 mb-3">
+      <label class="form-label" for="{{ prefix }}-stage">Business stage</label>
+      <select name="business_stage" id="{{ prefix }}-stage" class="form-select" data-plan-stage>
+        {% for s in business_stages %}<option value="{{ s }}" {{ 'selected' if s == stage }}>{{ s|capitalize }}</option>{% endfor %}
+      </select>
+    </div>
+    {# Shown only for an existing business (plan_form.js toggles it; the
+       server renders it already open for one). #}
+    <div class="col-md-6 mb-3" data-plan-regdate {{ 'hidden' if stage != 'existing' }}>
+      <label class="form-label" for="{{ prefix }}-regdate">Registration date</label>
+      <input type="date" id="{{ prefix }}-regdate" name="registration_date" class="form-control"
+             value="{{ p.registration_date.isoformat() if p and p.registration_date else '' }}">
+    </div>
+  </div>
+  <div class="row">
+    <div class="col-md-6 mb-3">
+      {#
+        REQUIRED. Capital is an input to the plan viability model -- how
+        many months of rent and payroll it carries against the expected
+        ramp-up -- so it can no longer be left blank (a blank would be a
+        silent zero). Named "capital"; the server still accepts the old
+        field name. A legacy plan with no capital renders this empty, so
+        the browser asks for it before the dialog will save.
+      #}
+      <label class="form-label" for="{{ prefix }}-capital">Capital (&#8369;)</label>
+      <input type="number" id="{{ prefix }}-capital" name="capital" class="form-control" min="1" step="any"
+             inputmode="decimal" placeholder="500000" required aria-describedby="{{ prefix }}-capital-help"
+             value="{{ ('%.2f'|format(p.capital)).rstrip('0').rstrip('.') if p and p.capital > 0 else '' }}">
+      <div class="form-text" id="{{ prefix }}-capital-help">
+        All the money you have for the business. The forecast checks how many months of rent and
+        payroll it covers.
+      </div>
+    </div>
+    <div class="col-md-6 mb-3">
+      <label class="form-label" for="{{ prefix }}-employees">Employee count <span class="text-muted fw-normal">(optional)</span></label>
+      <input type="number" id="{{ prefix }}-employees" name="employee_count" class="form-control" min="0" max="10000" step="1"
+             placeholder="3" value="{{ p.employee_count if p and p.employee_count is not none else '' }}">
+      <div class="form-text">Staff besides you. Their wages count as a monthly cost.</div>
+    </div>
+  </div>
+  <div class="mb-3">
+    {{ innovation_field(prefix, p.innovation_idea if p else None) }}
+  </div>
+  {{ subplan_field(prefix, p.offering_items if p else []) }}
 {%- endmacro %}

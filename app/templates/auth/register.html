@@ -20,8 +20,13 @@
   reveals all three steps at once and the form still submits correctly.
 
   LGU accounts skip step 2 entirely. An LGU official plans for the city
-  and has no SmeProfile, so asking them for a startup capital would be
-  asking for a number that has nowhere to go.
+  and has no SmeProfile, so asking them for a capital would be asking
+  for a number that has nowhere to go.
+
+  CAPITAL IS REQUIRED for an SME (it is an input to the plan viability
+  model -- see app/services/plan_params.py). Like every step-2 field its
+  `required` is applied by the script below, per step, not in the
+  markup; the server enforces it regardless.
 #}
 
 {% from "shared/_plan_fields.html" import subcategory_field, offering_field, innovation_field, subplan_field %}
@@ -61,8 +66,8 @@
 
       <ul class="ml-assure">
         <li><i class="bi bi-clipboard-data"></i>
-          <span><strong>Your plan is saved as you register.</strong> It lands in
-            <em>Business Preferences</em> and on your Home page, ready to forecast.</span></li>
+          <span><strong>Your plan is saved as you register.</strong> It lands on
+            your Home page, ready to forecast &mdash; and you can edit it there any time.</span></li>
         <li><i class="bi bi-shield-check"></i>
           <span><strong>Your email is verified first.</strong> A six-digit code is sent
             before the account is created.</span></li>
@@ -186,23 +191,27 @@
 
             <div class="row g-3">
               <div class="col-sm-6">
-                <label class="form-label" for="ml-capital">Startup capital</label>
+                <label class="form-label" for="ml-capital">Capital (&#8369;)</label>
                 <div class="input-group">
                   <span class="input-group-text">&#8369;</span>
-                  <input type="number" id="ml-capital" name="startup_capital" class="form-control"
-                         min="0" step="1000" placeholder="500000" value="{{ f.get('startup_capital','') }}">
+                  {# Re-filled after a bounced submit from either name: an
+                     old cached copy of this form still posts startup_capital. #}
+                  <input type="number" id="ml-capital" name="capital" class="form-control"
+                         min="1" step="any" inputmode="decimal" placeholder="500000"
+                         value="{{ f.get('capital') or f.get('startup_capital') or '' }}">
                 </div>
               </div>
               <div class="col-sm-6">
-                <label class="form-label" for="ml-employees">Employees</label>
+                <label class="form-label" for="ml-employees">Employees <span class="text-muted fw-normal">(optional)</span></label>
                 <input type="number" id="ml-employees" name="employee_count" class="form-control"
-                       min="0" step="1" placeholder="3" value="{{ f.get('employee_count','') }}">
+                       min="0" max="10000" step="1" placeholder="3" value="{{ f.get('employee_count','') }}">
               </div>
             </div>
             <p class="ml-step-note">
               <i class="bi bi-info-circle"></i>
-              Capital and employees are optional. The ROI window comes from the market forecast itself,
-              so you do not need a revenue figure to get one.
+              Capital is required: the forecast checks how many months of rent and wages it covers.
+              Employees are optional. You do not need a revenue figure &mdash; the break-even window
+              comes from the forecast itself.
             </p>
 
             <div class="mb-3">
@@ -339,7 +348,7 @@
   // message, so the button appears simply dead. Instead the attribute is
   // put on only the fields that are currently visible and relevant.
   const REQUIRED = {
-    2: ["business_name", "industry_type", "location"],
+    2: ["business_name", "industry_type", "location", "capital"],
     3: ["full_name", "email", "password", "confirm_password"],
   };
 

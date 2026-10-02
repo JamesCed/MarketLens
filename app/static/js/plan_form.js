@@ -2,7 +2,8 @@
 // ---------------------------------------------------------------------
 // Behaviour for the broader business-parameter fields in
 // shared/_plan_fields.html, wherever they appear: the sign-up wizard,
-// the Home page's Add New Plan dialog, and each Edit form in Settings.
+// the Home page's Add New Plan dialog, and each plan's Edit dialog on
+// the Home page.
 //
 //   * The sub-category list follows the chosen industry. Food and
 //     Beverage offers Bakery / Coffee Shop / Milk Tea ...; Construction
@@ -14,6 +15,8 @@
 //     so an owner who does not know the word "sub-category" can still
 //     see which one they are.
 //   * The optional price list grows and shrinks a row at a time.
+//   * The registration date is shown only for an "existing" business
+//     (a [data-plan-stage] select and its [data-plan-regdate] field).
 //
 // Bound by delegation on the document, so a form that appears later
 // (a modal, an Edit form revealed on click) works without re-binding.
@@ -78,11 +81,22 @@
     if (first) first.focus();
   }
 
+  // Registration date only means something for a business that already
+  // exists. Hidden rather than removed, so a date typed and then
+  // switched away from is still there if the owner switches back.
+  function syncStage(container) {
+    const stage = container.querySelector("[data-plan-stage]");
+    const field = container.querySelector("[data-plan-regdate]");
+    if (!stage || !field) return;
+    field.hidden = stage.value !== "existing";
+  }
+
   document.addEventListener("change", (event) => {
     const container = event.target.closest("[data-plan-form]");
     if (!container) return;
     if (event.target.matches("[data-plan-industry]")) fillSubcategories(container, false);
     if (event.target.matches("[data-plan-subcategory]")) refreshHint(container);
+    if (event.target.matches("[data-plan-stage]")) syncStage(container);
   });
 
   document.addEventListener("click", (event) => {
@@ -108,6 +122,7 @@
       const select = container.querySelector("[data-plan-subcategory]");
       if (select && select.disabled) fillSubcategories(container, true);
       refreshHint(container);
+      syncStage(container);
     });
   }
 

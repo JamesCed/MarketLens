@@ -51,6 +51,8 @@ REGISTRATION = {
     "industry_type": BUSINESS_TYPES[0],
     "location": "Poblacion",
     "business_stage": "startup",
+    # Capital is required too (the plan viability model reads it).
+    "capital": "150000",
 }
 
 

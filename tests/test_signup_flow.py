@@ -43,7 +43,7 @@ SME_SIGNUP = {
     "industry_type": "Food and Beverage",
     "location": "Poblacion",
     "business_stage": "startup",
-    "startup_capital": "250000",
+    "capital": "250000",
     "employee_count": "3",
     "subcategory": "coffee_shop",
     "product_offering": "Brewed coffee and pastries",
@@ -257,9 +257,36 @@ def test_an_unknown_industry_is_rejected(app, client):
 
 
 def test_a_bad_number_is_rejected_rather_than_silently_zeroed(app, client):
-    _signup(client, startup_capital="-5000")
+    _signup(client, capital="-5000")
     with app.app_context():
         assert User.query.count() == 0
+
+
+@pytest.mark.parametrize("capital", [None, "", "0", "abc"])
+def test_a_missing_or_unusable_capital_blocks_the_whole_signup(app, client, capital):
+    """Capital is no longer optional: the plan viability model uses it,
+    so an SME account is not created around a plan without one."""
+    page = _signup(client, capital=capital).get_data(as_text=True)
+    assert "Capital is required." in page or "Capital must be" in page
+    with app.app_context():
+        assert User.query.count() == 0
+        assert SmeProfile.query.count() == 0
+
+
+def test_the_legacy_capital_field_name_still_signs_up(app, client):
+    """An old cached copy of the form posts startup_capital."""
+    _signup(client, capital=None, startup_capital="180000")
+    with app.app_context():
+        assert float(SmeProfile.query.one().startup_capital) == 180000.0
+
+
+def test_an_lgu_signup_needs_no_capital(app, client):
+    client.post("/register", data={
+        "role": "lgu", "full_name": "Ana Reyes", "email": "ana@lgu.gov.ph",
+        "password": "password123", "confirm_password": "password123",
+    }, follow_redirects=True)
+    with app.app_context():
+        assert User.query.filter_by(email="ana@lgu.gov.ph").count() == 1
 
 
 def test_a_mismatched_password_still_blocks_everything(app, client):
@@ -283,6 +310,20 @@ def test_get_started_goes_to_sign_up(client):
     import re
     get_started = re.search(r'href="([^"]+)"[^>]*>\s*Get Started', body)
     assert get_started and get_started.group(1) == "/register"
+
+
+def test_the_register_page_asks_for_a_required_capital(client):
+    body = client.get("/register").get_data(as_text=True)
+    assert 'name="capital"' in body
+    assert 'name="startup_capital"' not in body
+    assert "Capital (&#8369;)" in body
+    assert "Startup capital" not in body
+    # required is applied per step by the wizard's script, not the markup
+    # (a hidden required field would block an LGU sign-up).
+    assert '2: ["business_name", "industry_type", "location", "capital"]' in body
+    assert "Capital is required" in body
+    # Plans are managed on Home now, not in Settings.
+    assert "Business Preferences" not in body
 
 
 def test_the_register_page_asks_for_the_business_before_the_account(client):

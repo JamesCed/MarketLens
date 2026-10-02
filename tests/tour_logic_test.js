@@ -134,7 +134,7 @@ test("resuming picks the saved step, clamped, and knows whether it is on this pa
   assert.deepStrictEqual(tour.resolveStart(99, steps, "/settings", ""), { index: 3, onPage: true },
     "a shorter step list since last time clamps to the last step");
   assert.strictEqual(tour.pageMatches("/app/home", "/home", "/app"), true, "mounted under a prefix");
-  assert.strictEqual(tour.pageMatches("/settings?section=plans#x", "/settings", ""), true, "query/hash ignored");
+  assert.strictEqual(tour.pageMatches("/settings?section=tutorial#x", "/settings", ""), true, "query/hash ignored");
   assert.strictEqual(tour.pageMatches("/home", "/homework", ""), false);
 });
 
@@ -286,7 +286,7 @@ test("every role has a complete, well-formed tour", () => {
     });
     assert.strictEqual(list[0].target, undefined, role + ": the welcome step is a centred card");
     assert.strictEqual(list[list.length - 1].finish, true, role + ": the last step finishes the tour");
-    assert.ok(/Take the tour/.test(list[list.length - 1].how), role + ": the end says how to replay");
+    assert.ok(/Tutorial/.test(list[list.length - 1].how), role + ": the end says how to replay (Settings › Tutorial)");
     assert.ok(list.some((s) => s.advanceOn), role + ": a trial has at least one hands-on step");
   }
 });
@@ -301,6 +301,37 @@ test("the SME tour covers the Home page anchors the Home page provides", () => {
   const pages = new Set(STEPS.SME.map((s) => s.page));
   ["/home", "/saturation-map", "/trend-reports", "/recommendations", "/settings"].forEach((p) => {
     assert.ok(pages.has(p), "SME tour never visits " + p);
+  });
+});
+
+test("no step points at the retired Business Preferences pane or the old sidebar button", () => {
+  // Plans are managed on Home now and the replay button is Settings ›
+  // Tutorial. A step still aimed at #section-plans would spotlight
+  // nothing, and one still saying "Take the tour" would send people
+  // looking for a button that is gone.
+  for (const role of Object.keys(STEPS)) {
+    STEPS[role].forEach((step) => {
+      const text = JSON.stringify(step);
+      assert.ok(!/Business Preferences|section-plans|data-section=\\"plans\\"|Take the tour/.test(text),
+        role + " step " + step.id + " still refers to Business Preferences or Take the tour");
+    });
+  }
+  const settings = STEPS.SME.find((s) => s.id === "sme-settings");
+  assert.ok(settings, "the SME tour still introduces Settings");
+  assert.strictEqual(settings.advanceOn.selector, '#settingsNav [data-section="tutorial"]',
+    "the Settings step ends on the Tutorial section");
+  assert.ok(/Tutorial/.test(JSON.stringify(settings.list)), "the Settings step lists Tutorial");
+  // Settings now sits in the sidebar FOOTER (above Support), so each
+  // role's menu step lights up the whole sidebar, not just the page list.
+  for (const role of Object.keys(STEPS)) {
+    const menu = STEPS[role].find((s) => /-menu$/.test(s.id));
+    assert.ok(menu, role + ": no menu step");
+    assert.strictEqual(menu.target, "#dssSidebar", role + ": the menu step must include the sidebar footer");
+    assert.ok(/Settings/.test(JSON.stringify(menu.list)), role + ": the menu step says where Settings is");
+  }
+  const saved = STEPS.SME.find((s) => s.id === "sme-saved-plans");
+  ["pencil", "bin", "Trash", "Restore"].forEach((word) => {
+    assert.ok(saved.how.indexOf(word) !== -1, "the saved-plans step does not explain the " + word);
   });
 });
 

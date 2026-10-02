@@ -16,15 +16,31 @@ BUSINESS_TYPES list and BARANGAY_NAMES list below are just the UI's
 SUGGESTED options (a <select> and a <datalist>), not a hard constraint;
 the AI engine (app/ml/constants.py) has an "other" bucket for anything
 typed outside them.
+
+PLANS ARE MANAGED ON HOME, AND NEVER DELETED
+Adding, editing, moving to Trash and restoring a plan all happen on the
+Home page (they used to be split between Home and Settings > Business
+Preferences). "Remove" moves a plan to Trash -- an archive, see
+app/models/sme_profile.py -- and the Trash dialog restores it with all
+its forecasts. There is deliberately no route that hard-deletes a plan;
+the old /delete URL survives only as an alias that trashes.
+
+Every plan route answers two kinds of caller: a fetch() from the Home
+page's script (asks for JSON with `Accept: application/json`) and a
+plain form POST with scripting off (gets a flash and a redirect back to
+Home). See _wants_json().
 """
 
-from datetime import date
+from datetime import date, timedelta
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify, session
+from flask import (
+    Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify, session, make_response,
+)
 from flask_login import current_user
 
 from app.extensions import db
 from app.models import SmeProfile, ForecastResult, PlanSave, MarketData
+from app.models.archive import get_including_archived
 from app.ml.constants import (
     BUSINESS_TYPES,
     FEATURED_BUSINESS_TYPES,
@@ -149,6 +165,139 @@ def _latest_forecasts_by_plan(profiles):
     return latest
 
 
+def _forecast_predates_plan_model(forecast):
+    """True when this forecast was written before the plan viability
+    model existed, so its stored recommendation has no "forecast"
+    payload -- no capital runway, no break-even for the plan, no
+    explanation of the model's output -- and the Home panel would have
+    nothing to show for them. Treated like _forecast_predates_lgu_data:
+    regenerated once, after which the new row carries the payload."""
+    if forecast is None:
+        return False
+    return parse_recommendation(forecast.recommendation).get("forecast") is None
+
+
+def _score_summary(forecast):
+    """What a plan's stored score IS, for a chip or a Trash row.
+
+    A row written by the plan viability model stores the PLAN's viability
+    (capital, staff, prices and offering weighed in). A row written
+    before that model stores the old market-only figure, (100 -
+    saturation) / 10. Both sit in the same viability_score column, so
+    the column alone cannot say which one it holds; the payload can.
+    Only the plan on screen is regenerated (see home()) -- re-running
+    every plan's forecast, AI narration included, on every Home visit
+    would be the slow page this app has worked to avoid -- so the others
+    are LABELLED for what they are rather than shown side by side under
+    one name. Opening a plan re-runs it, and its chip then reads
+    "Viability".
+
+    `band` colours the score pill by the number on it -- the same cuts
+    as the forecast panel's HIGH / MODERATE / LOW viability word -- not
+    by the market's saturation tier, which can disagree with a plan
+    score: a plan with almost no capital in a quiet market is a low
+    plan viability in a green "Low saturation" market."""
+    if forecast is None:
+        return {"viability_score": None, "cluster_label": None, "is_plan_score": False, "band": None}
+    score = forecast.viability_score
+    band = None
+    if score is not None:
+        value = float(score)
+        band = "good" if value >= 6.5 else ("moderate" if value >= 4 else "low")
+    return {
+        "viability_score": score,
+        "cluster_label": forecast.cluster_label,
+        "is_plan_score": not _forecast_predates_plan_model(forecast),
+        "band": band,
+    }
+
+
+# The Trash dialog's "Moved to Trash on <date>" is shown in Philippine
+# time, like the audit trail and the forum (admin_controller /
+# forum_controller define the same offset): archived_at is stored in UTC
+# (HiddenWhenArchived.archive uses datetime.utcnow), so a plan trashed
+# at 07:00 in Tarlac would otherwise read as trashed the day before. A
+# fixed +8 is exact -- the Philippines has no daylight saving time.
+DISPLAY_UTC_OFFSET = timedelta(hours=8)
+
+
+def _trashed_plans_for(user_id):
+    """This user's plans in Trash, newest-trashed first, each with its
+    last viability score -- for the Trash dialog on Home.
+
+    include_archived is the explicit escape hatch from the global
+    archive filter (app/models/archive.py); without it these rows are
+    invisible to every query, which is exactly what keeps a trashed plan
+    off every other page."""
+    profiles = (
+        SmeProfile.query.execution_options(include_archived=True)
+        .filter(SmeProfile.user_id == user_id, SmeProfile.archived_at.isnot(None))
+        .order_by(SmeProfile.archived_at.desc(), SmeProfile.sme_id.desc())
+        .all()
+    )
+    latest = _latest_forecasts_by_plan(profiles)
+    return [
+        {
+            "profile": profile,
+            # Labelled "last viability" or "last market score" by what
+            # the stored row actually holds -- see _score_summary().
+            **_score_summary(latest.get(profile.sme_id)),
+            "archived_local": profile.archived_at + DISPLAY_UTC_OFFSET if profile.archived_at else None,
+        }
+        for profile in profiles
+    ]
+
+
+def _wants_json():
+    """True when the caller is the Home page's script rather than a plain
+    form post.
+
+    fetch() callers say so with `Accept: application/json` (or the
+    conventional X-Requested-With header). A browser submitting the form
+    with scripting off sends an Accept that prefers text/html, and gets
+    a flash and a redirect back to Home instead of a page of raw JSON --
+    which is what the old Settings form showed anyone without JS.
+    """
+    if (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest":
+        return True
+    accept = request.accept_mimetypes
+    if not accept.provided:
+        return False
+    return accept.best_match(("text/html", "application/json")) == "application/json"
+
+
+def _plan_refusal(status, message):
+    """abort() with the right body for the caller: JSON for the page's
+    script (so it can show the reason inside the dialog), the ordinary
+    error page otherwise."""
+    if _wants_json():
+        abort(make_response(jsonify({"success": False, "error": message}), status))
+    abort(status)
+
+
+def _owned_plan(sme_id, *, allow_trashed=False):
+    """The plan `sme_id` IF it belongs to the signed-in user, or a
+    refusal.
+
+    Looked up with get_including_archived() so a plan in Trash is FOUND
+    -- and therefore ownership-checked -- rather than reported missing by
+    the archive filter. That ordering is the IDOR guard: someone else's
+    plan is refused (403) whether it is live or in their Trash, and the
+    existence of a trashed plan is never a way around the check.
+
+    A plan in Trash can be restored (allow_trashed=True) but not edited:
+    editing it would re-forecast a plan the owner removed. Restore first.
+    """
+    profile = get_including_archived(SmeProfile, sme_id)
+    if profile is None:
+        _plan_refusal(404, "That plan does not exist.")
+    if profile.user_id != current_user.user_id:
+        _plan_refusal(403, "That plan is not yours.")
+    if profile.is_archived and not allow_trashed:
+        _plan_refusal(404, "That plan is in Trash. Restore it first.")
+    return profile
+
+
 @sme_bp.route("/home")
 @role_required("SME")
 def home():
@@ -194,7 +343,7 @@ def home():
         if featured_forecast is None:
             featured_forecast = generate_forecast_for_profile(selected_plan)
             latest_by_plan[selected_plan.sme_id] = featured_forecast
-        elif _forecast_predates_lgu_data(featured_forecast):
+        elif _forecast_predates_lgu_data(featured_forecast) or _forecast_predates_plan_model(featured_forecast):
             # An LGU upload has landed since this forecast was written,
             # so its numbers -- and the recommendation text quoting
             # them -- describe a city that no longer matches the
@@ -202,6 +351,10 @@ def home():
             # permits and the output changes" true on the page the SME
             # actually lands on, rather than only after they happen to
             # edit their plan.
+            #
+            # Same for a forecast written before the plan viability
+            # model: it has no capital runway, break-even or explanation
+            # to show, so it is re-run once and the new row carries them.
             featured_forecast = generate_forecast_for_profile(selected_plan)
             latest_by_plan[selected_plan.sme_id] = featured_forecast
 
@@ -212,16 +365,24 @@ def home():
     quarterly_outlook = None
     featured_recommendation = None
     if featured_forecast:
+        # sme_profile: each quarter's viability is the PLAN model re-run
+        # with that quarter's projected saturation and competitor count,
+        # every plan input (capital, staff, prices...) held -- so Q1
+        # agrees with the plan viability on the gauge above it.
         quarterly_outlook = project_quarterly_outlook(
             featured_forecast.saturation_index,
             featured_forecast.viability_score,
             featured_forecast.input_location,
             industry_type=featured_forecast.input_industry_type,
+            sme_profile=selected_plan,
         )
         # forecast_result.recommendation is JSON-serialized structured
         # data (see recommendation_service.py) -- parse it back into
-        # {headline, opportunity_type, summary, reasons, risks} so this
-        # panel shows readable text instead of a raw JSON string.
+        # {headline, opportunity_type, summary, reasons, risks,
+        # forecast, explanation} so this panel shows readable text
+        # instead of a raw JSON string. "forecast" is the trained
+        # model's payload (capital runway, break-even, drivers); it is
+        # None on a row older than the plan model.
         featured_recommendation = parse_recommendation(featured_forecast.recommendation)
 
     # COLD START. The "LGU Recommendations" panel ranks barangays
@@ -235,15 +396,16 @@ def home():
 
     has_lgu_data = has_active_lgu_data()
 
-    # The choice bar: every plan with its own market score, so the owner
-    # can compare plans at a glance and switch without re-entering any.
+    # The choice bar: every plan with its own score, so the owner can
+    # compare plans at a glance and switch without re-entering any. A
+    # plan whose newest forecast predates the plan viability model shows
+    # it as a market score, honestly labelled, until it is opened (which
+    # re-runs it) -- see _score_summary().
     plan_choices = []
     for profile in profiles:
-        latest = latest_by_plan.get(profile.sme_id)
         plan_choices.append({
             "profile": profile,
-            "viability_score": latest.viability_score if latest else None,
-            "cluster_label": latest.cluster_label if latest else None,
+            **_score_summary(latest_by_plan.get(profile.sme_id)),
             "selected": selected_plan is not None and profile.sme_id == selected_plan.sme_id,
         })
 
@@ -252,6 +414,9 @@ def home():
         profiles=profiles,
         selected_plan=selected_plan,
         plan_choices=plan_choices,
+        # The Trash dialog: plans moved to Trash, restorable. Read with
+        # include_archived -- nothing else on this page can see them.
+        trashed_plans=_trashed_plans_for(current_user.user_id),
         business_types=BUSINESS_TYPES,
         business_stages=BUSINESS_STAGES,
         locations=locations,
@@ -275,9 +440,9 @@ def analyze():
     generate_forecast_for_profile).
 
     Parsing is plan_params.parse_plan_form() -- the same parser the
-    sign-up wizard and the Settings Edit form use, so the three cannot
-    disagree about what a plan is (monthly revenue included: none of
-    them collects it any more)."""
+    sign-up wizard and the Home page's Edit dialog use, so the three
+    cannot disagree about what a plan is (capital required, monthly
+    revenue not collected by any of them)."""
     from app.services.plan_params import apply_plan_data, parse_plan_form
 
     data, errors = parse_plan_form(request.form)
@@ -303,18 +468,26 @@ def analyze():
 @sme_bp.route("/home/plans/<int:sme_id>/update", methods=["POST"])
 @role_required("SME")
 def update_plan(sme_id):
-    """Powers the inline Edit form in Settings > Business Preferences
-    (shared/settings.html) -- called via fetch(), so this returns JSON
-    and never redirects, which is what lets the pane update the edited
-    row in place instead of reloading the whole Settings page.
+    """The Edit dialog on a Home plan chip (the pencil icon).
 
-    The form also has a real action= pointing here, so with scripting
-    off the submit still saves; the visitor just sees the JSON."""
+    With scripting on, the dialog posts here over fetch() asking for
+    JSON: a validation error comes back as 400 {"success": false,
+    "error": ...} and is shown INSIDE the dialog without losing what was
+    typed; success returns {"success": true, "plan": ...} and the page
+    reloads onto the edited plan, because every panel on Home (score,
+    map, forecast, quarterly chart) depends on it.
+
+    With scripting off it is an ordinary form post: errors are flashed
+    and success is flashed, and either way the browser is sent back to
+    Home on that plan -- never left looking at raw JSON, which is what
+    the old Settings form showed.
+
+    A plan in Trash cannot be edited (404 -- restore it first), and a
+    plan that is not yours is refused -- see _owned_plan()."""
     from app.services.plan_params import apply_plan_data, parse_plan_form
 
-    profile = SmeProfile.query.get_or_404(sme_id)
-    if profile.user_id != current_user.user_id:
-        abort(403)
+    profile = _owned_plan(sme_id)
+    wants_json = _wants_json()
 
     form = request.form.copy()  # a mutable MultiDict; getlist() still works
     # A missing stage picker means "unchanged", not "reset to startup".
@@ -323,7 +496,11 @@ def update_plan(sme_id):
 
     data, errors = parse_plan_form(form, keep_industry=profile.industry_type)
     if errors:
-        return jsonify({"success": False, "error": " ".join(errors)}), 400
+        if wants_json:
+            return jsonify({"success": False, "error": " ".join(errors), "errors": errors}), 400
+        for message in errors:
+            flash(message, "danger")
+        return redirect(url_for("sme.home", plan=profile.sme_id))
 
     # Keep a registration date the form did not send, rather than
     # re-dating an existing business to today on every edit.
@@ -333,31 +510,101 @@ def update_plan(sme_id):
     apply_plan_data(profile, data)
     db.session.commit()
     # Re-run the AI engine so the Home page's featured forecast reflects
-    # the edited industry/location/sub-category immediately.
+    # the edited plan -- every input feeds the plan viability model, so
+    # changing the capital or the staff count changes the forecast too.
     generate_forecast_for_profile(profile)
     log_action("update_plan", details=f"-> {profile.industry_type} @ {profile.location}", target=profile)
+    # Land on the edited plan without that landing being logged as a
+    # separate "switched plan" -- same as a newly added plan.
+    session[HOME_PLAN_SESSION_KEY] = profile.sme_id
 
-    return jsonify({"success": True, "plan": profile.to_dict()})
+    # Flashed on BOTH paths: the page's script reloads Home onto the
+    # plan after a JSON success, so the confirmation is shown there.
+    flash(f"\u201c{profile.business_name}\u201d updated \u2014 its forecast has been re-run.", "success")
+    if wants_json:
+        return jsonify({
+            "success": True,
+            "plan": profile.to_dict(),
+            "redirect": url_for("sme.home", plan=profile.sme_id),
+        })
+    return redirect(url_for("sme.home", plan=profile.sme_id))
+
+
+def _move_plan_to_trash(sme_id):
+    """Shared by trash_plan and the legacy delete_plan alias.
+
+    ARCHIVES the plan (archived_at/by/reason -- see
+    app/models/sme_profile.py); nothing is deleted. Its forecasts and
+    bookmarks are not touched at all, so restore brings them back as
+    they were. Note what that does and does not hide: every page that
+    lists plans (SmeProfile queries) drops the plan, but forecast_result
+    and plan_save rows carry no archive stamp of their own, so a count
+    that reads those tables WITHOUT joining to the plan still includes
+    them -- see the model's docstring. Trashing a plan that is already in
+    Trash changes nothing and is not logged twice (a double-clicked
+    button)."""
+    profile = _owned_plan(sme_id, allow_trashed=True)
+    name = profile.business_name
+
+    if not profile.is_archived:
+        profile.archive(current_user.user_id, "Moved to Trash from the Home page")
+        db.session.commit()
+        log_action("trash_plan", details=f"{profile.industry_type} @ {profile.location}", target=profile)
+
+    # The Home page remembers the plan being viewed; if that is the one
+    # just trashed, forget it, so Home falls back to the newest live
+    # plan instead of a plan it can no longer show.
+    if session.get(HOME_PLAN_SESSION_KEY) == profile.sme_id:
+        session.pop(HOME_PLAN_SESSION_KEY, None)
+
+    message = f"\u201c{name}\u201d moved to Trash."
+    if _wants_json():
+        return jsonify({"success": True, "message": message, "plan": profile.to_dict(),
+                        "redirect": url_for("sme.home")})
+    flash(message, "success")
+    return redirect(url_for("sme.home"))
+
+
+@sme_bp.route("/home/plans/<int:sme_id>/trash", methods=["POST"])
+@role_required("SME")
+def trash_plan(sme_id):
+    """The bin icon on a Home plan chip (after its confirm dialog).
+    Moves the plan to Trash -- see _move_plan_to_trash()."""
+    return _move_plan_to_trash(sme_id)
 
 
 @sme_bp.route("/home/plans/<int:sme_id>/delete", methods=["POST"])
 @role_required("SME")
 def delete_plan(sme_id):
-    """Powers the Delete button in Settings > Business Preferences.
-    Deleting a SmeProfile
-    cascades (ORM-level cascade="all, delete-orphan") to its
-    ForecastResult rows, which in turn cascades to their PlanSave rows
-    -- see app/models/sme_profile.py and app/models/forecast_result.py."""
-    profile = SmeProfile.query.get_or_404(sme_id)
-    if profile.user_id != current_user.user_id:
-        abort(403)
+    """LEGACY ALIAS. This URL used to hard-delete the plan, cascading
+    through its forecasts and every bookmark on them. It is kept so an
+    old cached page or script still works, but it now does exactly what
+    the Trash button does: archive, never delete."""
+    return _move_plan_to_trash(sme_id)
 
-    details = f"sme_id={profile.sme_id} {profile.industry_type}@{profile.location}"
-    db.session.delete(profile)
-    db.session.commit()
-    log_action("delete_plan", details=details)
 
-    return jsonify({"success": True})
+@sme_bp.route("/home/plans/<int:sme_id>/restore", methods=["POST"])
+@role_required("SME")
+def restore_plan(sme_id):
+    """The restore icon in the Trash dialog. Clears the archive stamp,
+    which brings the plan -- and, because they were never touched, all
+    its forecasts and bookmarks -- back onto every page. Lands on the
+    restored plan."""
+    profile = _owned_plan(sme_id, allow_trashed=True)
+    name = profile.business_name
+
+    if profile.is_archived:
+        profile.restore()
+        db.session.commit()
+        log_action("restore_plan", details=f"{profile.industry_type} @ {profile.location}", target=profile)
+
+    session[HOME_PLAN_SESSION_KEY] = profile.sme_id
+    message = f"\u201c{name}\u201d restored."
+    if _wants_json():
+        return jsonify({"success": True, "message": message, "plan": profile.to_dict(),
+                        "redirect": url_for("sme.home", plan=profile.sme_id)})
+    flash(message, "success")
+    return redirect(url_for("sme.home", plan=profile.sme_id))
 
 
 @sme_bp.route("/saturation-map")

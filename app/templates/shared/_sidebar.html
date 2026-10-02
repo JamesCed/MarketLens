@@ -74,33 +74,44 @@
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.datasets' }}" href="{{ url_for('admin.datasets') }}" data-tour="nav-datasets">
         <i class="bi bi-hdd-stack"></i> Datasets
       </a>
-      {# bi-sliders, not a second bi-gear: personal "Settings" sits a few
-         rows below, and the same icon twice in one list reads as the
-         same destination. #}
+      {# bi-sliders, not a second bi-gear: personal "Settings" sits just
+         below, in the footer, and the same icon twice in one sidebar
+         reads as the same destination. #}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.settings' }}" href="{{ url_for('admin.settings') }}" data-tour="nav-system-settings">
         <i class="bi bi-sliders"></i> System Settings
       </a>
     {% endif %}
 
-    <a class="dss-nav-link {{ 'active' if request.endpoint == 'profile.settings' }}" href="{{ url_for('profile.settings') }}" data-tour="nav-settings">
-      <i class="bi bi-gear"></i> Settings
-    </a>
-
+    {# Settings is NOT in this list any more -- it sits in the footer
+       below, directly above Support. See the note there. #}
   </nav>
 
-  {# Support lives in the FOOTER rather than the nav list: it is help,
-     not a seventh destination, and sitting below the divider says that
-     without needing a label. It also replaces the old "TARLAC CITY LGU
-     DEMO" caption, which said nothing a visitor could act on. #}
+  {# The FOOTER holds what looks after the account and the person using
+     it, rather than the market: Settings, then Support. Sitting below
+     the divider says "not another page about Tarlac City" without
+     needing a label, and it keeps the list above to the pages a
+     visitor actually works in. (It also replaced the old "TARLAC CITY
+     LGU DEMO" caption, which said nothing a visitor could act on.)
+
+     Settings is a real link, so it keeps the active highlight and
+     data-tour="nav-settings" it had in the list above. It borrows
+     .dss-nav-support so it matches Support exactly (same size, same
+     muted footer colour), and main.js closes the phone menu for it
+     either way -- as a link and as a .dss-nav-support. mb-1 is the gap
+     between the two: .dss-nav-support zeroes the link's own margin.
+
+     "Take the tour" used to be a button here. It is now Settings ›
+     Tutorial, next to the rest of what an account can change about how
+     MarketLens behaves for it. New accounts are still asked on their
+     first page whether they want the tour (shared/_onboarding.html) --
+     moving the replay button changed nothing about that. #}
   <div class="dss-sidebar-footer">
-    {# Replays the first-time walkthrough from step 1 (static/js/tour.js
-       binds [data-tour-replay]). Help, like Support, so it lives down
-       here with it -- and it borrows .dss-nav-support so it looks like
-       Support and main.js closes the phone menu when it is pressed. #}
-    <button type="button" class="dss-nav-link dss-nav-support dss-nav-tour"
-            data-tour-replay data-tour="nav-tour">
-      <i class="bi bi-signpost-2"></i> Take the tour
-    </button>
+    {% set on_settings = request.endpoint == 'profile.settings' %}
+    <a class="dss-nav-link dss-nav-support mb-1 {{ 'active' if on_settings }}"
+       href="{{ url_for('profile.settings') }}" data-tour="nav-settings"
+       {{ 'aria-current="page"'|safe if on_settings }}>
+      <i class="bi bi-gear"></i> Settings
+    </a>
     <button type="button" class="dss-nav-link dss-nav-support"
             data-bs-toggle="modal" data-bs-target="#supportModal">
       <i class="bi bi-question-circle"></i> Support
@@ -130,7 +141,12 @@
         <dl class="row small mb-3">
           {% if current_user.is_sme() %}
           <dt class="col-5">Home</dt>
-          <dd class="col-7">Search a barangay or industry and see its market score.</dd>
+          <dd class="col-7">
+            Search a barangay or industry and see its market score. Your business
+            plans live here too: the pencil edits a plan (and re-runs its forecast),
+            the bin moves it to Trash, and the Trash button brings it back &mdash;
+            nothing is deleted for good.
+          </dd>
           {% endif %}
           <dt class="col-5">Saturation Map</dt>
           <dd class="col-7">All 76 barangays shaded by how crowded the chosen industry already is.</dd>
@@ -139,11 +155,12 @@
           {% if current_user.is_sme() %}
           <dt class="col-5">Recommendations</dt>
           <dd class="col-7">Where the AI engine suggests entering, and why.</dd>
-          <dt class="col-5">Business Preferences</dt>
-          <dd class="col-7">Your saved plans. Editing one re-runs its forecast.</dd>
           {% endif %}
           <dt class="col-5">Settings</dt>
-          <dd class="col-7">Your profile, notifications and the light/dark theme.</dd>
+          <dd class="col-7">
+            Your profile, notifications and the light/dark theme &mdash; and
+            <em>Tutorial</em>, which replays the guided tour of MarketLens from the start.
+          </dd>
         </dl>
 
         <h6 class="mb-2">Where the numbers come from</h6>

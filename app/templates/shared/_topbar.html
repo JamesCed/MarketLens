@@ -44,12 +44,11 @@
       <ul class="dropdown-menu dropdown-menu-end">
         <li><span class="dropdown-item-text text-muted small">{{ current_user.role|upper }} ACCOUNT</span></li>
         <li><a class="dropdown-item" href="{{ url_for('profile.settings', section='profile') }}"><i class="bi bi-person-circle"></i> Profile</a></li>
-        {% if current_user.is_sme() %}
-          {# Where "My Plans" went. The button used to sit in the bar
-             above; the plans and every control over them now live in
-             Settings, so this is the shortcut straight to that pane. #}
-          <li><a class="dropdown-item" href="{{ url_for('profile.settings', section='plans') }}"><i class="bi bi-briefcase"></i> Business Preferences</a></li>
-        {% endif %}
+        {# No "Business Preferences" item any more. The plans, and the
+           edit / move-to-Trash / restore controls over them, are on the
+           Home page itself, next to the plan they act on -- one click
+           from the sidebar's Home, so a shortcut here would only be a
+           second way to the same place. #}
         <li><a class="dropdown-item" href="{{ url_for('profile.settings', section='appearance') }}"><i class="bi bi-palette"></i> Appearance</a></li>
         <li><a class="dropdown-item" href="{{ url_for('profile.settings') }}"><i class="bi bi-gear"></i> Settings</a></li>
         <li><hr class="dropdown-divider"></li>

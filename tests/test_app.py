@@ -53,6 +53,8 @@ def test_register_and_login_sme(client, app):
             "industry_type": "Food and Beverage",
             "location": "Poblacion",
             "business_stage": "startup",
+            # Required since the plan viability model reads it.
+            "capital": "100000",
         },
         follow_redirects=True,
     )

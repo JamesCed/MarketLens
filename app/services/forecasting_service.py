@@ -41,10 +41,18 @@ sections):
      the note there and in app/ml/train_model.py
   6. Confidence level (0-100) <- agreement between the Random Forest's
      individual trees (low spread across estimators = high confidence)
-  7. Viability score (0-10, shown to users) <- derived from saturation
+  7. Viability score (0-10, shown to users):
+       - for a MARKET (compute_scores: map, trend reports, location
+         cards) <- (100 - saturation) / 10, as it always was;
+       - for a PLAN (generate_forecast_for_profile) <- stage 2, the
+         trained Plan Viability Model, which adds the plan's capital,
+         staff, stage, price list, offering and idea to the market
+         figures above. See app/services/plan_forecast_service.py and
+         Reference/FORECAST_MODEL.md.
 """
 
 import os
+import threading
 from datetime import date
 
 import joblib
@@ -78,6 +86,8 @@ PLACEHOLDER_ZONING_NOTE = (
 )
 
 _MODEL_CACHE = {"rf": None, "loaded": False}
+# Guards the one-time load of rf_model.pkl -- see _load_models.
+_MODEL_LOCK = threading.Lock()
 
 # How many SIMULATED market_data rows a single web request is allowed to
 # re-try against the live Google Places API (see
@@ -261,16 +271,31 @@ def _model_dir():
 
 def _load_models():
     """Lazily load the trained Random Forest into memory (once per
-    process)."""
+    process).
+
+    "loaded" is set only AFTER the model is in the cache, under a lock.
+    It used to be set first, before joblib.load() had read the file, so
+    under gunicorn's --threads 4 a second request arriving mid-load saw
+    "loaded" with no model yet and silently scored its market with the
+    formula fallback ("formula_v1") -- and a plan forecast made that way
+    is stored. Double-checked: once loaded, no request touches the lock.
+    A file that fails to load still marks the cache loaded (in the
+    finally), so -- as before -- the failing call raises and later ones
+    use the formula rather than retrying a broken file on every request.
+    """
     if _MODEL_CACHE["loaded"]:
         return
-    _MODEL_CACHE["loaded"] = True
-
-    rf_path = os.path.join(_model_dir(), "rf_model.pkl")
-    if os.path.exists(rf_path):
-        model = joblib.load(rf_path)
-        _pin_to_one_thread(model)
-        _MODEL_CACHE["rf"] = model
+    with _MODEL_LOCK:
+        if _MODEL_CACHE["loaded"]:
+            return
+        try:
+            rf_path = os.path.join(_model_dir(), "rf_model.pkl")
+            if os.path.exists(rf_path):
+                model = joblib.load(rf_path)
+                _pin_to_one_thread(model)
+                _MODEL_CACHE["rf"] = model
+        finally:
+            _MODEL_CACHE["loaded"] = True
 
 
 def _pin_to_one_thread(rf_model):
@@ -1015,6 +1040,27 @@ def generate_forecast_for_profile(sme_profile):
     subcategory_analysis for the page to compare against. With no
     measured sub-category count the adjustment is exactly nothing.
 
+    THE PLAN VIABILITY MODEL (stage 2). The market figures above are
+    then handed, with every business parameter on the plan (capital,
+    employees, stage, price list, offering, idea) and the barangay's
+    real population and rent, to the trained Plan Viability Model --
+    plan_forecast_service.forecast_plan(). What is STORED on the row
+    is therefore:
+
+        viability_score  -- the PLAN's viability (PVI / 10), not
+                            (100 - saturation) / 10 any more. Two plans
+                            in the same market now differ when their
+                            capital, staffing or pricing do.
+        saturation_index -- still MSI*, the market's (the early warning
+                            and the cluster tier keep reading it).
+        confidence_level -- the lower of the two stages' confidences.
+        model_version    -- both stages, e.g. "rf_v1+plan_rf_v1".
+
+    The full payload (inputs, financials, scorecard, the exact
+    per-driver explanation) travels in the recommendation JSON under
+    "forecast", where the narrator -- Gemini first, see llm_service --
+    transcribes it into words without changing a figure.
+
     The stored recommendation is generated from the SME's OWN input
     business parameters (sub-category, offering, idea, price list,
     capital, employees, stage)
@@ -1074,15 +1120,45 @@ def generate_forecast_for_profile(sme_profile):
         )
         competitor_sample = [r["name"] for r in sample_results[:5] if r.get("name")]
 
+    # ---- Stage 2: the Plan Viability Model ----
+    from app.services.plan_forecast_service import (
+        combined_confidence,
+        combined_model_version,
+        forecast_plan,
+    )
+
+    population = get_real_population(sme_profile.location) or 0
+    plan_forecast = forecast_plan(
+        sme_profile, scores, market_row, population, subcategory_analysis=subcategory_analysis,
+    )
+    # From here on, `scores` describes the PLAN: its viability is the
+    # plan model's, its confidence the weaker of the two stages', its
+    # version names both. Saturation and the cluster tier stay the
+    # market's -- they are measurements of the market, and the early
+    # warning below is about the market.
+    scores = {
+        **scores,
+        "viability_score": plan_forecast["plan"]["viability_score"],
+        "confidence_level": combined_confidence(plan_forecast),
+        "model_version": combined_model_version(scores["model_version"], plan_forecast["plan"]["model_version"]),
+    }
+
     context = build_recommendation_context(
         sme_profile,
         scores,
         competitor_sample=competitor_sample,
         competitor_simulated=competitor_simulated,
-        population=get_real_population(sme_profile.location) or 0,
+        population=population,
         subcategory_analysis=subcategory_analysis,
+        plan_forecast=plan_forecast,
     )
-    recommendation_text = serialize_recommendation(build_recommendation(context))
+    recommendation = build_recommendation(context)
+    # The payload is the MODEL's, never the narrator's words: whatever
+    # build_recommendation returned, the stored "forecast" is the one
+    # forecast_plan() computed.
+    if not isinstance(recommendation.get("forecast"), dict):
+        recommendation = {**recommendation, "forecast": plan_forecast}
+    recommendation_text = serialize_recommendation(recommendation)
 
     forecast = ForecastResult(
         sme_id=sme_profile.sme_id,
