@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Recommendations{% endblock %}
-{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, explanation_paragraph, competitor_insight_panel %}
+{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, explanation_paragraph, competitor_insight_panel, ai_writing_status %}
 
 {% block content %}
 <div class="mb-4">
@@ -77,9 +77,13 @@
           <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
             <i class="bi bi-lightbulb-fill text-warning fs-4"></i>
             <h5 class="mb-0">{{ profile.business_name }}</h5>
-            {% if rec.generated_by.startswith('llm:') %}
-              <span class="badge dss-rec-badge-ai"><i class="bi bi-stars"></i> AI-generated</span>
-            {% endif %}
+            <span data-ai-region="{{ f.forecast_id }}" data-ai-part="badge">
+              {% if rec.generated_by.startswith('llm:gemini') %}
+                <span class="badge dss-rec-badge-ai"><i class="bi bi-stars"></i> Written by Gemini</span>
+              {% elif rec.generated_by.startswith('llm:') %}
+                <span class="badge dss-rec-badge-ai"><i class="bi bi-stars"></i> AI-generated</span>
+              {% endif %}
+            </span>
           </div>
           <div class="d-flex gap-3 small text-muted flex-wrap">
             <span><i class="bi bi-geo-alt"></i> {{ profile.location }}</span>
@@ -115,8 +119,14 @@
         </div>
       </div>
 
-      {% if rec.headline %}<p class="fw-semibold mb-2">{{ rec.headline }}</p>{% endif %}
-      {% if rec.summary %}<p class="text-muted small mb-3">{{ rec.summary }}</p>{% endif %}
+      {# data-ai-region/-part: the parts Gemini writes, repainted in place
+         when its text arrives after the page has rendered
+         (forecast_transcript.js). #}
+      <div data-ai-region="{{ f.forecast_id }}" data-ai-part="verdict">
+        {% if rec.headline %}<p class="fw-semibold mb-2">{{ rec.headline }}</p>{% endif %}
+        {% if rec.summary %}<p class="text-muted small mb-3">{{ rec.summary }}</p>{% endif %}
+        {{ ai_writing_status(rec, f) }}
+      </div>
       {# The forecast transcript: the trained models' computation put
          into words -- by Gemini when the AI is on and its wording passed
          the number check, else the rule-based model summary, which the
@@ -125,7 +135,9 @@
       {{ explanation_paragraph(rec, forecast=f) }}
       {# The full competitor insight -- the Planning page shows its short
          form and links here. #}
-      {{ competitor_insight_panel(rec, full=True) }}
+      <div data-ai-region="{{ f.forecast_id }}" data-ai-part="insight">
+        {{ competitor_insight_panel(rec, full=True) }}
+      </div>
       {{ subcategory_compare(rec) }}
 
       <!-- Key Metrics -- real, derived figures (no fabricated ranges):
@@ -157,7 +169,7 @@
       </div>
 
       <!-- Why This Works / Considerations -->
-      <div class="row g-4">
+      <div class="row g-4" data-ai-region="{{ f.forecast_id }}" data-ai-part="reasons">
         <div class="col-md-6 dss-rec-why">
           <h6 class="fw-bold d-flex align-items-center gap-2"><i class="bi bi-graph-up"></i> Why This Works</h6>
           {% if rec.reasons %}
@@ -180,7 +192,9 @@
         </div>
       </div>
 
-      {{ innovation_panel(rec) }}
+      <div data-ai-region="{{ f.forecast_id }}" data-ai-part="innovation">
+        {{ innovation_panel(rec) }}
+      </div>
       {% if profile.offering_items %}
         <details class="dss-subplan mt-3">
           <summary><i class="bi bi-list-ul"></i> Your price list ({{ profile.offering_items|length }} item{{ 's' if profile.offering_items|length != 1 }})</summary>

@@ -99,17 +99,27 @@ TRANSCRIPT_MAX_CHARS = 2000
 # unverifiable figures have been dropped: fewer than this and what is
 # left is a fragment, and the model summary is the better thing to show.
 TRANSCRIPT_MIN_SENTENCES = 3
-# After a failed upgrade of a stored forecast's transcript, how long the
-# page waits before asking again. A quota or an outage does not clear in
-# seconds, and every page view retrying it would spend whatever is left
-# of the free tier on requests that fail.
-TRANSCRIPT_RETRY_AFTER = timedelta(minutes=5)
+# After a failed upgrade of a stored forecast's AI text, how long the
+# page waits before asking again. Each upgrade already retries a busy
+# Gemini several times (llm_service), so a failure means a minute of
+# trouble at least -- and every page view retrying it at once would
+# spend whatever is left of the free tier's per-minute quota on requests
+# that fail. Long enough for that window to pass, short enough that an
+# owner looking at the plan sees Gemini's text appear (the page itself
+# asks again when the wait is over, see forecast_transcript.js).
+TRANSCRIPT_RETRY_AFTER = timedelta(minutes=2)
 # The version of the Gemini request a failure stamp was made with. A
-# stamp from an OLDER request (the one that still sent temperature, see
-# llm_service._gemini_generation_config) says nothing about whether the
-# current request works, so it is ignored and the forecast is retried at
-# once. Bump this whenever the request itself is fixed.
-TRANSCRIPT_REQUEST_VERSION = 2
+# stamp from an OLDER request says nothing about whether the current
+# one works, so it is ignored and the forecast is retried at once. Bump
+# this whenever the request itself is fixed. 3: retried sends, the
+# longer timeout, and the recommendation upgraded with the transcript.
+TRANSCRIPT_REQUEST_VERSION = 3
+# The time one forecast run (plan saved or edited) may spend on the AI,
+# and the time one background upgrade may (POST /api/forecasts/<id>/
+# transcript). Each covers the recommendation call and the dedicated
+# transcript call together -- see llm_service.ai_time_budget.
+AI_TIME_BUDGET_AT_FORECAST = 80
+AI_TIME_BUDGET_FOR_UPGRADE = 95
 
 
 # ---------------------------------------------------------------------
@@ -642,7 +652,10 @@ def _rule_based_competitor_insight(context, innovation):
 def _choose_competitor_insight(llm_value, writer, rule_insight, context):
     """The AI's insight when it is present and quotes only figures it was
     given (the same check as the transcript), else the rule-based one.
-    The counts shown beside it are always the measured ones."""
+    A sentence quoting a figure it was not given is dropped rather than
+    the whole insight, as long as both the short and the full form still
+    say something. The counts shown beside it are always the measured
+    ones."""
     if not isinstance(llm_value, dict):
         return rule_insight
     short = " ".join(str(llm_value.get("short") or "").split())
@@ -650,7 +663,15 @@ def _choose_competitor_insight(llm_value, writer, rule_insight, context):
     if not short or not detail or len(short) > 400 or len(detail) > TRANSCRIPT_MAX_CHARS:
         return rule_insight
     if ungrounded_numbers(short + " " + detail, context):
-        return rule_insight
+        allowed = _grounding_numbers(context)
+
+        def grounded_sentences(text):
+            return " ".join(sentence for sentence in _sentences(text)
+                            if all(_matches(figure, allowed) for figure in _numbers_in(sentence)))
+
+        short, detail = grounded_sentences(short), grounded_sentences(detail)
+        if not short or not detail:
+            return rule_insight
     return {**rule_insight, "short": short, "detail": detail, "generated_by": writer}
 
 
@@ -1380,70 +1401,165 @@ def build_recommendation(context):
         from app.services import llm_service
         from app.services.llm_service import generate_recommendation_json
 
-        llm_payload = generate_recommendation_json(context)
-        if llm_payload:
-            rule_innovation = recommendation["innovation"]
-            rule_explanation = recommendation["explanation"]
-            llm_payload = dict(llm_payload)
-            llm_innovation = llm_payload.pop("innovation", None)
-            llm_explanation = llm_payload.pop("explanation", None)
-            llm_competitor_insight = llm_payload.pop("competitor_insight", None)
-            llm_model = llm_payload.pop("model", None)
-            llm_payload.pop("forecast", None)
-            recommendation = dict(llm_payload)
-            # The sub-category figures are measurements, never the
-            # model's words -- they always come from the context.
-            recommendation["subcategory_analysis"] = context.get("subcategory_analysis")
-            # Likewise the forecast: the trained model's output, never
-            # anything the LLM said about it.
-            recommendation["forecast"] = _forecast(context)
-            # "llm:gemini:gemini-3.8-flash" -- the provider AND the exact
-            # model, because "explained by Gemini" should be checkable.
-            writer = llm_payload.get("generated_by") or "llm"
-            if llm_model:
-                writer = f"{writer}:{llm_model}"
-            recommendation["explanation"] = _choose_explanation(
-                llm_explanation, writer, rule_explanation, context
-            )
-            if llm_innovation and rule_innovation.get("has_idea"):
-                # The LLM judges the idea; the differentiation need stays
-                # the one read from the saturation model.
-                recommendation["innovation"] = {
-                    **rule_innovation,
-                    "novelty": llm_innovation["novelty"],
-                    "summary": llm_innovation["summary"] or rule_innovation["summary"],
-                    "suggestions": llm_innovation["suggestions"] or rule_innovation["suggestions"],
-                    "generated_by": llm_payload.get("generated_by"),
-                }
-            else:
-                recommendation["innovation"] = rule_innovation
-            # Judged AFTER the innovation, so the rule-based fallback can
-            # name the novelty the AI just rated.
-            recommendation["competitor_insight"] = _choose_competitor_insight(
-                llm_competitor_insight, writer,
-                _rule_based_competitor_insight(context, recommendation["innovation"]), context,
-            )
+        with llm_service.ai_time_budget(AI_TIME_BUDGET_AT_FORECAST):
+            llm_payload = generate_recommendation_json(context)
+            if llm_payload:
+                recommendation = _apply_llm_payload(recommendation, llm_payload, context)
 
-        explanation = recommendation.get("explanation")
-        still_the_summary = isinstance(explanation, dict) and \
-            not str(explanation.get("generated_by") or "").startswith("llm:")
-        if _forecast(context) is not None and still_the_summary and \
-                (llm_payload or llm_service.gemini_transcription_available()):
-            transcript = llm_service.transcribe_forecast(context)
-            if transcript:
-                recommendation["explanation"] = transcript
-            else:
-                # Gemini was just asked and failed. Stamp it as
-                # mark_transcript_failed would, so the page that shows
-                # this forecast does not ask again straight away -- it
-                # waits TRANSCRIPT_RETRY_AFTER like any failed upgrade.
-                recommendation["explanation"] = {
-                    **explanation,
-                    "transcript_failed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    "transcript_failed_version": TRANSCRIPT_REQUEST_VERSION,
-                }
+            explanation = recommendation.get("explanation")
+            if _forecast(context) is not None and not _is_ai(explanation) and \
+                    (llm_payload or llm_service.gemini_transcription_available()):
+                transcript = llm_service.transcribe_forecast(context)
+                if transcript:
+                    recommendation["explanation"] = transcript
+
+        if _forecast(context) is not None and ai_text_pending(recommendation) and \
+                isinstance(recommendation.get("explanation"), dict):
+            # Gemini was just asked and failed for part of it. Stamp it
+            # as mark_transcript_failed would, so the page that shows
+            # this forecast waits TRANSCRIPT_RETRY_AFTER before asking
+            # again -- and then upgrades what is still the template.
+            recommendation["explanation"] = _stamped(recommendation["explanation"])
 
     return recommendation
+
+
+def _is_ai(part):
+    """True when a stored part (the recommendation, its explanation, its
+    competitor insight) was written by an AI: generated_by "llm:...". """
+    return isinstance(part, dict) and str(part.get("generated_by") or "").startswith("llm:")
+
+
+def _stamped(explanation, now=None):
+    return {**explanation,
+            "transcript_failed_at": (now or datetime.now(timezone.utc)).isoformat(timespec="seconds"),
+            "transcript_failed_version": TRANSCRIPT_REQUEST_VERSION}
+
+
+def _apply_llm_payload(recommendation, llm_payload, context):
+    """`recommendation` (the rule-based one, or a stored one) with the
+    LLM's answer from generate_recommendation_json merged in: its
+    headline, opportunity type, summary, reasons and risks; its read of
+    the owner's idea; its competitor insight and its transcript when they
+    pass the number check. What is a measurement -- the sub-category
+    analysis, the trained model's payload -- always comes from the
+    context, never from the LLM."""
+    rule_innovation = recommendation.get("innovation") or _rule_based_innovation(context)
+    rule_explanation = recommendation.get("explanation")
+    llm_payload = dict(llm_payload)
+    llm_innovation = llm_payload.pop("innovation", None)
+    llm_explanation = llm_payload.pop("explanation", None)
+    llm_competitor_insight = llm_payload.pop("competitor_insight", None)
+    llm_model = llm_payload.pop("model", None)
+    llm_payload.pop("forecast", None)
+    merged = dict(llm_payload)
+    # The sub-category figures are measurements, never the model's
+    # words -- they always come from the context.
+    merged["subcategory_analysis"] = context.get("subcategory_analysis")
+    # Likewise the forecast: the trained model's output, never anything
+    # the LLM said about it.
+    merged["forecast"] = _forecast(context)
+    # "llm:gemini:gemini-3.8-flash" -- the provider AND the exact model,
+    # because "explained by Gemini" should be checkable.
+    writer = llm_payload.get("generated_by") or "llm"
+    if llm_model:
+        writer = f"{writer}:{llm_model}"
+    if _is_ai(rule_explanation):
+        merged["explanation"] = rule_explanation  # already transcribed: kept
+    else:
+        merged["explanation"] = _choose_explanation(llm_explanation, writer, rule_explanation, context)
+    has_idea = bool(rule_innovation.get("has_idea"))
+    if llm_innovation and (llm_innovation["novelty"] if has_idea else llm_innovation["summary"]) \
+            and not ungrounded_numbers(llm_innovation["summary"], context):
+        # The LLM judges the idea -- or, with none on the plan yet, says
+        # what could set the business apart; the differentiation need
+        # stays the one read from the saturation model.
+        merged["innovation"] = {
+            **rule_innovation,
+            "novelty": llm_innovation["novelty"] if has_idea else None,
+            "summary": llm_innovation["summary"] or rule_innovation["summary"],
+            "suggestions": llm_innovation["suggestions"] or rule_innovation["suggestions"],
+            "generated_by": llm_payload.get("generated_by"),
+        }
+    else:
+        merged["innovation"] = rule_innovation
+    # Judged AFTER the innovation, so the rule-based fallback can name the
+    # novelty the AI just rated.
+    merged["competitor_insight"] = _choose_competitor_insight(
+        llm_competitor_insight, writer,
+        _rule_based_competitor_insight(context, merged["innovation"]), context,
+    )
+    return merged
+
+
+def ai_text_pending(rec):
+    """Which of a forecast's texts are still the template rather than the
+    AI's -- a set of "recommendation" (the headline, summary, reasons,
+    risks and the rest written with them) and "transcript" (the forecast
+    transcript). Empty for a forecast with no trained-model payload: it
+    has nothing an upgrade could write about (it is re-run instead)."""
+    if not isinstance(rec, dict) or not isinstance(rec.get("forecast"), dict):
+        return set()
+    pending = set()
+    if not str(rec.get("generated_by") or "").startswith("llm:"):
+        pending.add("recommendation")
+    explanation = rec.get("explanation")
+    if isinstance(explanation, dict) and explanation.get("text") and not _is_ai(explanation):
+        pending.add("transcript")
+    return pending
+
+
+def upgrade_ai_text(forecast_row, sme_profile):
+    """Ask the AI for whatever of a STORED forecast is still the template
+    -- see ai_text_pending -- and return the outcome, or None when the
+    row has no payload to write about:
+
+        {"raw": the recommendation JSON to store,
+         "changed": the parts the AI wrote just now,
+         "pending": the parts still the template (the failure is then
+                    stamped, see transcript_failed_recently)}
+
+    The recommendation is asked for first: one call writes it AND a
+    transcript (generate_recommendation_json). Whatever transcript is
+    still missing after it is asked for on its own (transcribe_forecast).
+    Nothing is re-scored -- the context is the stored payload's
+    (transcript_context) -- and the payload, the sub-category analysis
+    and every key not written here are stored back exactly as read."""
+    from app.services import llm_service
+
+    stored = stored_recommendation(forecast_row.recommendation)
+    context = transcript_context(forecast_row, sme_profile)
+    if stored is None or context is None:
+        return None
+    rec = parse_recommendation(forecast_row.recommendation)
+    pending = ai_text_pending(rec)
+    changed = set()
+    with llm_service.ai_time_budget(AI_TIME_BUDGET_FOR_UPGRADE):
+        if "recommendation" in pending:
+            llm_payload = llm_service.generate_recommendation_json(context)
+            if llm_payload:
+                base = {**rec, "innovation": rec.get("innovation") or _rule_based_innovation(context)}
+                merged = _apply_llm_payload(base, llm_payload, context)
+                for key in ("headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
+                            "innovation", "competitor_insight"):
+                    stored[key] = merged.get(key)
+                changed.add("recommendation")
+                if "transcript" in pending and _is_ai(merged.get("explanation")):
+                    stored["explanation"] = merged["explanation"]
+                    changed.add("transcript")
+        if "transcript" in pending and "transcript" not in changed:
+            transcript = llm_service.transcribe_forecast(context)
+            if transcript:
+                stored["explanation"] = {"text": transcript["text"], "generated_by": transcript["generated_by"]}
+                changed.add("transcript")
+    still = pending - changed
+    if still and isinstance(stored.get("explanation"), dict):
+        stored["explanation"] = _stamped(stored["explanation"])
+    elif not still and isinstance(stored.get("explanation"), dict):
+        # Done: the retry stamp of an earlier failure goes with it.
+        stored["explanation"] = {key: value for key, value in stored["explanation"].items()
+                                 if key not in ("transcript_failed_at", "transcript_failed_version")}
+    return {"raw": json.dumps(stored, ensure_ascii=False), "changed": changed, "pending": still}
 
 
 # ---------------------------------------------------------------------
@@ -1551,21 +1667,20 @@ def transcript_failed_recently(explanation, now=None):
 
 
 def transcript_upgrade_due(rec, now=None):
-    """Whether the page should ask for a Gemini transcript of this parsed
-    recommendation (parse_recommendation's dict): it carries the model's
-    payload, its transcript is still the rule-based model summary, no
-    upgrade failed in the last TRANSCRIPT_RETRY_AFTER, and Gemini can
-    plausibly be asked (llm_service.gemini_transcription_available --
-    the LLM switch on and a usable Gemini key). Registered as the
-    template global `forecast_transcript_due` (api_controller), read by
+    """Whether the page should ask Gemini to write what is still the
+    template in this parsed recommendation (parse_recommendation's
+    dict): it carries the model's payload, its recommendation or its
+    transcript is still rule-based (ai_text_pending), no upgrade failed
+    in the last TRANSCRIPT_RETRY_AFTER, and Gemini can plausibly be
+    asked (llm_service.gemini_transcription_available -- the LLM switch
+    on and a usable Gemini key). Registered as the template global
+    `forecast_transcript_due` (api_controller), read by
     shared/_plan_insights.html. The cheap checks come first, so a page
-    of AI-written transcripts never touches the key or the switch."""
-    if not isinstance(rec, dict) or not isinstance(rec.get("forecast"), dict):
+    of AI-written forecasts never touches the key or the switch."""
+    if not ai_text_pending(rec):
         return False
     explanation = rec.get("explanation")
     if not isinstance(explanation, dict) or not explanation.get("text"):
-        return False
-    if str(explanation.get("generated_by") or "").startswith("llm:"):
         return False
     if transcript_failed_recently(explanation, now):
         return False
@@ -1622,10 +1737,18 @@ def mark_transcript_failed(raw_text, now=None):
     if payload is None:
         raise ValueError("not a stored JSON recommendation")
     explanation = dict(payload.get("explanation") or {}) if isinstance(payload.get("explanation"), dict) else {}
-    explanation["transcript_failed_at"] = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
-    explanation["transcript_failed_version"] = TRANSCRIPT_REQUEST_VERSION
-    payload["explanation"] = explanation
+    payload["explanation"] = _stamped(explanation, now)
     return json.dumps(payload, ensure_ascii=False)
+
+
+def transcript_retry_in(explanation, now=None):
+    """Whole seconds until a failed upgrade may be retried (0 when it may
+    be now) -- what the page waits before asking again."""
+    when = _utc((explanation or {}).get("transcript_failed_at")) if isinstance(explanation, dict) else None
+    if when is None or not transcript_failed_recently(explanation, now):
+        return 0
+    now = now or datetime.now(timezone.utc)
+    return max(1, int((when + TRANSCRIPT_RETRY_AFTER - now).total_seconds()) + 1)
 
 
 def transcript_context(forecast_row, sme_profile):

@@ -57,13 +57,19 @@ configured provider, then the rest:
 
 Every transcript is checked number by number against the figures the
 model was shown (recommendation_service) before it is kept: a draft
-that quotes a figure it was not given is sent back ONCE with the
-offending figures listed, and if the rewrite still has some, the
-sentences carrying them are dropped -- the rest is kept only when it is
-still a real transcript (at least three sentences, stating the plan's
-viability). Otherwise the rule-based model summary stands. Every other
-call (alerts, opportunity cards, forum pre-screen) keeps the configured
-provider first.
+that quotes a figure it was not given is sent back with the offending
+figures listed (TRANSCRIPT_REPAIRS times), and if the rewrite still has
+some, the sentences carrying them are dropped -- the rest is kept only
+when it is still a real transcript (at least three sentences, stating
+the plan's viability). If too little survives, Gemini restates the
+model's own summary in its words. Only when all of that fails does the
+rule-based model summary stand -- and the page asks Gemini again
+later. Every other call (alerts, opportunity cards, forum pre-screen)
+keeps the configured provider first.
+
+A busy or slow Gemini is not a failure: a 429, a 5xx or a timeout is
+sent again (_generate_with_gemini), inside one time budget per request
+(ai_time_budget).
 
 Each entry point tries its first provider, then the others (so setting
 any one key alone just works); if NO key is set, or every call fails for
@@ -72,8 +78,11 @@ None and the caller (recommendation_service.py) keeps using its
 rule-based recommendation -- the page never breaks because of this.
 """
 
+import contextvars
 import json
 import re
+import time
+from contextlib import contextmanager
 from datetime import datetime
 
 _client_cache = {}
@@ -517,6 +526,14 @@ def _plan_detail_prompt(context):
             '(a JSON array of 2-3 short, practical ways to make the idea work). Do not invent market '
             'prices or sales figures.\n'
         )
+    else:
+        text += (
+            '\nThe owner has not said yet what makes the business different. ALSO include the key '
+            '"innovation": an object with "summary" (ONE sentence, max 35 words: how much this plan needs '
+            'something that sets it apart from the competitors above, and why) and "suggestions" (a JSON '
+            'array of 2-3 short, practical ideas that could make THIS business stand out in this '
+            'barangay). Do not invent market prices or sales figures.\n'
+        )
     return text
 
 
@@ -696,9 +713,84 @@ def _generate_with_anthropic(prompt):
 # (finishReason MAX_TOKENS). The JSON answers themselves stay short --
 # the length limits are in the prompts -- so the larger cap is headroom,
 # not longer answers.
+#
+# RETRIED, NOT GIVEN UP ON. Google answers a busy minute with HTTP 429
+# (the per-minute quota) or 503 (the model overloaded), and a slow
+# answer runs into the timeout -- all of them gone a few seconds later.
+# One such answer used to leave the plan with the template text: one
+# plan of three came back from Gemini and the other two did not. So a
+# temporary failure is sent again (GEMINI_ATTEMPTS sends in all), after
+# the wait Google asks for (its RetryInfo) or a short backoff. A wait
+# longer than GEMINI_MAX_RETRY_WAIT_SECONDS -- a spent DAILY quota --
+# is not waited out: nothing would differ a few seconds later.
+#
+# A 45-SECOND TIMEOUT. The recommendation call asks for the headline,
+# reasons, risks, competitor insight and transcript in one answer; 30 s
+# was not always enough for it.
 GEMINI_MAX_OUTPUT_TOKENS = 8192
 GEMINI_THINKING_LEVEL = "low"
-GEMINI_TIMEOUT_SECONDS = 30
+GEMINI_TIMEOUT_SECONDS = 45
+GEMINI_CONNECT_TIMEOUT_SECONDS = 10
+GEMINI_ATTEMPTS = 3
+# The most one call -- every send and wait of it -- may take, in seconds.
+GEMINI_CALL_BUDGET_SECONDS = 60
+GEMINI_MAX_RETRY_WAIT_SECONDS = 15
+# The backoff between sends when Google names no wait of its own.
+# Config GEMINI_RETRY_BACKOFF_SECONDS overrides it (the tests set zeros).
+GEMINI_RETRY_BACKOFF_SECONDS = (2, 6)
+_GEMINI_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# No new send is started with less than this left in the time budget.
+_MIN_SEND_SECONDS = 8
+_RETRY_DELAY_RE = re.compile(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"')
+
+
+# ---------------------------------------------------------------------
+# ONE TIME BUDGET PER REQUEST
+# ---------------------------------------------------------------------
+# A forecast run, or a page's background upgrade, may ask the AI several
+# times (the recommendation, the transcript, a rewrite, a retried send).
+# Every ask inside `with ai_time_budget(seconds):` shares one deadline,
+# so retries can never carry the request past what the server allows:
+# each send's timeout is cut to the time left, and a send that could not
+# finish in time is not started. Nested budgets keep the EARLIER
+# deadline.
+
+_DEADLINE = contextvars.ContextVar("ai_deadline", default=None)
+
+
+@contextmanager
+def ai_time_budget(seconds):
+    deadline = time.monotonic() + seconds
+    outer = _DEADLINE.get()
+    token = _DEADLINE.set(deadline if outer is None else min(outer, deadline))
+    try:
+        yield
+    finally:
+        _DEADLINE.reset(token)
+
+
+def seconds_left():
+    """Seconds left in the current ai_time_budget, or None outside one."""
+    deadline = _DEADLINE.get()
+    return None if deadline is None else deadline - time.monotonic()
+
+
+def _sleep(seconds):
+    if seconds > 0:
+        time.sleep(seconds)
+
+
+def _google_retry_wait(response):
+    """The wait Google asks for before a retry, in seconds, or None: its
+    RetryInfo ("retryDelay": "17s") or a Retry-After header."""
+    match = _RETRY_DELAY_RE.search(getattr(response, "text", "") or "")
+    if match:
+        return float(match.group(1))
+    try:
+        header = (getattr(response, "headers", None) or {}).get("Retry-After")
+        return float(header) if header is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _gemini_generation_config(thinking=True):
@@ -745,7 +837,7 @@ def _generate_with_gemini(prompt):
                 or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
     url = f"{base_url}/models/{model}:generateContent"
 
-    def _send(generation_config):
+    def _send(generation_config, read_timeout):
         return requests.post(
             url,
             # The key goes in a HEADER, never in the query string: a URL
@@ -753,26 +845,66 @@ def _generate_with_gemini(prompt):
             # credentials leak.
             headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
             json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": generation_config},
-            timeout=GEMINI_TIMEOUT_SECONDS,
+            timeout=(GEMINI_CONNECT_TIMEOUT_SECONDS, read_timeout),
         )
 
-    try:
-        response = _send(_gemini_generation_config(thinking=True))
-        # A model or endpoint that does not accept the thinking setting
-        # answers 400 naming it. That must not cost the transcript: ask
-        # once more without it rather than giving up on a working key.
-        if response.status_code == 400 and "thinking" in (response.text or "").lower():
-            response = _send(_gemini_generation_config(thinking=False))
-    except Exception as exc:  # noqa: BLE001
-        _record_failure("gemini", "api_call", f"model={model}: {type(exc).__name__}: {exc}")
-        return None
+    backoff = tuple(current_app.config.get("GEMINI_RETRY_BACKOFF_SECONDS", GEMINI_RETRY_BACKOFF_SECONDS))
+    # This call's own ceiling, whatever budget the caller set (or none):
+    # the retries of one call never hold a page for more than this.
+    call_deadline = time.monotonic() + GEMINI_CALL_BUDGET_SECONDS
 
-    if response.status_code != 200:
-        # Google's own message is the most useful thing there is here --
-        # it distinguishes a bad key from an unknown model from a spent
-        # quota, which is exactly what was impossible to tell before.
-        _record_failure("gemini", "api_call",
-                        f"model={model}: HTTP {response.status_code}: {response.text[:300]}")
+    def time_left():
+        left, own = seconds_left(), call_deadline - time.monotonic()
+        return own if left is None else min(left, own)
+
+    thinking = True
+    response, problem = None, None
+    for send in range(1, GEMINI_ATTEMPTS + 1):
+        left = time_left()
+        if left < _MIN_SEND_SECONDS:
+            problem = problem or "no time left in this request's budget to ask"
+            break
+        read_timeout = max(5.0, min(GEMINI_TIMEOUT_SECONDS, left - 1))
+        try:
+            response = _send(_gemini_generation_config(thinking=thinking), read_timeout)
+            # A model or endpoint that does not accept the thinking
+            # setting answers 400 naming it. That must not cost the
+            # transcript: ask once more without it rather than giving up
+            # on a working key.
+            if response.status_code == 400 and thinking and "thinking" in (response.text or "").lower():
+                thinking = False
+                response = _send(_gemini_generation_config(thinking=False), read_timeout)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            response, problem = None, f"{type(exc).__name__}: {exc}"
+            wait = backoff[min(send - 1, len(backoff) - 1)] if backoff else 0
+        except Exception as exc:  # noqa: BLE001
+            _record_failure("gemini", "api_call", f"model={model}: {type(exc).__name__}: {exc}")
+            return None
+        else:
+            if response.status_code == 200:
+                break
+            # Google's own message is the most useful thing there is
+            # here -- it distinguishes a bad key from an unknown model
+            # from a spent quota, which is exactly what was impossible
+            # to tell before.
+            problem = f"HTTP {response.status_code}: {response.text[:300]}"
+            if response.status_code not in _GEMINI_RETRY_STATUSES:
+                break
+            asked = _google_retry_wait(response)
+            if asked is not None and asked > GEMINI_MAX_RETRY_WAIT_SECONDS:
+                break  # a spent daily quota: a few seconds change nothing
+            wait = asked if asked is not None else (backoff[min(send - 1, len(backoff) - 1)] if backoff else 0)
+        if send == GEMINI_ATTEMPTS:
+            break
+        if time_left() - wait < _MIN_SEND_SECONDS:
+            break
+        current_app.logger.info("Gemini %s (send %s of %s); asking again in %ss",
+                                _redact(problem)[:160], send, GEMINI_ATTEMPTS, wait)
+        _sleep(wait)
+
+    if response is None or response.status_code != 200:
+        tries = f" (after {send} send{'s' if send != 1 else ''})" if send > 1 else ""
+        _record_failure("gemini", "api_call", f"model={model}: {problem}{tries}")
         return None
 
     try:
@@ -1009,14 +1141,19 @@ def _coerce_innovation(value):
     if not isinstance(value, dict):
         return None
     novelty = str(value.get("novelty") or "").strip().capitalize()
+    summary = str(value.get("summary") or "").strip()
     if novelty not in _NOVELTY_LEVELS:
-        return None
+        # Rated or nothing -- except for a plan with no idea yet, which
+        # is not rated: there its read is the summary and suggestions.
+        if value.get("novelty") or not summary:
+            return None
+        novelty = None
     suggestions = value.get("suggestions")
     if not isinstance(suggestions, list):
         suggestions = []
     return {
         "novelty": novelty,
-        "summary": str(value.get("summary") or "").strip(),
+        "summary": summary,
         "suggestions": [str(x).strip() for x in suggestions if str(x).strip()][:3],
     }
 
@@ -1547,14 +1684,43 @@ def _log_transcript(message, *args):
         pass
 
 
+def _restate_prompt(lines, summary):
+    """The LAST ask, when Gemini's own drafts kept quoting figures the
+    computation does not have: the computation again, plus the model
+    summary -- which states it correctly -- for Gemini to rewrite in its
+    own plain words. Every figure it needs is then in front of it, in
+    the order it should come."""
+    block = "\n".join(text if kind == "head" else f"  - {text}" for text, kind in lines)
+    return (
+        "You are writing the FORECAST TRANSCRIPT for a small-business owner in Tarlac City, the "
+        "Philippines. This system's trained models have already computed the forecast below, and the "
+        "MODEL SUMMARY under it states that computation correctly but stiffly.\n\n"
+        "FORECAST COMPUTATION\n"
+        f"{block}\n\n"
+        "MODEL SUMMARY\n"
+        f"{summary}\n\n"
+        "Rewrite the MODEL SUMMARY as the transcript: 5-8 warm, plain-language sentences for someone "
+        "who is not an analyst, in the same order -- what the models forecast, how the numbers led "
+        "there, what it means for the owner. You may split it into two short paragraphs, separated by "
+        "a blank line.\n\n"
+        "RULES -- these matter more than style:\n"
+        "  - Use ONLY the figures in the MODEL SUMMARY, copied exactly as written there. Add no other "
+        "figure, and never round, combine or recompute one.\n"
+        "  - Write every number in digits, never in words. Write pesos with the ₱ sign.\n"
+        "  - Plain sentences only: no markdown, no bullet points, no headings.\n\n"
+        'Respond with ONLY a JSON object of the form {"transcript": "<the transcript>"}.'
+    )
+
+
 # How many corrective rewrites a rejected transcript draft gets before
 # the unverifiable sentences are pruned instead.
 TRANSCRIPT_REPAIRS = 2
-# The most one transcript may spend waiting on the AI, in seconds. A new
-# ask is only started while a whole GEMINI_TIMEOUT_SECONDS still fits, so
-# the extra asks above can never carry a request past gunicorn's 120 s
-# (a forecast run makes the one-call request first, then this).
+# The most one transcript may spend waiting on the AI, in seconds, when
+# the caller set no ai_time_budget of its own. A new ask is only started
+# while a whole _MIN_ASK_SECONDS still fits, so the extra asks can never
+# carry a request past what the server allows.
 TRANSCRIPT_TIME_BUDGET_SECONDS = 65
+_MIN_ASK_SECONDS = 30
 
 
 def transcribe_forecast(context):
@@ -1565,38 +1731,47 @@ def transcribe_forecast(context):
     "generated_by"} -- generated_by "llm:<provider>:<model>", the same
     provenance stamp as the one-call path -- or None. Never raises.
 
-    THE GROUNDING, WITH ONE REPAIR. Every number in the draft must be a
+    THE GROUNDING, WITH REPAIRS. Every number in the draft must be a
     number the block showed (recommendation_service.review_transcript);
     the draft must also be at least three sentences, state the plan's
     viability, and not run past TRANSCRIPT_MAX_CHARS. A draft that fails
     is not thrown away at once -- one bad figure in eight good sentences
     is a fixable slip, not a reason to show the owner a template:
 
-      1. the SAME provider is asked once more, told exactly which
-         figures were not in the block (or what else was wrong) and
-         that only the given figures may appear;
+      1. the SAME provider is asked again (up to TRANSCRIPT_REPAIRS
+         times), told exactly which figures were not in the block (or
+         what else was wrong) and that only the given figures may appear;
       2. if the rewrite still fails, the sentences carrying unverifiable
          figures are dropped (recommendation_service.prune_transcript),
          and the remainder is kept only if it is still a transcript --
          three or more sentences, the viability still stated;
-      3. otherwise None, and the caller keeps the rule-based summary.
+      3. if too little survives, the same provider is handed the model
+         summary -- which states every figure correctly -- and asked to
+         restate it in its own words (_restate_prompt), checked the same
+         way;
+      4. otherwise None, and the caller keeps the rule-based summary.
+
+    All of it inside one ai_time_budget (TRANSCRIPT_TIME_BUDGET_SECONDS,
+    or the caller's, whichever ends first).
 
     Each step is logged at info level, with the offending figures, so
     "why is this forecast still showing the model summary?" has an
     answer in the logs."""
-    from app.services import recommendation_service as rec_service
-
     forecast = context.get("forecast") if isinstance(context, dict) else None
     if not isinstance(forecast, dict):
         return None
+    with ai_time_budget(TRANSCRIPT_TIME_BUDGET_SECONDS):
+        return _transcribe(context, forecast)
 
-    import time
+
+def _transcribe(context, forecast):
+    from app.services import recommendation_service as rec_service
 
     _begin_attempt()
-    started = time.monotonic()
 
     def time_for_another_ask():
-        return time.monotonic() - started + GEMINI_TIMEOUT_SECONDS <= TRANSCRIPT_TIME_BUDGET_SECONDS
+        left = seconds_left()
+        return left is None or left >= _MIN_ASK_SECONDS
 
     lines = _transcript_lines(context)
     allowed = rec_service.transcript_allowed_figures(
@@ -1648,6 +1823,25 @@ def transcribe_forecast(context):
         _log_transcript("kept %s sentence(s) of %s's transcript after dropping %s with unverifiable figures",
                         pruned["kept"], provider, pruned["dropped"])
         return result(pruned["text"])
+
+    # Last: the model summary, rewritten by the same AI in its own words.
+    # The summary states every figure correctly, so a faithful rewrite
+    # passes the same check -- and the owner still reads the AI's
+    # transcript rather than the template.
+    if time_for_another_ask():
+        summary = (rec_service._rule_based_explanation(context) or {}).get("text") or ""
+        if summary:
+            _log_transcript("too little of %s's transcript survived the number check; asking it to "
+                            "restate the model summary", provider)
+            restate_allowed = (allowed[0] | {figure.value for figure in rec_service._numbers_in(summary)},
+                               allowed[1], allowed[2])
+            restated, _ = _ask_for_transcript(_restate_prompt(lines, summary), only=provider)
+            if restated:
+                if rec_service.review_transcript(restated, restate_allowed, forecast)["ok"]:
+                    return result(restated)
+                kept = rec_service.prune_transcript(restated, restate_allowed, forecast)
+                if kept:
+                    return result(kept["text"])
     _log_transcript("too little of %s's transcript survived the number check; the model summary stands",
                     provider)
     return None

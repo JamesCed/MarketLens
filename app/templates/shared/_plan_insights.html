@@ -147,7 +147,10 @@
           AI's READING of the words moves no score, and that nothing
           about the idea moves the market saturation figure.
         #}
-        {% if i.generated_by and i.generated_by.startswith('llm:') %}
+        {% if i.generated_by and i.generated_by.startswith('llm:') and not i.has_idea %}
+          Suggested by the AI from your plan and the competitors already here. Add your own idea to the
+          plan and the AI will rate how new it is; having an idea counts towards plan viability.
+        {% elif i.generated_by and i.generated_by.startswith('llm:') %}
           Read by the AI from your own description. The AI's reading changes no score; having an idea
           counts towards plan viability, never towards market saturation.
         {% else %}
@@ -193,13 +196,36 @@
 {%- endmacro %}
 
 
+{#
+  ai_writing_status(rec, forecast)
+  While the RECOMMENDATION is still the template and Gemini can be asked,
+  a visible "Gemini is writing this plan's recommendation..." status
+  that is also the upgrade hook for forecast_transcript.js (one request
+  per forecast, shared with the transcript block's hook). Placed inside
+  the part of the page it repaints, so it goes when Gemini's text comes.
+#}
+{% macro ai_writing_status(rec, forecast) -%}
+  {% if forecast is not none and forecast.forecast_id and forecast_transcript_due is defined
+        and forecast_transcript_due(rec) and 'recommendation' in forecast_ai_pending(rec) %}
+    <div data-forecast-transcript data-ai-wants="recommendation"
+         data-transcript-url="{{ url_for('api.forecast_transcript', forecast_id=forecast.forecast_id) }}"
+         data-forecast-id="{{ forecast.forecast_id }}">
+      <div class="small text-body-secondary" data-transcript-status role="status" aria-live="polite"
+           data-working-text="Gemini is writing this plan&rsquo;s recommendation&hellip;"></div>
+    </div>
+    <script src="{{ url_for('static', filename='js/forecast_transcript.js') }}" defer></script>
+  {% endif %}
+{%- endmacro %}
+
+
 {% macro explanation_paragraph(rec, compact=False, forecast=None) -%}
   {% set ex = rec.explanation if rec else None %}
   {% if ex and ex.text %}
     {% set upgrade = forecast is not none and forecast.forecast_id
-                     and forecast_transcript_due is defined and forecast_transcript_due(rec) %}
+                     and forecast_transcript_due is defined and forecast_transcript_due(rec)
+                     and 'transcript' in forecast_ai_pending(rec) %}
     <div class="dss-explanation {{ 'mb-2' if compact else 'mb-3' }}"
-         {% if upgrade %}data-forecast-transcript
+         {% if upgrade %}data-forecast-transcript data-ai-wants="transcript"
          data-transcript-url="{{ url_for('api.forecast_transcript', forecast_id=forecast.forecast_id) }}"
          data-forecast-id="{{ forecast.forecast_id }}"{% endif %}>
       <div class="d-flex align-items-center gap-2 flex-wrap mb-1">

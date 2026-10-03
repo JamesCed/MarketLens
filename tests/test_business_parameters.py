@@ -451,10 +451,16 @@ def test_the_prompt_carries_the_plan_detail_and_fences_the_idea():
     assert "say 'HIGH OPPORTUNITY'" in prompt
 
 
-def test_no_idea_means_the_llm_is_not_asked_for_an_innovation_key():
+def test_no_idea_means_the_llm_suggests_one_but_rates_nothing():
+    """With no idea on the plan, Gemini still writes the innovation read
+    -- what could set the business apart -- but there is nothing to rate,
+    so no novelty is asked for."""
     from app.services.llm_service import _prompt_for
 
-    assert '"innovation"' not in _prompt_for(_context())
+    prompt = _prompt_for(_context())
+    assert "has not said yet what makes the business different" in prompt
+    assert '"innovation"' in prompt and '"suggestions"' in prompt
+    assert '"novelty"' not in prompt
 
 
 def test_a_bad_innovation_key_is_dropped_without_losing_the_recommendation():

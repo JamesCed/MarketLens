@@ -107,7 +107,7 @@
           <p class="small text-muted mt-2 mb-0">and {{ plan_rows|length - 5 }} more on the Planning page.</p>
         {% endif %}
         {% if featured_rec and featured_rec.headline %}
-          <div class="dss-overview-callout mt-3">
+          <div class="dss-overview-callout mt-3" data-ai-region="{{ featured.forecast_id }}" data-ai-part="headline">
             <div class="small text-muted">Latest verdict for <strong>{{ selected_plan.business_name }}</strong></div>
             <div class="small fw-semibold">{{ featured_rec.headline }}</div>
           </div>
@@ -161,11 +161,13 @@
            class="btn btn-sm btn-outline-primary">Open Recommendations &raquo;</a>
       </div>
       {% if featured_rec and featured_rec.summary %}
-        <p class="small mb-2">{{ featured_rec.summary }}</p>
-        {% if featured_rec.competitor_insight %}
-          <p class="small text-muted mb-2"><i class="bi bi-shop-window" aria-hidden="true"></i>
-            {{ featured_rec.competitor_insight.short }}</p>
-        {% endif %}
+        <div data-ai-region="{{ featured.forecast_id }}" data-ai-part="summary">
+          <p class="small mb-2">{{ featured_rec.summary }}</p>
+          {% if featured_rec.competitor_insight %}
+            <p class="small text-muted mb-2"><i class="bi bi-shop-window" aria-hidden="true"></i>
+              {{ featured_rec.competitor_insight.short }}</p>
+          {% endif %}
+        </div>
         <p class="small text-muted mb-0">The full reasons, risks, competitor insight and other barangays to
           consider are on the Recommendations page.</p>
       {% else %}

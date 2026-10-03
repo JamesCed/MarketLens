@@ -591,18 +591,20 @@ def barangay_detail():
 @api_bp.route("/forecasts/<int:forecast_id>/transcript", methods=["POST"])
 @login_required
 def forecast_transcript(forecast_id):
-    """Upgrade ONE stored forecast's transcript from the rule-based model
-    summary to Gemini's transcript of the forecast -- called by
-    static/js/forecast_transcript.js after the Home or Recommendations
-    page has rendered, so the page never waits on an LLM.
+    """Upgrade ONE stored forecast's text from the rule-based template to
+    Gemini's -- the recommendation (headline, summary, reasons, risks,
+    competitor insight, innovation read) and the forecast transcript,
+    whichever is still the template -- called by
+    static/js/forecast_transcript.js after the Planning, Home or
+    Recommendations page has rendered, so the page never waits on an LLM.
 
     NOTHING IS RE-SCORED. The context is rebuilt from the forecast's
     stored payload and its plan (recommendation_service.
-    transcript_context), Gemini is asked for the transcript
-    (llm_service.transcribe_forecast -- the whole computation, Gemini
-    first, one corrective retry, sentence pruning), and only the stored
-    "explanation" changes: every other key of forecast_result.
-    recommendation is written back as it was read.
+    transcript_context), Gemini is asked for what is missing
+    (recommendation_service.upgrade_ai_text -- the recommendation call,
+    then the dedicated transcript call), and only the AI-written text
+    changes: the payload, the sub-category analysis and every other key
+    of forecast_result.recommendation are written back as they were read.
 
     Only the owner of the forecast's plan may ask: anyone else -- another
     SME, an LGU or Admin account, a plan in Trash -- gets the same 404 as
@@ -611,17 +613,21 @@ def forecast_transcript(forecast_id):
     the script sends, like every other fetch POST in this app.
 
     Responses (all 200 unless the forecast is not the caller's):
-      {"ok": true, "text", "generated_by", "badge_html"}  -- the new
-          transcript (or the AI one already stored); the script inserts
-          the text with textContent and swaps in the badge;
-      {"ok": false, "reason"}  -- "no_payload" (a forecast from before
-          the plan model), "unavailable" (LLM off or no usable Gemini
-          key), "retry_later" (an upgrade failed under
-          TRANSCRIPT_RETRY_AFTER ago), or "failed" (this attempt failed;
-          explanation["transcript_failed_at"] is stamped so the page
-          leaves it alone for 15 minutes)."""
-    from datetime import datetime, timezone
-
+      {"ok": true, "text", "generated_by", "badge_html"[, "changed",
+          "pending", "retry_after"]}  -- the AI transcript (new, or the
+          one already stored); the script inserts the text with
+          textContent and swaps in the badge. "changed" lists what the
+          AI wrote just now ("recommendation", "transcript"), and the
+          script repaints those parts of the page; "pending" what is
+          still the template, to be asked for again in "retry_after"
+          seconds;
+      {"ok": false, "reason"[, "retry_after"]}  -- "no_payload" (a
+          forecast from before the plan model, superseded),
+          "unavailable" (LLM off or no usable Gemini key), "retry_later"
+          (an upgrade failed under TRANSCRIPT_RETRY_AFTER ago) or
+          "failed" (this attempt failed; explanation["transcript_failed_at"]
+          is stamped, and the script asks again after "retry_after"
+          seconds)."""
     from flask import abort, get_template_attribute
 
     from app.models import ForecastResult
@@ -662,29 +668,44 @@ def forecast_transcript(forecast_id):
                             "generated_by": fresh_explanation["generated_by"],
                             "badge_html": str(badge(fresh_explanation)), "refreshed": True})
         return jsonify({"ok": False, "reason": "failed"})
-    if explanation["generated_by"].startswith("llm:"):
-        # Already transcribed -- by an earlier request, another tab, or
-        # the forecast run itself. Nothing to spend a call on.
-        return jsonify({"ok": True, "text": explanation["text"], "generated_by": explanation["generated_by"],
-                        "badge_html": str(badge(explanation))})
+    def answer(explanation, changed=(), pending=()):
+        """The transcript (AI-written) with what this request changed:
+        "changed" names the parts the AI just wrote ("recommendation",
+        "transcript") -- the page then repaints those parts -- and
+        "pending" what is still the template."""
+        body = {"ok": True, "text": explanation["text"], "generated_by": explanation["generated_by"],
+                "badge_html": str(badge(explanation))}
+        if changed:
+            body["changed"] = sorted(changed)
+        if pending:
+            body["pending"] = sorted(pending)
+            body["retry_after"] = int(rec_service.TRANSCRIPT_RETRY_AFTER.total_seconds())
+        return jsonify(body)
+
+    pending = rec_service.ai_text_pending(rec)
+    if not pending:
+        # Already written -- by an earlier request, another tab, or the
+        # forecast run itself. Nothing to spend a call on.
+        return answer(explanation)
     if rec_service.transcript_failed_recently(explanation):
-        return jsonify({"ok": False, "reason": "retry_later"})
+        return jsonify({"ok": False, "reason": "retry_later",
+                        "retry_after": rec_service.transcript_retry_in(explanation)})
     if not llm_service.gemini_transcription_available():
         return jsonify({"ok": False, "reason": "unavailable"})
 
-    context = rec_service.transcript_context(forecast, plan)
-    transcript = llm_service.transcribe_forecast(context) if context else None
-    if not transcript:
-        forecast.recommendation = rec_service.mark_transcript_failed(
-            forecast.recommendation, now=datetime.now(timezone.utc)
-        )
-        db.session.commit()
-        return jsonify({"ok": False, "reason": "failed"})
-
-    forecast.recommendation = rec_service.store_transcript(forecast.recommendation, transcript)
+    outcome = rec_service.upgrade_ai_text(forecast, plan)
+    if outcome is None:
+        return jsonify({"ok": False, "reason": "no_payload"})
+    forecast.recommendation = outcome["raw"]
     db.session.commit()
-    return jsonify({"ok": True, "text": transcript["text"], "generated_by": transcript["generated_by"],
-                    "badge_html": str(badge(transcript))})
+    explanation = rec_service.parse_recommendation(forecast.recommendation)["explanation"]
+    if explanation and explanation["generated_by"].startswith("llm:"):
+        return answer(explanation, outcome["changed"], outcome["pending"])
+    body = {"ok": False, "reason": "failed",
+            "retry_after": int(rec_service.TRANSCRIPT_RETRY_AFTER.total_seconds())}
+    if outcome["changed"]:
+        body["changed"] = sorted(outcome["changed"])
+    return jsonify(body)
 
 
 # The Home and Recommendations templates ask this (through
@@ -702,6 +723,21 @@ def _forecast_transcript_due(rec):
 
 
 api_bp.add_app_template_global(_forecast_transcript_due, "forecast_transcript_due")
+
+
+def _forecast_ai_pending(rec):
+    """Which of a parsed recommendation's texts are still the template --
+    recommendation_service.ai_text_pending -- for the templates to put
+    the "Gemini is writing..." status where Gemini's text will appear."""
+    from app.services.recommendation_service import ai_text_pending
+
+    try:
+        return ai_text_pending(rec)
+    except Exception:  # noqa: BLE001 -- a page render must never fail on this
+        return set()
+
+
+api_bp.add_app_template_global(_forecast_ai_pending, "forecast_ai_pending")
 
 
 def _transcript_queue(forecasts):

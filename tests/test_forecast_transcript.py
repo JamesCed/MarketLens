@@ -491,8 +491,10 @@ def _client(app, email):
 @pytest.fixture
 def stored(app, monkeypatch):
     """One SME's plan with a forecast whose transcript is the rule-based
-    model summary -- generated the real way, with the LLM switched off,
-    the state of every forecast made before a Gemini key was set."""
+    model summary -- generated the real way, with the LLM switched off --
+    and whose recommendation Gemini already wrote (its generated_by
+    says so): the TRANSCRIPT is the only part still to upgrade. The
+    fully rule-based forecast is the `all_template` fixture below."""
     from app.services.forecasting_service import generate_forecast_for_profile
 
     with app.app_context():
@@ -506,9 +508,30 @@ def stored(app, monkeypatch):
         db.session.commit()
         forecast = generate_forecast_for_profile(plan)
         monkeypatch.delenv("USE_LLM_RECOMMENDATIONS", raising=False)
+        payload = json.loads(forecast.recommendation)
+        assert payload["explanation"]["generated_by"] == "rule-based"
+        payload["generated_by"] = "llm:gemini"
+        forecast.recommendation = json.dumps(payload, ensure_ascii=False)
+        db.session.commit()
         raw = forecast.recommendation
-        assert json.loads(raw)["explanation"]["generated_by"] == "rule-based"
         return {"forecast_id": forecast.forecast_id, "sme_id": plan.sme_id, "raw": raw}
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """No test here may reach Google: a send that is not stubbed is
+    refused, and the test that made it fails."""
+    import requests
+
+    attempts = []
+
+    def refuse(*args, **kwargs):
+        attempts.append(args[0] if args else kwargs.get("url"))
+        raise requests.exceptions.ConnectionError("the network is off in these tests")
+
+    monkeypatch.setattr(requests, "post", refuse)
+    yield
+    assert not attempts, f"a test tried to call the real API: {attempts}"
 
 
 def _stored_json(forecast_id):
@@ -612,8 +635,10 @@ def test_a_failure_is_stamped_and_backs_off(app, stored, monkeypatch):
         stamp = after["explanation"]["transcript_failed_at"]
         second = client.post(url).get_json()
 
-    assert first == {"ok": False, "reason": "failed"}
-    assert second == {"ok": False, "reason": "retry_later"}
+    # The page is told how long to wait before it asks again by itself.
+    assert first == {"ok": False, "reason": "failed", "retry_after": 120}
+    assert second["ok"] is False and second["reason"] == "retry_later"
+    assert 100 <= second["retry_after"] <= 121
     assert len(seen) == 1, "the second request inside the window spent no call"
     # Stamped in UTC; the summary itself and every other key unchanged.
     when = datetime.fromisoformat(stamp)
@@ -625,15 +650,17 @@ def test_a_failure_is_stamped_and_backs_off(app, stored, monkeypatch):
         {k: v for k, v in before.items() if k != "explanation"}
 
 
-def test_the_backoff_window_is_5_minutes_and_versioned():
+def test_the_backoff_window_is_2_minutes_and_versioned():
     version = rec_service.TRANSCRIPT_REQUEST_VERSION
     explanation = {"text": "t", "generated_by": "rule-based", "transcript_failed_version": version}
     now = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
-    for minutes, recent in ((1, True), (4, True), (5, False), (60, False)):
-        explanation["transcript_failed_at"] = (now - timedelta(minutes=minutes)).isoformat()
-        assert rec_service.transcript_failed_recently(explanation, now=now) is recent, minutes
+    for seconds, recent in ((30, True), (110, True), (120, False), (3600, False)):
+        explanation["transcript_failed_at"] = (now - timedelta(seconds=seconds)).isoformat()
+        assert rec_service.transcript_failed_recently(explanation, now=now) is recent, seconds
+    explanation["transcript_failed_at"] = (now - timedelta(seconds=30)).isoformat()
+    assert 90 <= rec_service.transcript_retry_in(explanation, now=now) <= 91
     # A naive stamp is read as UTC.
-    explanation["transcript_failed_at"] = (now - timedelta(minutes=2)).replace(tzinfo=None).isoformat()
+    explanation["transcript_failed_at"] = (now - timedelta(minutes=1)).replace(tzinfo=None).isoformat()
     assert rec_service.transcript_failed_recently(explanation, now=now) is True
     # A stamp left by an OLDER Gemini request says nothing about this one:
     # it is ignored, and the forecast is retried at once.

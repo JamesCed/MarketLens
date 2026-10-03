@@ -512,6 +512,9 @@ class TestingConfig(Config):
     TESTING = True
     WTF_CSRF_ENABLED = False
     SQLALCHEMY_DATABASE_URI = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
+    # A retried Gemini send waits nothing in the tests (see
+    # llm_service.GEMINI_RETRY_BACKOFF_SECONDS).
+    GEMINI_RETRY_BACKOFF_SECONDS = (0, 0)
 
 
 config_by_name = {

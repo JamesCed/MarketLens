@@ -26,10 +26,16 @@
 //     paragraph -- it is model-written text and is never parsed as
 //     HTML. Only the badge, which the server renders from its own
 //     template (escaped by Jinja), is inserted as markup.
+//   * Not only the transcript: while the RECOMMENDATION (headline,
+//     reasons, risks, competitor insight, innovation read) is still the
+//     template, the same request has Gemini write it, and the parts of
+//     the page marked data-ai-region / data-ai-part are repainted with
+//     the server's fresh rendering (repaintRegions below).
 //   * A failure leaves the model summary in place with a quiet note.
-//     The server stamps the failure on the forecast and the page stops
-//     asking for 15 minutes; "unavailable" and "no payload" replies
-//     just hide the status, since there is nothing to wait for.
+//     The server stamps the failure and names the wait ("retry_after",
+//     two minutes); the page asks again when it is over, up to
+//     MAX_ROUNDS times while it stays open. "unavailable" and "no
+//     payload" replies just hide the status: nothing to wait for.
 //
 // The macro includes this file once per marked block, so it guards
 // itself: whichever copy runs first does the work for the whole page.
@@ -40,9 +46,12 @@
   window.__dssForecastTranscript = true;
 
   const WORKING = "Gemini is transcribing the forecast…";
+  const RETRYING =
+    "Gemini is busy right now, so the model's own summary is shown for the moment. " +
+    "This page will ask Gemini again in a minute or two.";
   const FAILED =
-    "Gemini could not transcribe this forecast just now, so the model summary is shown. " +
-    "It will be tried again later.";
+    "Gemini could not be reached just now, so the model's own summary is shown. " +
+    "It will be tried again the next time this page is opened.";
 
   function csrfToken() {
     const meta = document.querySelector('meta[name="csrf-token"]');
@@ -112,8 +121,12 @@
     hook.removeAttribute("data-forecast-transcript");
   }
 
-  function successMessage(data) {
-    return String(data.generated_by || "").indexOf("llm:gemini") === 0
+  function successMessage(data, wants) {
+    const gemini = String(data.generated_by || "").indexOf("llm:gemini") === 0;
+    if (wants === "recommendation") {
+      return gemini ? "Gemini wrote this plan's recommendation." : "An AI wrote this plan's recommendation.";
+    }
+    return gemini
       ? "Gemini transcribed this forecast."
       : "An AI transcribed this forecast (Gemini was not available).";
   }
@@ -138,6 +151,104 @@
     }
   }
 
+  function regionsFor(id) {
+    return Array.prototype.filter.call(
+      document.querySelectorAll("[data-ai-region][data-ai-part]"),
+      (region) => region.getAttribute("data-ai-region") === String(id)
+    );
+  }
+
+  // REPAINTING THE RECOMMENDATION. Gemini's headline, reasons, risks,
+  // competitor insight and innovation read appear in several places, on
+  // three pages, each laid out by the server's own templates. Rather
+  // than re-building that markup here, the page is fetched again (the
+  // same URL, same session) and each part marked
+  //     data-ai-region="<forecast id>" data-ai-part="<name>"
+  // is replaced by its fresh, server-rendered (Jinja-escaped) copy.
+  // DOMParser runs no scripts, and the parts carry none.
+  async function repaintRegions(id) {
+    const regions = regionsFor(id);
+    if (!regions.length) return;
+    try {
+      const response = await fetch(window.location.href, {
+        credentials: "same-origin",
+        headers: { Accept: "text/html" },
+      });
+      if (!response.ok) return;
+      const fresh = new DOMParser().parseFromString(await response.text(), "text/html");
+      const byPart = new Map();
+      fresh.querySelectorAll("[data-ai-region][data-ai-part]").forEach((region) => {
+        if (region.getAttribute("data-ai-region") === String(id)) {
+          byPart.set(region.getAttribute("data-ai-part"), region);
+        }
+      });
+      regions.forEach((region) => {
+        const replacement = byPart.get(region.getAttribute("data-ai-part"));
+        if (replacement) region.replaceWith(document.importNode(replacement, true));
+      });
+    } catch (error) {
+      // The page keeps what it shows; a reload shows Gemini's text.
+    }
+  }
+
+  // ASKING AGAIN. A failed upgrade is stamped on the server, which asks
+  // the page to wait "retry_after" seconds (a busy minute at Gemini). An
+  // owner who keeps the page open then sees Gemini's text arrive without
+  // reloading: the page asks again when the wait is over, up to
+  // MAX_ROUNDS times in all.
+  const MAX_ROUNDS = 3;
+
+  function retryable(data) {
+    return !data || data.reason === "failed" || data.reason === "retry_later" ||
+      (data.ok && Array.isArray(data.pending) && data.pending.length > 0);
+  }
+
+  async function process(groups, round) {
+    const again = new Map();
+    let wait = 0;
+    for (const [id, hooks] of groups) {
+      const data = await requestTranscript(hooks[0].getAttribute("data-transcript-url"));
+      hooks.forEach((hook) => {
+        const wants = hook.getAttribute("data-ai-wants");
+        const stillPending = !!(data && wants && Array.isArray(data.pending) && data.pending.indexOf(wants) !== -1);
+        if (data && data.ok && !stillPending) {
+          showTranscript(hook, data);
+          setStatus(hook, successMessage(data, wants), false);
+        } else if (data && data.ok) {
+          setStatus(hook, round < MAX_ROUNDS ? RETRYING : FAILED, false);
+        } else if (data && (data.reason === "unavailable" || data.reason === "no_payload")) {
+          hideStatus(hook);
+        } else {
+          setStatus(hook, round < MAX_ROUNDS ? RETRYING : FAILED, false);
+        }
+      });
+      if (data && data.refreshed && regionsFor(id).length) {
+        // The forecast was re-run (it predated the plan model): a new
+        // row, so the page itself is out of date.
+        window.location.reload();
+        return;
+      }
+      if (data && Array.isArray(data.changed) && data.changed.length) await repaintRegions(id);
+      if (retryable(data) && round < MAX_ROUNDS) {
+        again.set(id, hooks);
+        wait = Math.max(wait, Number((data && data.retry_after) || 60));
+      }
+    }
+    if (again.size) {
+      window.setTimeout(() => {
+        again.forEach((hooks) => hooks.forEach((hook) => {
+          if (hook.isConnected) setStatus(hook, workingText(hook), true);
+        }));
+        process(again, round + 1);
+      }, Math.min(wait, 600) * 1000);
+    }
+  }
+
+  function workingText(hook) {
+    const status = hook.querySelector("[data-transcript-status]");
+    return (status && status.getAttribute("data-working-text")) || WORKING;
+  }
+
   async function run() {
     if (typeof window.fetch !== "function") return;
     const groups = new Map();
@@ -146,24 +257,10 @@
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(hook);
     });
-    groups.forEach((hooks) => hooks.forEach((hook) => {
-      const status = hook.querySelector("[data-transcript-status]");
-      setStatus(hook, (status && status.getAttribute("data-working-text")) || WORKING, true);
-    }));
-
-    for (const hooks of groups.values()) {
-      const data = await requestTranscript(hooks[0].getAttribute("data-transcript-url"));
-      hooks.forEach((hook) => {
-        if (data && data.ok) {
-          showTranscript(hook, data);
-          setStatus(hook, successMessage(data), false);
-        } else if (data && (data.reason === "unavailable" || data.reason === "no_payload")) {
-          hideStatus(hook);
-        } else {
-          setStatus(hook, FAILED, false);
-        }
-      });
-    }
+    for (const hooks of groups.values()) hooks.forEach((hook) => setStatus(hook, workingText(hook), true));
+    // One request per forecast, one at a time (see process above: each
+    // is `await requestTranscript(...)` in turn).
+    await process(groups, 1);
   }
 
   if (document.readyState === "loading") {

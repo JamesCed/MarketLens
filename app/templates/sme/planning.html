@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Planning{% endblock %}
 {% from "shared/_plan_fields.html" import plan_core_fields %}
-{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, forecast_breakdown, explanation_badge, competitor_insight_panel, transcript_queue_hooks %}
+{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, forecast_breakdown, explanation_badge, competitor_insight_panel, transcript_queue_hooks, ai_writing_status %}
 {% set plan_industry = selected_plan.industry_type if selected_plan else featured_industry_type %}
 {% set trash_count = (trashed_plans or [])|length %}
 
@@ -442,8 +442,12 @@
         {% endif %}
 
         {# Direct competitors and the AI's short read of them; the full
-           insight and the recommendations are on the Recommendations page. #}
-        {{ competitor_insight_panel(rec, more_url=url_for('sme.recommendations', sme_id=selected_plan.sme_id) ~ '#plan-' ~ selected_plan.sme_id if selected_plan else None) }}
+           insight and the recommendations are on the Recommendations page.
+           data-ai-region/-part: repainted when Gemini's text arrives
+           (forecast_transcript.js). #}
+        <div data-ai-region="{{ f.forecast_id }}" data-ai-part="insight">
+          {{ competitor_insight_panel(rec, more_url=url_for('sme.recommendations', sme_id=selected_plan.sme_id) ~ '#plan-' ~ selected_plan.sme_id if selected_plan else None) }}
+        </div>
         {{ subcategory_compare(rec, compact=True) }}
 
         {{ forecast_breakdown(rec, compact=True, forecast=f) }}
@@ -489,16 +493,22 @@
           <div class="d-flex gap-3">
             <div class="fs-3">💡</div>
             <div class="flex-grow-1">
-              <div class="small">
-                <span class="fw-bold">Recommendation:</span><br>
-                {% if rec and rec.headline %}
-                  <strong>{{ rec.headline }}</strong><br>
-                  {{ rec.summary }}
-                {% else %}
-                  No recommendation available yet.
-                {% endif %}
+              <div data-ai-region="{{ featured_forecast.forecast_id }}" data-ai-part="verdict">
+                <div class="small">
+                  <span class="fw-bold">Recommendation:</span>
+                  {% if rec and rec.generated_by.startswith('llm:gemini') %}
+                    <span class="dss-ai-badge ms-1"><i class="bi bi-stars" aria-hidden="true"></i> Written by Gemini</span>
+                  {% endif %}<br>
+                  {% if rec and rec.headline %}
+                    <strong>{{ rec.headline }}</strong><br>
+                    {{ rec.summary }}
+                  {% else %}
+                    No recommendation available yet.
+                  {% endif %}
+                </div>
+                {{ ai_writing_status(rec, featured_forecast) }}
+                {{ innovation_panel(rec, compact=True) }}
               </div>
-              {{ innovation_panel(rec, compact=True) }}
               <a href="{{ url_for('sme.recommendations', sme_id=selected_plan.sme_id if selected_plan else None) }}" class="d-inline-block mt-2 small">See full AI-Powered Recommendations &raquo;</a>
             </div>
           </div>

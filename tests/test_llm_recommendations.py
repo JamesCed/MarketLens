@@ -312,13 +312,19 @@ def test_gemini_request_is_written_for_gemini_3_models(app, monkeypatch):
         app.config["GEMINI_API_KEY"] = "AQ.Ab_test"
         monkeypatch.setattr(requests, "post", fake_post)
         assert llm_service._generate_with_gemini("hi") == '{"ok": true}'
+        connect, read = seen["timeout"]
+        # Inside a request's time budget, no send waits past its end.
+        with llm_service.ai_time_budget(20):
+            assert llm_service._generate_with_gemini("hi") == '{"ok": true}'
+        budgeted = seen["timeout"][1]
 
     config = seen["generationConfig"]
     for unsupported in ("temperature", "topP", "topK", "top_p", "top_k"):
         assert unsupported not in config, unsupported
     assert config["thinkingConfig"] == {"thinkingLevel": "low"}
     assert config["maxOutputTokens"] >= 8192
-    assert seen["timeout"] <= 30, "several calls in one request must stay inside gunicorn's 120 s"
+    assert connect <= 10 and 30 <= read <= 45, "long enough for the recommendation call, and bounded"
+    assert budgeted <= 20
 
 
 def test_gemini_retries_without_thinking_when_the_setting_is_refused(app, monkeypatch):
