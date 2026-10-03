@@ -292,6 +292,76 @@ def test_gemini_asks_the_api_itself_for_json(app, monkeypatch):
     assert seen["contents"][0]["parts"][0]["text"] == "hi"
 
 
+def test_gemini_request_is_written_for_gemini_3_models(app, monkeypatch):
+    """Gemini 3.x ignores or rejects sampling parameters, thinks before it
+    answers, and counts the thinking as output. So: no temperature, a low
+    thinking level, and an output allowance large enough that thinking
+    cannot use it all up before the answer is written."""
+    import requests
+
+    from app.services import llm_service
+
+    seen = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen.update(json or {})
+        seen["timeout"] = timeout
+        return _gemini_ok('{"ok": true}')
+
+    with app.app_context():
+        app.config["GEMINI_API_KEY"] = "AQ.Ab_test"
+        monkeypatch.setattr(requests, "post", fake_post)
+        assert llm_service._generate_with_gemini("hi") == '{"ok": true}'
+
+    config = seen["generationConfig"]
+    for unsupported in ("temperature", "topP", "topK", "top_p", "top_k"):
+        assert unsupported not in config, unsupported
+    assert config["thinkingConfig"] == {"thinkingLevel": "low"}
+    assert config["maxOutputTokens"] >= 8192
+    assert seen["timeout"] <= 30, "several calls in one request must stay inside gunicorn's 120 s"
+
+
+def test_gemini_retries_without_thinking_when_the_setting_is_refused(app, monkeypatch):
+    """A model that refuses the thinking setting answers 400 naming it.
+    That must cost one retry, not the transcript."""
+    import requests
+
+    from app.services import llm_service
+
+    bodies = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        bodies.append(json["generationConfig"])
+        if "thinkingConfig" in json["generationConfig"]:
+            return _FakeResponse(400, {"error": {"message": "Unknown name \"thinkingConfig\""}},
+                                 text='{"error": {"message": "Unknown name thinkingConfig"}}')
+        return _gemini_ok('{"ok": true}')
+
+    with app.app_context():
+        app.config["GEMINI_API_KEY"] = "AQ.Ab_test"
+        monkeypatch.setattr(requests, "post", fake_post)
+        assert llm_service._generate_with_gemini("hi") == '{"ok": true}'
+
+    assert len(bodies) == 2 and "thinkingConfig" not in bodies[1]
+
+
+def test_gemini_thought_parts_are_not_part_of_the_answer(app, monkeypatch):
+    import requests
+
+    from app.services import llm_service
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, {"candidates": [{"content": {"parts": [
+            {"text": "Let me think about the figures...", "thought": True},
+            {"text": '{"ok": true}'},
+        ]}, "finishReason": "STOP"}]})
+
+    with app.app_context():
+        app.config["GEMINI_API_KEY"] = "AQ.Ab_test"
+        monkeypatch.setattr(requests, "post", fake_post)
+        assert llm_service._generate_with_gemini("hi") == '{"ok": true}'
+
+
 def test_gemini_reports_googles_own_error(app, monkeypatch):
     """A 401, a 404 for an unknown model and a 429 for a spent quota
     are three different problems with three different fixes. Google

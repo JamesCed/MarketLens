@@ -675,6 +675,42 @@ def _generate_with_anthropic(prompt):
         return None
 
 
+# ---------------------------------------------------------------------
+# THE GEMINI REQUEST SETTINGS -- written for the Gemini 3.x models
+# ---------------------------------------------------------------------
+# NO temperature. Google's Gemini 3.x guidance is to strip temperature,
+# top_p and top_k from generation configs: on these models sampling
+# parameters are ignored or REJECTED, and a rejected request is a
+# transcript that never arrives however good the key is. This request
+# used to send temperature 0.4.
+#
+# THINKING LOW. Gemini 3.x thinks before it answers (medium by default),
+# and the thinking is billed and counted as output. A transcript of
+# figures that are already computed needs no deep reasoning, so "low"
+# keeps the call fast enough for a page and leaves the output allowance
+# for the answer. ("minimal" is not accepted by 3.8 Flash.)
+#
+# A LARGER OUTPUT ALLOWANCE. 2048 tokens was set before thinking models:
+# with thinking counted against it, a long recommendation prompt could
+# spend the whole allowance thinking and return no text at all
+# (finishReason MAX_TOKENS). The JSON answers themselves stay short --
+# the length limits are in the prompts -- so the larger cap is headroom,
+# not longer answers.
+GEMINI_MAX_OUTPUT_TOKENS = 8192
+GEMINI_THINKING_LEVEL = "low"
+GEMINI_TIMEOUT_SECONDS = 30
+
+
+def _gemini_generation_config(thinking=True):
+    config = {
+        "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
+        "responseMimeType": "application/json",
+    }
+    if thinking:
+        config["thinkingConfig"] = {"thinkingLevel": GEMINI_THINKING_LEVEL}
+    return config
+
+
 def _generate_with_gemini(prompt):
     """Google Gemini over its NATIVE endpoint.
 
@@ -709,23 +745,24 @@ def _generate_with_gemini(prompt):
                 or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
     url = f"{base_url}/models/{model}:generateContent"
 
-    try:
-        response = requests.post(
+    def _send(generation_config):
+        return requests.post(
             url,
             # The key goes in a HEADER, never in the query string: a URL
             # ends up in access logs and error reports, and ?key= is how
             # credentials leak.
             headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.4,
-                    "maxOutputTokens": 2048,
-                    "responseMimeType": "application/json",
-                },
-            },
-            timeout=30,
+            json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": generation_config},
+            timeout=GEMINI_TIMEOUT_SECONDS,
         )
+
+    try:
+        response = _send(_gemini_generation_config(thinking=True))
+        # A model or endpoint that does not accept the thinking setting
+        # answers 400 naming it. That must not cost the transcript: ask
+        # once more without it rather than giving up on a working key.
+        if response.status_code == 400 and "thinking" in (response.text or "").lower():
+            response = _send(_gemini_generation_config(thinking=False))
     except Exception as exc:  # noqa: BLE001
         _record_failure("gemini", "api_call", f"model={model}: {type(exc).__name__}: {exc}")
         return None
@@ -741,7 +778,10 @@ def _generate_with_gemini(prompt):
     try:
         payload = response.json()
         parts = payload["candidates"][0]["content"]["parts"]
-        text = "".join(part.get("text", "") for part in parts).strip()
+        # A part flagged "thought" is the model's reasoning, not the
+        # answer -- it is only returned when asked for, but if it ever is,
+        # it must not be glued onto the JSON the caller parses.
+        text = "".join(part.get("text", "") for part in parts if not part.get("thought")).strip()
     except Exception as exc:  # noqa: BLE001
         _record_failure("gemini", "parse",
                         f"unexpected response shape ({exc}): {response.text[:200]}")
