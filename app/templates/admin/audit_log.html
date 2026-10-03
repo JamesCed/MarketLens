@@ -17,7 +17,17 @@
   </a>
 </div>
 
+{% if subject %}
+  {# Reached from Manage Users > Activity: this account's trail only. #}
+  <div class="alert alert-info d-flex justify-content-between align-items-center flex-wrap gap-2 py-2">
+    <span><i class="bi bi-person-badge" aria-hidden="true"></i> Showing the activity of
+      <strong>{{ subject.name }}</strong> ({{ subject.email }}, UID #{{ subject.user_id }}) only.</span>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.audit_log') }}">Show everyone</a>
+  </div>
+{% endif %}
+
 <form method="GET" action="{{ url_for('admin.audit_log') }}" class="dss-card dss-filter-bar mb-3">
+  {% if filters.user %}<input type="hidden" name="user" value="{{ filters.user }}">{% endif %}
   <div class="row g-2 align-items-end">
     <div class="col-12 col-xl">
       <label class="form-label" for="f-q">Search</label>
@@ -39,6 +49,23 @@
         <option value="">Any action</option>
         {% for value, label in action_choices %}
         <option value="{{ value }}" {{ 'selected' if filters.action == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-3 col-xl-2">
+      <label class="form-label" for="f-category">Category</label>
+      <select class="form-select form-select-sm" id="f-category" name="category">
+        <option value="">Any category</option>
+        {% for value, label in category_choices %}
+        <option value="{{ value }}" {{ 'selected' if filters.category == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-md-3 col-xl-2">
+      <label class="form-label" for="f-importance">Show</label>
+      <select class="form-select form-select-sm" id="f-importance" name="importance">
+        {% for value, label in importance_choices %}
+        <option value="{{ '' if value == 'important' else value }}" {{ 'selected' if (filters.importance or 'important') == value }}>{{ label }}</option>
         {% endfor %}
       </select>
     </div>
@@ -78,14 +105,47 @@
         </tr>
       </thead>
       <tbody>
-        {% for e in entries %}
-        <tr>
+        {% for g in groups %}
+        {% set e = g.entry %}
+        <tr class="dss-audit-{{ e.importance }}">
           <td class="dss-col-who">{{ audit.who(e) }}</td>
-          <td class="dss-col-what">{{ audit.what(e) }}</td>
+          <td class="dss-col-what">
+            {{ audit.what(e) }}
+            {% if g.repeats %}
+              <button class="btn btn-link btn-sm p-0 dss-meta" type="button" data-bs-toggle="collapse"
+                      data-bs-target="#repeats-{{ e.id }}" aria-expanded="false" aria-controls="repeats-{{ e.id }}">
+                <i class="bi bi-layers" aria-hidden="true"></i> &times;{{ g.repeats|length + 1 }} in a row &mdash; show all
+              </button>
+            {% endif %}
+            {% if e.changes %}
+              <button class="btn btn-outline-secondary btn-sm py-0 px-2 mt-1 d-block" type="button"
+                      data-bs-toggle="collapse" data-bs-target="#changes-{{ e.id }}" aria-expanded="false"
+                      aria-controls="changes-{{ e.id }}">
+                <i class="bi bi-list-columns-reverse" aria-hidden="true"></i> Details
+              </button>
+            {% endif %}
+          </td>
           <td class="dss-col-when">{{ audit.when(e) }}</td>
           <td class="dss-col-where">{{ audit.where(e) }}</td>
           <td class="dss-col-why">{{ audit.why(e) }}</td>
         </tr>
+        {% if e.changes %}
+        <tr class="collapse dss-audit-detail" id="changes-{{ e.id }}">
+          <td colspan="5">{{ audit.changes_table(e) }}</td>
+        </tr>
+        {% endif %}
+        {% if g.repeats %}
+        <tr class="collapse dss-audit-detail" id="repeats-{{ e.id }}">
+          <td colspan="5">
+            <div class="dss-meta mb-1">The same action by the same person on the same record, each within 10 minutes of the one before:</div>
+            <ul class="dss-meta mb-0 ps-3">
+              {% for r in g.repeats %}
+                <li>{{ r.when.strftime('%b %d, %Y %I:%M:%S %p') if r.when else '—' }} {{ tz_label }} &middot; {{ r.ip or 'no IP' }}{% if r.details %} &middot; {{ r.details }}{% endif %}</li>
+              {% endfor %}
+            </ul>
+          </td>
+        </tr>
+        {% endif %}
         {% else %}
         <tr><td colspan="5" class="text-center text-muted py-4">
           {{ 'No entries match these filters.' if active_filters else 'No audit records yet.' }}
@@ -94,6 +154,15 @@
       </tbody>
     </table>
   </div>
+
+  <p class="dss-meta mt-3 mb-0">
+    <i class="bi bi-info-circle" aria-hidden="true"></i>
+    <strong>Keeping the trail readable.</strong> With many users, routine actions (switching plans, theme changes,
+    the tour) would bury everything else, so the trail opens on <em>important</em> actions only &mdash; choose
+    <em>Everything</em> under Show to see them all. The same action repeated by one person is folded into one row,
+    each account&rsquo;s own trail is one click away from Manage Users, and Export CSV keeps a permanent copy.
+    Nothing is ever deleted from the trail.
+  </p>
 
   {% if pagination.pages > 1 %}
   <nav class="mt-3" aria-label="Audit trail pages">

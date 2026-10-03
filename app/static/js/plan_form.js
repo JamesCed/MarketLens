@@ -2,8 +2,8 @@
 // ---------------------------------------------------------------------
 // Behaviour for the broader business-parameter fields in
 // shared/_plan_fields.html, wherever they appear: the sign-up wizard,
-// the Home page's Add New Plan dialog, and each plan's Edit dialog on
-// the Home page.
+// the Planning page's Add New Plan dialog, and each plan's Edit dialog on
+// the Planning page.
 //
 //   * The sub-category list follows the chosen industry. Food and
 //     Beverage offers Bakery / Coffee Shop / Milk Tea ...; Construction

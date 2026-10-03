@@ -130,14 +130,42 @@ def _clip(value, limit):
     return text[:limit] if text else None
 
 
+def _changes_json(changes):
+    """`changes` as stored JSON, or None. Dates and other non-JSON values
+    are written as text; anything unserialisable is dropped rather than
+    failing the log line."""
+    if not changes:
+        return None
+    import json
+
+    try:
+        return json.dumps(changes, ensure_ascii=False, default=str)[:20000]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def diff_fields(before, after):
+    """{field: [before, after]} for the fields whose value changed --
+    what an edit's "Details" shows. Both arguments are plain dicts."""
+    out = {}
+    for key in sorted(set(before) | set(after)):
+        old, new = before.get(key), after.get(key)
+        if old != new:
+            out[key] = [old, new]
+    return out
+
+
 def log_action(action, details=None, user_id=None, *, target=None, target_type=None,
-               target_id=None, target_label=None, reason=None):
+               target_id=None, target_label=None, reason=None, changes=None):
     """Write one row to audit_logs. Never raises -- a logging failure
     should never break the feature that triggered it.
 
     `target` may be a model instance (User, SmeProfile, LguData, ...) or a
     (type, id, label) tuple; the explicit target_* arguments override it.
     `reason` is the WHY; when omitted, the action's purpose is recorded.
+    `changes` is the full record behind the entry's Details button --
+    {field: [before, after]} for an edit (see diff_fields), or
+    {field: value} for something created.
     """
     try:
         uid, name, role = _actor(user_id)
@@ -158,6 +186,7 @@ def log_action(action, details=None, user_id=None, *, target=None, target_type=N
             route=route,
             user_agent=agent,
             reason=_clip(reason, 255) or _clip(default_reason(action), 255),
+            changes=_changes_json(changes),
         )
         db.session.add(entry)
         db.session.commit()

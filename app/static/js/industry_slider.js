@@ -1,6 +1,6 @@
 // app/static/js/industry_slider.js
 // ---------------------------------------------------------------------
-// The industry slider on the Home page: twenty industry cards in one
+// The industry slider on the Planning page: twenty industry cards in one
 // horizontal row, four at a time on a wide screen.
 //
 // PROGRESSIVE ENHANCEMENT. The row is a CSS scroll-snap track

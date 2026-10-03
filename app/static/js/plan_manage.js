@@ -1,6 +1,6 @@
 // app/static/js/plan_manage.js
 // ---------------------------------------------------------------------
-// Managing plans on the Home page: the Edit dialog on each plan chip
+// Managing plans on the Planning page: the Edit dialog on each plan chip
 // (pencil icon) and the Move-to-Trash confirmation (bin icon).
 //
 // Both are PROGRESSIVE ENHANCEMENT over real forms. Every Edit dialog is
@@ -14,7 +14,7 @@
 //     comes back as JSON and is shown INSIDE the dialog, as text, with
 //     everything the owner typed still in place -- the no-JS path has to
 //     redirect, which loses it. On success the page reloads onto the
-//     edited plan (/home?plan=<id>), because every panel on Home -- the
+//     edited plan (/planning?plan=<id>), because every panel on Planning -- the
 //     score, the map, the forecast, the quarterly chart -- depends on the
 //     plan; repainting just the chip would leave the rest stale.
 //
@@ -93,7 +93,7 @@
       )
       .then(({ ok, data }) => {
         if (ok && data.success) {
-          window.location.assign(data.redirect || "/home?plan=" + encodeURIComponent(planId));
+          window.location.assign(data.redirect || "/planning?plan=" + encodeURIComponent(planId));
           return;
         }
         setBusy(form, false);

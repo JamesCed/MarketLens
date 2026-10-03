@@ -134,7 +134,11 @@ def test_serialize_then_parse_round_trip():
     assert stored.startswith("{")
 
     parsed = rec_service.parse_recommendation(stored)
+    # A row stored without a competitor insight gets one rebuilt from the
+    # fields it did store; everything else round-trips unchanged.
+    insight = parsed.pop("competitor_insight")
     assert parsed == original
+    assert insight and insight["direct_count"] == 2
 
 
 def test_a_forecast_stored_before_subcategories_still_parses():
@@ -176,7 +180,8 @@ def test_parse_recommendation_empty_or_none_returns_shaped_default():
     for value in (None, "", "   "):
         parsed = rec_service.parse_recommendation(value)
         assert set(parsed.keys()) == {"headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
-                                      "subcategory_analysis", "innovation", "forecast", "explanation"}
+                                      "subcategory_analysis", "innovation", "forecast", "explanation",
+                                      "competitor_insight"}
         assert parsed["reasons"] == []
         assert parsed["risks"] == []
 
@@ -331,7 +336,7 @@ def test_generate_forecast_for_profile_stores_parseable_recommendation(app):
         stored = json.loads(forecast.recommendation)
         assert set(stored.keys()) == {
             "headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
-            "subcategory_analysis", "innovation", "forecast", "explanation",
+            "subcategory_analysis", "innovation", "forecast", "explanation", "competitor_insight",
         }
         # Every forecast now carries the two-stage model's payload, and
         # the payload always comes with an explanation of it -- rule-based

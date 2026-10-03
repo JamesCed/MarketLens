@@ -54,12 +54,14 @@
   // Friendly names for "Taking you to the ... page".
   const PAGES = {
     "/home": "Home",
+    "/planning": "Planning",
     "/saturation-map": "Saturation Map",
     "/trend-reports": "Trend Reports",
     "/recommendations": "Recommendations",
     "/settings": "Settings",
     "/lgu/dashboard": "LGU Dashboard",
     "/lgu/government-data-upload": "Gov't Data Upload",
+    "/lgu/diversification": "Diversification Plan",
     "/admin/dashboard": "Admin Dashboard",
     "/admin/users": "Manage Users",
     "/admin/audit-log": "Audit Trail",
@@ -114,7 +116,8 @@
       title: "Your main menu",
       what: "This menu is how you move between the pages of MarketLens. It stays in the same place on every page.",
       list: [
-        "Home — your starting point: search, scores and your plans",
+        "Home — a summary of everything: your plans, the market around them, alerts",
+        "Planning — where you add, edit and compare your business plans and see their forecasts",
         "Saturation Map — how crowded each barangay is",
         "Trend Reports — how the market has changed over time",
         "Recommendations — where we suggest you open, and why",
@@ -123,8 +126,33 @@
       how: "Click a name to open that page. The highlighted one is the page you're on now. " + PHONE_MENU_TIP,
     },
     {
-      id: "sme-plan-selector",
+      id: "sme-home-overview",
       page: "/home",
+      target: '[data-tour="home-planning"]',
+      title: "Home is your summary",
+      what:
+        "Home shows a short summary of every section: your plans and their scores, the industries with " +
+        "the most room near your plan, the AI's latest advice and any market alerts.",
+      how:
+        "Each card has a button that opens its own page. The real work — adding and comparing plans — " +
+        "happens on the Planning page, which we'll visit next.",
+    },
+    {
+      id: "sme-community",
+      page: "/home",
+      target: '[data-tour="community-link"]',
+      placement: "top",
+      title: "Our community on Discord",
+      what:
+        "Want to ask other business owners in Tarlac City? The MarketLens community is a Discord server, " +
+        "with a room for each kind of business, permits questions, and tips.",
+      how:
+        "Click Community Forum at the bottom of this page. Discord opens in a new tab, so MarketLens stays " +
+        "open here. You'll need a free Discord account the first time.",
+    },
+    {
+      id: "sme-plan-selector",
+      page: "/planning",
       target: '[data-tour="plan-selector"]',
       title: "Switch between your plans",
       what:
@@ -134,7 +162,7 @@
     },
     {
       id: "sme-search",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="search"]',
       title: "Look up a barangay",
       what: "Want to know about a certain place? This search box finds any of Tarlac City's 76 barangays.",
@@ -142,7 +170,7 @@
     },
     {
       id: "sme-location-picker",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="location-picker"]',
       title: "Point to a place on the map",
       what: "Not sure of the barangay's name? You can point to the spot on a map instead.",
@@ -150,7 +178,7 @@
     },
     {
       id: "sme-industry-select",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="industry-select"]',
       title: "Choose your type of business",
       what:
@@ -163,7 +191,7 @@
     },
     {
       id: "sme-clear",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="clear-search"]',
       title: "Start fresh",
       what: "This empties the search box and your choices, so you can look up something new.",
@@ -171,7 +199,7 @@
     },
     {
       id: "sme-industry-cards",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="industry-cards"]',
       title: "Market Score cards",
       what:
@@ -184,7 +212,7 @@
     },
     {
       id: "sme-saved-plans",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="saved-plans"]',
       title: "Your saved plans",
       what:
@@ -192,13 +220,13 @@
         "checking your plans and can warn you when a barangay gets more crowded.",
       how:
         "Click a plan to see its results. Press the pencil on a plan to edit it — MarketLens runs a fresh " +
-        "forecast straight away. Press the bin to move a plan to Trash; nothing is deleted for good. The " +
+        "forecast straight away. Press the bin to move a plan to Trash. The " +
         "Trash button next to Add New Plan shows the plans you removed, and Restore brings one back with " +
-        "all its forecasts.",
+        "all its forecasts within 30 days; after 30 days in Trash a plan is deleted for good.",
     },
     {
       id: "sme-add-plan",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="add-plan"]',
       title: "Add a new business plan",
       what: "This is how you tell MarketLens about a new business idea. It then studies the location and gives you a forecast.",
@@ -209,7 +237,7 @@
     },
     {
       id: "sme-plan-form",
-      page: "/home",
+      page: "/planning",
       // Whatever dialog is open -- the Add New Plan form, if the step
       // before was done. If it was skipped there is no open dialog and
       // this shows as a centred card, which still reads correctly.
@@ -224,12 +252,12 @@
         "different. The name, type, barangay and capital are required, and everything you fill in is used " +
         "in your forecast.",
       how:
-        "When you're ready for real, fill it in and press the button at the bottom to get your forecast. " +
+        "When you're ready for real, fill it in and press Add to Plans — the forecast runs by itself. " +
         "For now, just press Next — we'll close the form and nothing will be saved.",
     },
     {
       id: "sme-mini-map",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="mini-map"]',
       title: "The saturation map",
       what: "This map shows Tarlac City divided into barangays. The colours show how crowded each place already is with this kind of business.",
@@ -246,7 +274,7 @@
     },
     {
       id: "sme-forecast-panel",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="forecast-panel"]',
       title: "Your forecast",
       what:
@@ -260,26 +288,13 @@
     },
     {
       id: "sme-recommendation-summary",
-      page: "/home",
+      page: "/planning",
       target: '[data-tour="recommendation-summary"]',
       title: "What should I do?",
       what: "This is our advice in plain words: whether to go ahead, what to watch out for, and why.",
       how:
         "Treat it as a helpful second opinion, not the final word — you know your business best. " +
         "For the full explanation, open the Recommendations page.",
-    },
-    {
-      id: "sme-community",
-      page: "/home",
-      target: '[data-tour="community-link"]',
-      placement: "top",
-      title: "Our community on Discord",
-      what:
-        "Want to ask other business owners in Tarlac City? The MarketLens community is a Discord server, " +
-        "with a room for each kind of business, permits questions, and tips.",
-      how:
-        "Click Community Forum at the bottom of this page. Discord opens in a new tab, so MarketLens stays " +
-        "open here. You'll need a free Discord account the first time.",
     },
     {
       id: "sme-saturation-map",
@@ -407,6 +422,7 @@
       what: "This menu is how you move between the pages. It stays in the same place on every page.",
       list: [
         "LGU Dashboard — the whole city at a glance",
+        "Diversification Plan — which industries to encourage or regulate, and in which barangays",
         "Saturation Map — how crowded each barangay is",
         "Trend Reports — how the market has changed",
         "Gov't Data Upload — add the city's official records",
@@ -455,6 +471,20 @@
       title: "Our community on Discord",
       what: "Business owners ask questions and share tips on the MarketLens Discord server — a good place for the city to answer them.",
       how: "Click Community Forum at the bottom of the dashboard. Discord opens in a new tab.",
+    },
+    {
+      id: "lgu-diversification",
+      page: "/lgu/diversification",
+      target: "#stanceTitle",
+      closest: ".dss-card",
+      title: "The Diversification Plan",
+      what:
+        "This page turns the city's data into a plan: how dependent each barangay is on a few industries, " +
+        "which industries have room to grow (Encourage) and which are already crowded (Regulate), and which " +
+        "barangays need help first.",
+      how:
+        "Read the summary at the top, then the priority barangays and their suggested actions. Every chart has " +
+        "a short explanation under it, and Export plan (CSV) downloads the whole plan for a briefing.",
     },
     {
       id: "lgu-upload",
@@ -567,12 +597,12 @@
       placement: "right",
       title: "Your main menu",
       what:
-        "Everything business owners and the city office can see is here, plus an ADMIN section with the " +
-        "tools only administrators have.",
+        "The Saturation Map and Trend Reports let you watch the market data, and the ADMIN section holds the " +
+        "tools for running the system. The city's own planning pages belong to the LGU account.",
       list: [
-        "Admin Dashboard — the whole system at a glance",
-        "Manage Users — accounts and who can sign in",
-        "Audit Trail — who did what, and when",
+        "Admin Dashboard — users, activity, security alerts and system health",
+        "Manage Users — find accounts, see when they were last seen, suspend or archive them",
+        "Audit Trail — the detailed record of who did what, when, where and why",
         "Datasets — the data behind every score",
         "System Settings — how the forecasting engine behaves",
         "Settings and Support — at the bottom of the menu: your own account and the Tutorial",
@@ -587,8 +617,10 @@
       target: ".dss-main .row.g-3",
       placement: "bottom",
       title: "The system at a glance",
-      what: "These boxes count the accounts, forecasts and data rows in the system right now.",
-      how: "Check them now and then. A sudden jump or drop is a sign to take a closer look in the Audit Trail.",
+      what:
+        "These boxes show who is using the system: accounts online now, active this month, inactive for 30 " +
+        "days, and suspended. Below them are the activity chart, system health and security alerts.",
+      how: "Click a box to see those accounts. A red alert at the top means repeated failed sign-ins — check them in the Audit Trail.",
     },
     {
       id: "admin-users",
@@ -599,7 +631,9 @@
       what:
         "Every account is listed here. Accounts are never deleted — they are archived instead, so their " +
         "history stays in the records and they can be brought back if needed.",
-      how: "Use the Active & suspended and Archived tabs to switch lists. New Account, at the top, creates an account for someone.",
+      how:
+        "Search by name, email or account ID, and use Show to list only online, active, inactive or suspended " +
+        "accounts. Activity opens that account's own audit trail. New Account creates an account for someone.",
     },
     {
       id: "admin-reason",
@@ -608,8 +642,8 @@
       closest: "td",
       title: "Always give a reason",
       what:
-        "Suspend stops someone signing in until you activate them again. Archive takes an account out of " +
-        "use without erasing it.",
+        "Suspend stops someone signing in for as long as you choose — 1, 3, 7 or 30 days, or until you lift " +
+        "it. Archive takes an account out of use without erasing it.",
       how:
         "Both ask you to type a reason before they go through. The reason is saved in the Audit Trail, so " +
         "anyone checking later knows why it was done.",
@@ -626,7 +660,7 @@
       how: "Press Restore next to an account, and give a reason, to let that person sign in again.",
       tryIt: "Try it: click the Archived tab.",
       advanceOn: { selector: "#tab-archived", event: "click" },
-      success: "Nice! This is the archived list. Switch back with the Active & suspended tab.",
+      success: "Nice! This is the archived list. Switch back with the Accounts tab.",
     },
     {
       id: "admin-audit",
@@ -638,8 +672,9 @@
         "A permanent record of every important action: who did it, what they did, when, where (which " +
         "device and page), and why.",
       how:
-        "Use these filters to narrow it down by name, role, action or date. Export CSV downloads exactly " +
-        "what you've filtered, for reports.",
+        "Filter by name, role, action, category or date. It opens on important actions so routine clicks do " +
+        "not bury them — choose Everything under Show to see all. Details opens the full before-and-after of a " +
+        "change, and Export CSV downloads exactly what you have filtered.",
     },
     {
       id: "admin-datasets",

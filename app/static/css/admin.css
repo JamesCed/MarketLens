@@ -67,3 +67,10 @@
   padding: .6rem .85rem;
   font-size: .85rem;
 }
+
+
+/* Audit trail: importance shading and the Details / repeats rows. */
+.dss-audit-high > td:first-child { box-shadow: inset 3px 0 0 var(--bs-danger); }
+.dss-audit-detail > td { background: var(--bs-tertiary-bg); }
+.dss-changes-table { --bs-table-bg: transparent; font-size: .8rem; }
+.dss-changes-table th { font-size: .7rem; text-transform: uppercase; color: var(--bs-secondary-color); }

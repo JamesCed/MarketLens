@@ -324,9 +324,11 @@ def test_the_dashboard_counts_active_and_archived_users_separately(app, admin_cl
     db.session.commit()
 
     body = admin_client.get("/admin/dashboard").get_data(as_text=True)
-    card = re.sub(r"\s+", " ", body[body.index('small">Users<'):body.index("SME Accounts")])
-    assert re.search(r'fs-3">\s*2\s*<', card), card     # admin + two@, not the archived one
-    assert "1 archived" in card
+    # The Accounts card counts accounts in circulation; the archived one is
+    # counted on the Suspended card's "N archived" line instead.
+    card = re.sub(r"\s+", " ", body[body.index("> Accounts</div>"):body.index("Online now")])
+    assert re.search(r'dss-stat-value">\s*2\s*<', card), card     # admin + two@, not the archived one
+    assert "1 archived" in re.sub(r"\s+", " ", body)
 
 
 # =====================================================================

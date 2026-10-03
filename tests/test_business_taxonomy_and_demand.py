@@ -277,7 +277,8 @@ def test_leaflet_assets_carry_no_unverified_integrity_hash(subtests=None):
     memory."""
     import re
     here = os.path.dirname(__file__)
-    for template in ("saturation_map.html", "home.html"):
+    # The map lives on Planning now; Home is the overview and has none.
+    for template in ("saturation_map.html", "planning.html"):
         path = os.path.join(here, "..", "app", "templates", "sme", template)
         with open(path, "r", encoding="utf-8") as f:
             markup = f.read()
@@ -290,7 +291,7 @@ def test_leaflet_stylesheet_is_loaded_from_the_head_block():
     """A stylesheet the map depends on belongs in <head>, applied before
     the map is built -- not beside the script at the end of <body>."""
     here = os.path.dirname(__file__)
-    for template in ("saturation_map.html", "home.html"):
+    for template in ("saturation_map.html", "planning.html"):
         path = os.path.join(here, "..", "app", "templates", "sme", template)
         with open(path, "r", encoding="utf-8") as f:
             markup = f.read()
@@ -355,7 +356,8 @@ def test_home_page_exposes_demand_summary(client, app):
     _login_sme(client, app)
     with app.test_request_context():
         from flask import url_for
-        url = url_for("sme.home")
+        # The plan workspace (with its mini map) is Planning now.
+        url = url_for("sme.planning")
     response = client.get(url)
     assert response.status_code == 200
     body = response.get_data(as_text=True)

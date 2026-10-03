@@ -1,943 +1,200 @@
 {% extends "base.html" %}
 {% block title %}Home{% endblock %}
-{% from "shared/_plan_fields.html" import plan_core_fields %}
-{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, forecast_breakdown, explanation_badge %}
-{% set plan_industry = selected_plan.industry_type if selected_plan else featured_industry_type %}
-{% set trash_count = (trashed_plans or [])|length %}
 
-{% block extra_head %}
-<!-- Leaflet's stylesheet MUST load before the map is built, and it must
-     be in <head>, not next to the script at the end of <body>.
+{#
+  sme/home.html -- THE OVERVIEW
+  ------------------------------
+  A summary of every section, never the work itself. Each card says the
+  one thing worth knowing about its page and links there:
 
-     NOTE: no `integrity` attribute on purpose. An SRI hash that does not
-     match exactly what the CDN serves makes the browser silently BLOCK
-     the file -- and a blocked leaflet.css is catastrophic rather than
-     cosmetic: without it the tiles lose `position:absolute` and scatter
-     across the page, and the map container loses `overflow:hidden`, so
-     the choropleth polygons spill over the whole layout. That is exactly
-     the bug this attribute caused here. If you want SRI back, copy the
-     current hashes from https://cdnjs.com/libraries/leaflet -- do not
-     type them from memory. -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
-      crossorigin="anonymous" referrerpolicy="no-referrer">
-<!-- SCRIPTING OFF. The plan dialogs (Edit, Trash) are opened by links
-     to their own #id, which Bootstrap intercepts when it runs. Without
-     it the browser just jumps to the fragment, and this shows the
-     dialog that is the :target -- so editing a plan and restoring one
-     from Trash still work, as ordinary form posts. Inside <noscript>
-     so it can never fight Bootstrap's own modal state. -->
-<noscript>
-  <style>
-    .modal:target { display: block; position: relative; opacity: 1; height: auto; z-index: 1; }
-    .modal:target .modal-dialog { transform: none; }
-  </style>
-</noscript>
-{% endblock %}
+    Planning         your plans and their scores (the main workspace)
+    Saturation Map   how crowded each industry is around your plan
+    Trend Reports    how the city's market is moving
+    Recommendations  what the AI suggests, and where else to open
+
+  Everything here is read from what is stored (the newest forecast per
+  plan, notifications) plus one batched market sweep for the chosen
+  plan's barangay -- see sme_controller.home(). Nothing on this page
+  creates or changes a plan.
+#}
 
 {% block content %}
-<!-- Hero / search -- matches Reference/Figma_Storyboard/src/app/pages/home.tsx's
-     gradient header + centered search bar, minus the duplicate app title
-     (already shown in the shared top bar).
-
-     REVISION: the location is picked on a MAP (or typed), not from a
-     dropdown; the industry type sits in its own labelled box on the
-     right, where it is seen rather than tucked into the search bar; and
-     Clear empties both. -->
-<div class="dss-hero mb-3">
-  <h2 class="text-center mb-1">Tarlac City Market Entry Assistant</h2>
-  <p class="text-center text-muted mb-3">AI-powered saturation &amp; viability insights across all 76 barangays</p>
-
-  <form id="smeSearchForm" class="dss-home-search mx-auto" role="search" autocomplete="off">
-    <div class="dss-home-search-grid">
-      <div class="dss-home-search-where" data-tour="search">
-        <label class="form-label small fw-semibold mb-1" for="smeSearchInput">Location</label>
-        <div class="input-group position-relative">
-          <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
-          <input type="text" id="smeSearchInput" class="form-control" autocomplete="off"
-                 placeholder="Type a barangay, or pick it on the map">
-          <button type="button" class="btn btn-outline-primary" id="smeSearchPickOnMap" data-tour="location-picker"
-                  data-bs-toggle="modal" data-bs-target="#locationPickerModal">
-            <i class="bi bi-geo-alt"></i><span class="d-none d-sm-inline"> Pick on map</span>
-          </button>
-          <div id="smeSearchSuggestions" class="list-group position-absolute w-100 shadow-sm" style="top:100%; left:0; z-index:1050;" hidden></div>
-        </div>
-      </div>
-      <div class="dss-home-search-what">
-        <label class="form-label small fw-semibold mb-1" for="smeSearchIndustry">Industry type</label>
-        <select id="smeSearchIndustry" class="form-select" data-tour="industry-select"
-                data-default="{{ plan_industry }}">
-          {% for bt in business_types %}<option value="{{ bt }}" {{ 'selected' if bt == plan_industry }}>{{ bt }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="dss-home-search-actions">
-        <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
-        <button type="button" class="btn btn-light" id="smeSearchClear" data-tour="clear-search">
-          <i class="bi bi-x-circle"></i> Clear
-        </button>
-      </div>
-    </div>
-  </form>
-  <div id="smeSearchResults" class="mx-auto" style="max-width:900px;" hidden></div>
-</div>
-
-{#
-  THE CHOICE BAR (revision MAJOR 1). Every saved plan, each with its own
-  plan viability score, one click to switch -- the owner can compare "Pandesal
-  in Tibag" with "Gulong in Balibago I" without deleting one or typing
-  the other in again. The chosen plan drives everything below it: the
-  industry cards' barangay, the map's focus and the forecast panel.
-#}
-{#
-  PLANS ARE MANAGED HERE. Edit and Move to Trash used to live in
-  Settings > Business Preferences, one page away from the plans they
-  changed. Each chip now carries both, as icon-only buttons (each with
-  an aria-label and a title, so a screen reader and a mouse hover both
-  get the words the icon stands for), and the Trash button beside
-  "Add New Plan" opens the plans that were removed.
-
-  "Remove" never deletes: it moves the plan to Trash (an archive -- see
-  app/models/sme_profile.py), and Trash restores it with every forecast
-  it ever had.
-
-  Each chip is a container, not a link: the selection <a> is stretched
-  over it by CSS, and the two buttons sit above that, so no interactive
-  element is nested inside another.
-#}
-{% macro trash_button(count) -%}
-  {# Icon-only. The count is a badge, and also in the aria-label so a
-     screen reader hears "Trash (2)" rather than "trash 2". #}
-  <a href="#planTrashModal" class="btn btn-sm btn-outline-secondary dss-icon-btn dss-trash-btn"
-     data-bs-toggle="modal" data-bs-target="#planTrashModal" data-tour="plan-trash"
-     aria-label="Trash ({{ count }})" title="Trash">
-    <i class="bi bi-trash3" aria-hidden="true"></i>
-    {% if count %}<span class="dss-trash-count" aria-hidden="true">{{ count }}</span>{% endif %}
+{% set first_name = (current_user.name or '').split(' ')[0] %}
+<div class="dss-overview-hero mb-4">
+  <div>
+    <h2 class="mb-1">Welcome back{{ ', ' ~ first_name if first_name }}</h2>
+    <p class="text-muted mb-0">
+      Here is a summary of your plans and the Tarlac City market. Open a section to work on it.
+    </p>
+  </div>
+  <a href="{{ url_for('sme.planning') }}?new_plan=1" class="btn btn-primary" data-tour="home-add-plan">
+    <i class="bi bi-plus-lg" aria-hidden="true"></i> Add a plan
   </a>
-{%- endmacro %}
-{% if profiles %}
-<section class="dss-card dss-plan-bar mb-4" data-tour="saved-plans" aria-labelledby="planBarTitle" id="planBar">
-  <div class="d-flex justify-content-between align-items-start mb-2 flex-wrap gap-2">
-    <div>
-      <h6 class="mb-0" id="planBarTitle"><i class="bi bi-bookmark-star"></i> Your business plans</h6>
-      <div class="text-muted small">
-        Choose a plan to see its score, map and forecast. Use
-        <i class="bi bi-pencil" aria-hidden="true"></i><span class="visually-hidden">the pencil</span> to edit or the
-        <i class="bi bi-trash" aria-hidden="true"></i><span class="visually-hidden">bin</span> to move a plan to Trash
-        &mdash; nothing is deleted for good.
-      </div>
-    </div>
-    <div class="d-flex align-items-center gap-2">
-      <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addPlanModal" data-tour="add-plan">
-        <i class="bi bi-plus-lg"></i> Add New Plan
-      </button>
-      {{ trash_button(trash_count) }}
-    </div>
-  </div>
-  <div class="dss-plan-chips" data-tour="plan-selector" role="group" aria-label="Your plans: choose which plan to view">
-    {#
-      The pill is coloured by the NUMBER on it (sme_controller
-      ._score_summary: >= 6.5 good, >= 4 moderate, else low -- the same
-      cuts as the forecast panel's viability word), not by the market's
-      saturation tier: the two can disagree, and a green pill reading
-      "Viability 2.4/10" says two different things at once. The colours
-      reuse the tier pills' green / yellow / red.
+</div>
 
-      A chip whose newest forecast was written before the plan viability
-      model holds the old market-only figure, so it says "Market score"
-      and offers the update -- opening the plan re-runs it -- instead of
-      sitting next to plan scores under the same name.
-    #}
-    {% set band_pill = {'good':'dss-pill-low','moderate':'dss-pill-moderate','low':'dss-pill-saturated'} %}
-    {% for c in plan_choices %}
-      {% set p = c.profile %}
-      <div class="dss-plan-chip{{ ' is-selected' if c.selected }}" data-plan-chip="{{ p.sme_id }}">
-        <a href="{{ url_for('sme.home', plan=p.sme_id) }}" class="dss-plan-chip-link"
-           {{ 'aria-current="true"'|safe if c.selected }}>
-          <span class="dss-plan-chip-name">{{ p.business_name }}</span>
-          <span class="dss-plan-chip-meta">
-            {{ p.subcategory_label if p.subcategory and p.subcategory != 'other' else short_industry(p.industry_type) }}
-            &middot; {{ p.location }}
-          </span>
-          {% if c.viability_score is not none and c.is_plan_score %}
-            <span class="dss-plan-chip-score dss-stat-pill {{ band_pill.get(c.band, 'dss-pill-moderate') }}">
-              Viability {{ '%.1f'|format(c.viability_score|float) }}/10
-            </span>
-          {% elif c.viability_score is not none %}
-            <span class="dss-plan-chip-score dss-stat-pill {{ band_pill.get(c.band, 'dss-pill-moderate') }}"
-                  title="Scored before the plan viability model: the market alone, not your capital, staff or prices">
-              Market score {{ '%.1f'|format(c.viability_score|float) }}/10 &middot; open to update
-            </span>
-          {% else %}
-            <span class="dss-plan-chip-score text-muted">Not scored yet &mdash; open to score</span>
-          {% endif %}
-          {% if p.capital_missing %}
-            <span class="dss-plan-chip-warning"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> Capital missing</span>
-          {% endif %}
-        </a>
-        <div class="dss-plan-chip-actions">
-          <a href="#editPlanModal-{{ p.sme_id }}" class="dss-icon-btn"
-             data-bs-toggle="modal" data-bs-target="#editPlanModal-{{ p.sme_id }}"
-             aria-label="Edit plan “{{ p.business_name }}”" title="Edit plan “{{ p.business_name }}”">
-            <i class="bi bi-pencil" aria-hidden="true"></i>
-          </a>
-          {# A real form: with scripting off it moves the plan to Trash
-             straight away (recoverable, so no confirm is needed); with
-             it, plan_manage.js asks first in #planTrashConfirmModal. #}
-          <form method="POST" action="{{ url_for('sme.trash_plan', sme_id=p.sme_id) }}"
-                data-plan-trash-form data-plan-name="{{ p.business_name }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="dss-icon-btn dss-icon-btn-danger"
-                    aria-label="Move “{{ p.business_name }}” to Trash"
-                    title="Move “{{ p.business_name }}” to Trash">
-              <i class="bi bi-trash" aria-hidden="true"></i>
-            </button>
-          </form>
-        </div>
-      </div>
-    {% endfor %}
+{# ---------------------------- at a glance ---------------------------- #}
+<div class="row g-3 mb-4" data-tour="home-stats">
+  <div class="col-6 col-lg-3">
+    <div class="dss-card dss-stat-card h-100">
+      <div class="dss-stat-label"><i class="bi bi-briefcase" aria-hidden="true"></i> Active plans</div>
+      <div class="dss-stat-value">{{ profiles|length }}</div>
+      <div class="dss-stat-note">{{ trash_count }} in Trash</div>
+    </div>
   </div>
-</section>
-{% else %}
-<div class="dss-card mb-4 text-center py-4" data-tour="saved-plans">
-  <p class="text-muted mb-2">
-    {% if trash_count %}
-      You have no active business plans. {{ trash_count }} plan{{ 's are' if trash_count != 1 else ' is' }} in Trash
-      and can be restored.
-    {% else %}
-      You haven't created a business plan yet.
-    {% endif %}
-  </p>
-  <div class="d-flex justify-content-center align-items-center gap-2">
-    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addPlanModal" data-tour="add-plan">
-      <i class="bi bi-plus-lg"></i> Add New Plan
-    </button>
-    {% if trash_count %}{{ trash_button(trash_count) }}{% endif %}
+  <div class="col-6 col-lg-3">
+    <div class="dss-card dss-stat-card h-100">
+      <div class="dss-stat-label"><i class="bi bi-trophy" aria-hidden="true"></i> Best plan viability</div>
+      <div class="dss-stat-value">{{ '%.1f'|format(best_plan.viability_score|float) ~ '/10' if best_plan else '—' }}</div>
+      <div class="dss-stat-note text-truncate">{{ best_plan.profile.business_name if best_plan else 'No plan scored yet' }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="dss-card dss-stat-card h-100">
+      <div class="dss-stat-label"><i class="bi bi-bell" aria-hidden="true"></i> Unread alerts</div>
+      <div class="dss-stat-value">{{ unread_count }}</div>
+      <div class="dss-stat-note">market changes and warnings</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="dss-card dss-stat-card h-100">
+      <div class="dss-stat-label"><i class="bi bi-database-check" aria-hidden="true"></i> City data</div>
+      <div class="dss-stat-value fs-6 mt-1">{{ 'LGU records on file' if has_lgu_data else 'Awaiting LGU upload' }}</div>
+      <div class="dss-stat-note">
+        {% if lgu_dataset %}{{ lgu_dataset.barangays_covered }} barangay(s), {{ lgu_dataset.upload_date.strftime('%b %d, %Y') }}
+        {% else %}scores use Google Places and PSA data{% endif %}
+      </div>
+    </div>
   </div>
 </div>
-{% endif %}
 
-{#
-  THE INDUSTRY SLIDER. Every one of the twenty sections, each with its
-  live Market Score for the chosen plan's barangay -- the old grid showed
-  eight, and the other twelve could only be seen by typing them into the
-  search box. The chosen plan's own industry comes first (ringed, and
-  aria-current), then the featured sections, then the rest
-  (sme_controller._industry_card_order).
-
-  It is a plain scrolling row first: a scroll-snap track that swipes on
-  a phone and scrolls with a trackpad or Shift+wheel, so with scripting
-  off every card is still one gesture away. static/js/industry_slider.js
-  adds the rest -- the Previous/Next buttons (hidden until it runs,
-  rather than shown dead), Left/Right on the focused track, and the
-  "Showing 1-4 of 20" count.
-
-  Each card opens the Saturation Map on that industry, focused on the
-  same barangay its score is for.
-
-  The icon is a Bootstrap Icon in a tinted tile, one glyph and colour per
-  section (INDUSTRY_DISPLAY "bi"/"hue" in app/ml/constants.py) -- the
-  emoji it replaces looked different on every phone. It is decorative:
-  the name is written beside it.
-
-  THE ARROW is the score's level drawn as a direction -- green up from
-  6.5, red down below 4, level in between -- not a change over time, so
-  its screen-reader text says what it means ("good chance") rather than
-  "rising". The arrow and the score pill share the plan chips' bands
-  (>= 6.5, >= 4), so the arrow never disagrees with the pill's colour.
-#}
-{% set industry_pill = {'good': 'dss-pill-low', 'fair': 'dss-pill-moderate', 'low': 'dss-pill-saturated'} %}
-{% set industry_level = {'up': 'a good chance', 'down': 'hard to compete', 'neutral': 'a fair chance'} %}
-<div class="dss-industry-slider mb-2" data-tour="industry-cards" data-industry-slider>
-  <div class="dss-industry-slider-head">
-    <div class="dss-industry-slider-title">
-      <h6 class="mb-0" id="industrySliderTitle">
-        <i class="bi bi-grid-3x3-gap" aria-hidden="true"></i> Industries in {{ default_location }}
-      </h6>
-      <div class="small text-muted" id="industrySliderStatus" data-industry-slider-status aria-live="polite">
-        {{ industry_cards|length }} industries
-      </div>
-    </div>
-    {# Icon-only: each has an aria-label and a title, like the plan
-       chips' icon buttons. `hidden` until the script runs -- a button
-       that does nothing without it should not be on the page. #}
-    <div class="dss-industry-slider-nav" data-industry-slider-nav hidden>
-      <button type="button" class="dss-icon-btn dss-slider-btn" data-industry-slider-prev
-              aria-controls="industryTrack" aria-label="Previous industries" title="Previous industries">
-        <i class="bi bi-chevron-left" aria-hidden="true"></i>
-      </button>
-      <button type="button" class="dss-icon-btn dss-slider-btn" data-industry-slider-next
-              aria-controls="industryTrack" aria-label="Next industries" title="Next industries">
-        <i class="bi bi-chevron-right" aria-hidden="true"></i>
-      </button>
-    </div>
-  </div>
-  {% if industry_cards %}
-  <div class="dss-industry-track" id="industryTrack" tabindex="0" role="region" aria-label="Industries"
-       data-industry-track>
-    <ul class="dss-industry-list">
-      {% for card in industry_cards %}
-      <li class="dss-industry-item">
-        <a class="dss-card dss-card-hover dss-industry-card{{ ' dss-card-current' if card.is_current }}"
-           href="{{ url_for('sme.saturation_map') }}?industry_type={{ card.name|urlencode }}&amp;location={{ default_location|urlencode }}"
-           title="Open the Saturation Map for {{ card.name }} in {{ default_location }}"
-           data-industry="{{ card.name }}"{{ ' aria-current="true"'|safe if card.is_current }}>
-          <span class="dss-industry-tile dss-hue-{{ card.hue }}" aria-hidden="true"><i class="bi {{ card.bi }}"></i></span>
-          {% if card.is_current %}<span class="dss-industry-current">Your plan</span>{% endif %}
-          <span class="dss-industry-name">{{ card.short }}</span>
-          {% if card.subtitle %}<span class="dss-industry-sub">{{ card.subtitle }}</span>{% endif %}
-          <span class="dss-industry-score">
-            <span class="text-muted">Market Score</span>
-            <strong class="dss-stat-pill {{ industry_pill.get(card.band, 'dss-pill-moderate') }}">{{ '%.1f'|format(card.score|float) }}</strong>
-            {% if card.trend == 'up' %}<i class="bi bi-arrow-up-circle-fill text-success" aria-hidden="true"></i>
-            {% elif card.trend == 'down' %}<i class="bi bi-arrow-down-circle-fill text-danger" aria-hidden="true"></i>
-            {% else %}<i class="bi bi-dash-circle text-secondary" aria-hidden="true"></i>{% endif %}
-            <span class="visually-hidden">({{ industry_level.get(card.trend, 'a fair chance') }})</span>
-          </span>
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
-  </div>
-  {% else %}
-  <p class="text-muted mb-0">Add a business profile to see live industry scores.</p>
-  {% endif %}
-</div>
-<p class="text-muted small mb-4">
-  Scores above are for <strong>{{ default_location }}</strong>{% if selected_plan %}, the barangay of
-  <strong>{{ selected_plan.business_name }}</strong>{% endif %} &middot; all {{ industry_cards|length }}
-  industries &mdash; use the arrows (or scroll sideways) to see more, and open a card for its Saturation Map.
-</p>
-
-<!-- Main analysis section -->
-<h4 class="text-center mb-3">AI-Powered Market Saturation &amp; Viability Analysis</h4>
 <div class="row g-4">
-  <!-- Saturation map (real data). Bigger than it was, and it FILLS its
-       card: the map grows to the height of the forecast panel beside it,
-       so there is no empty band under it. It follows the chosen plan --
-       that plan's industry, centred on that plan's barangay. -->
+  {# ------------------------------ Planning ------------------------------ #}
   <div class="col-lg-7">
-    <div class="dss-card h-100 d-flex flex-column dss-home-map-card">
-      <div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-2">
-        <h6 class="mb-0">Saturation Map: Tarlac City Barangays</h6>
-        {% if selected_plan %}
-          <span class="small text-muted">
-            <i class="bi bi-crosshair text-primary"></i>
-            {{ short_industry(selected_plan.industry_type) }} &middot; focused on {{ selected_plan.location }}
-          </span>
-        {% endif %}
+    <section class="dss-card h-100 dss-overview-card" aria-labelledby="ovPlanning" data-tour="home-planning">
+      <div class="dss-overview-head">
+        <h5 id="ovPlanning"><i class="bi bi-clipboard-data" aria-hidden="true"></i> Planning</h5>
+        <a href="{{ url_for('sme.planning') }}" class="btn btn-sm btn-outline-primary">Open Planning &raquo;</a>
       </div>
-      <!-- OpenStreetMap via Leaflet -- no API key needed. -->
-      <div id="dss-map" class="dss-mini-map dss-home-map mb-2" data-tour="mini-map"></div>
-      <div class="dss-legend-inline small" aria-label="Saturation intensity scale">
-        <span class="fw-semibold me-1">Saturation:</span>
-        <span><span class="dss-legend-swatch" style="background:#b91c1c"></span>High</span>
-        <span><span class="dss-legend-swatch" style="background:#f97316"></span>Moderate</span>
-        <span><span class="dss-legend-swatch" style="background:#fde047"></span>Low-Moderate</span>
-        <span><span class="dss-legend-swatch" style="background:#22c55e"></span>High Opportunity</span>
-      </div>
-      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2">
-        <p class="text-muted mb-0" style="font-size:.7rem;">Official barangay boundaries &copy; PSA &amp; NAMRIA (2023) &middot; city border &copy; OpenStreetMap contributors, ODbL.</p>
-        <a href="{{ url_for('sme.saturation_map') }}?industry_type={{ plan_industry|urlencode }}{% if selected_plan %}&location={{ selected_plan.location|urlencode }}{% endif %}"
-           class="btn btn-outline-primary btn-sm">
-          <i class="bi bi-map"></i> Open Full Interactive Map
-        </a>
-      </div>
-
-      {# City-wide ranking lives under the map it describes, which also
-         balances the two columns: the map grows into the space the
-         taller forecast panel leaves, instead of leaving a gap. #}
-      {#
-        COLD START. Ranking barangays city-wide is a claim
-        about the city's own records, so it is not made until
-        an LGU account has uploaded some. Before that this is
-        an empty state with a way out of it, rather than a
-        spinner that resolves into rankings computed from
-        auto-generated placeholder rows -- numbers nobody
-        submitted, presented as though the city had.
-
-        The gate is server-side (has_lgu_data, from
-        data_import_service.has_active_lgu_data). The fetch
-        lives inside this branch too, so the ranking endpoint
-        is never even called in the empty state.
-      #}
-      <div class="small mt-3 border-top pt-3">
-        <span class="fw-bold">LGU Recommendations</span>
-        <span class="text-muted">&mdash; city-wide, for {{ short_industry(plan_industry) }}</span>
-        {% if has_lgu_data %}
-          <div id="lguRecommendationList" class="mt-1">
-            <div class="text-muted"><span class="spinner-border spinner-border-sm"></span> Ranking barangays&hellip;</div>
-          </div>
-          {% if lgu_dataset %}
-            <div class="text-muted mt-1" style="font-size:.72rem;">
-              From the {{ lgu_dataset.source }} dataset uploaded
-              {{ lgu_dataset.upload_date.strftime('%B %d, %Y') }} &middot;
-              {{ lgu_dataset.barangays_covered }} barangay(s) on file
-            </div>
-          {% endif %}
-        {% else %}
-          <div class="dss-empty-state mt-2">
-            <i class="bi bi-inbox dss-empty-state-icon" aria-hidden="true"></i>
-            <div class="flex-grow-1">
-              <div class="fw-semibold">No record yet</div>
-              <p class="mb-2">
-                No official LGU dataset is active. Upload business permit data to
-                generate city-wide recommendations.
-              </p>
-              {% if current_user.role in ('LGU', 'Admin') %}
-                <a href="{{ url_for('lgu.government_upload') }}" class="btn btn-sm btn-primary">
-                  <i class="bi bi-upload"></i> Upload Dataset
-                </a>
-              {% else %}
-                {# An SME cannot upload one, so offering them
-                   the button would be a dead end. Say who can. #}
-                <span class="text-muted">Your city's LGU account can upload one.</span>
-              {% endif %}
-            </div>
-          </div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <!-- Forecast & Recommendations -->
-  <div class="col-lg-5">
-    <div class="dss-card h-100" data-tour="forecast-panel">
-      <h6 class="mb-2">Forecast &amp; Recommendations</h6>
-
-      {% if featured_forecast %}
-        {% set f = featured_forecast %}
-        {% set rec = featured_recommendation %}
-        <div class="mb-2">
-          <div class="fw-semibold">{{ selected_plan.business_name if selected_plan else '' }}</div>
-          <div class="text-muted small">
-            {% if selected_plan and selected_plan.subcategory and selected_plan.subcategory != 'other' %}
-              {{ selected_plan.subcategory_label }} &middot;
-            {% endif %}
-            {{ f.input_industry_type }} in {{ f.input_location }}
-          </div>
-          {% if selected_plan and selected_plan.product_offering %}
-            <div class="text-muted" style="font-size:.76rem;"><i class="bi bi-basket"></i> {{ selected_plan.product_offering }}</div>
-          {% endif %}
-        </div>
-
-        {#
-          THE TWO STAGES, AS THE OWNER SEES THEM. The gauge is the PLAN
-          viability -- the trained plan model's output, which weighs the
-          market (stage 1's saturation) together with the capital, staff,
-          prices, stage and offering on this plan. Everything below is
-          read from the payload the model stored with this forecast
-          (rec.forecast -- see plan_forecast_service.forecast_plan); this
-          template computes nothing. A forecast written before the plan
-          model has no payload, so the panel falls back to the figures
-          on the row itself.
-        #}
-        {% set fc = rec.forecast if rec else None %}
-        {% set market = fc.market if fc and fc.market else {} %}
-        {% set fin = fc.financials if fc and fc.financials else {} %}
-        {% set tier = market.cluster_label or f.cluster_label %}
-        {% set sat = market.get('saturation_index') %}
-        {% if sat is none %}{% set sat = f.saturation_index %}{% endif %}
-        {% set pill = {'Low':'dss-pill-low','Moderate':'dss-pill-moderate','High':'dss-pill-high','Saturated':'dss-pill-saturated'} %}
-        {% set vscore = f.viability_score|float %}
-        {% set viability_word = 'HIGH' if vscore >= 6.5 else ('MODERATE' if vscore >= 4 else 'LOW') %}
-        <div class="d-flex align-items-center gap-3 mb-2">
-          <div class="position-relative flex-shrink-0" style="width:120px; height:120px;">
-            <canvas id="viabilityGauge" width="120" height="120" role="img"
-                    aria-label="Plan viability {{ '%.1f'|format(vscore) }} out of 10"></canvas>
-            <div class="position-absolute top-50 start-50 translate-middle text-center" aria-hidden="true">
-              <div class="fs-4 fw-bold">{{ '%.1f'|format(vscore) }}</div>
-              <div class="dss-text-muted-sm">/10</div>
-            </div>
-          </div>
-          <ul class="small mb-0 list-unstyled dss-forecast-facts">
-            <li class="dss-text-muted-sm">Plan viability</li>
-            <li class="mt-1">Market saturation:
-              <span class="dss-stat-pill {{ pill.get(tier,'dss-pill-moderate') }}">{{ (tier or '')|upper }}</span>
-              {% if sat is not none %}<span class="text-muted">({{ sat|float|round|int }}%)</span>{% endif %}
+      {% if plan_rows %}
+        <p class="small text-muted">Your plans and their latest viability (out of 10). Open one to see its full
+          forecast, competitors and map.</p>
+        <ul class="list-unstyled mb-0 dss-overview-plans">
+          {% for row in plan_rows[:5] %}
+            {% set p = row.profile %}
+            <li>
+              <a href="{{ url_for('sme.planning', plan=p.sme_id) }}" class="dss-overview-plan">
+                <span class="min-w-0">
+                  <span class="fw-semibold d-block text-truncate">{{ p.business_name }}</span>
+                  <span class="small text-muted d-block text-truncate">
+                    {{ p.subcategory_label if p.subcategory and p.subcategory != 'other' else short_industry(p.industry_type) }}
+                    &middot; {{ p.location }}
+                  </span>
+                </span>
+                {% if row.viability_score is not none %}
+                  {% set band_pill = {'good':'dss-pill-low','moderate':'dss-pill-moderate','low':'dss-pill-saturated'} %}
+                  <span class="dss-stat-pill {{ band_pill.get(row.band, 'dss-pill-moderate') }}">
+                    {{ '%.1f'|format(row.viability_score|float) }}/10
+                  </span>
+                {% else %}
+                  <span class="small text-muted">not scored yet</span>
+                {% endif %}
+              </a>
             </li>
-            <li class="mt-1">Plan viability: <strong>{{ viability_word }}</strong>
-              ({{ '%.1f'|format(vscore) }}/10, {{ f.confidence_level }}% confidence)</li>
-            {% if fin.break_even and fin.break_even.label %}
-              <li class="mt-1">Break-even: <strong>{{ fin.break_even.label }}</strong></li>
-            {% endif %}
-            {% if fin.monthly_fixed_cost %}
-              <li class="mt-1">Capital runway:
-                {% if fin.capital_runway_months and fin.capital_runway_months > 0 %}
-                  <strong>{{ '%.1f'|format(fin.capital_runway_months) }} months</strong> of fixed costs
-                {% else %}
-                  <strong>no capital on file</strong> to cover fixed costs
-                {% endif %}
-                (&#8369;{{ '{:,.0f}'.format(fin.monthly_fixed_cost) }}/mo)
-              </li>
-            {% endif %}
-          </ul>
-        </div>
-
-        {% if selected_plan and selected_plan.capital_missing %}
-          {# A legacy plan saved before capital was required. It still
-             forecasts -- with capital adequacy 0 -- so the owner is told
-             why its score is lower than it may deserve, with the edit
-             action right here. #}
-          <div class="dss-capital-warning small mb-2" role="note">
-            <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
-            <span class="flex-grow-1">Add your capital to get an accurate forecast.</span>
-            <a href="#editPlanModal-{{ selected_plan.sme_id }}" class="dss-icon-btn"
-               data-bs-toggle="modal" data-bs-target="#editPlanModal-{{ selected_plan.sme_id }}"
-               aria-label="Edit plan “{{ selected_plan.business_name }}” to add its capital"
-               title="Edit plan “{{ selected_plan.business_name }}” to add its capital">
-              <i class="bi bi-pencil" aria-hidden="true"></i>
-            </a>
+          {% endfor %}
+        </ul>
+        {% if plan_rows|length > 5 %}
+          <p class="small text-muted mt-2 mb-0">and {{ plan_rows|length - 5 }} more on the Planning page.</p>
+        {% endif %}
+        {% if featured_rec and featured_rec.headline %}
+          <div class="dss-overview-callout mt-3">
+            <div class="small text-muted">Latest verdict for <strong>{{ selected_plan.business_name }}</strong></div>
+            <div class="small fw-semibold">{{ featured_rec.headline }}</div>
           </div>
         {% endif %}
-
-        {{ subcategory_compare(rec, compact=True) }}
-
-        {{ forecast_breakdown(rec, compact=True, forecast=f) }}
-
-        <p class="dss-text-muted-sm mb-1">Current vs. Projected Demand &amp; Viability (6-12 month)</p>
-        <canvas id="outlookBarChart" height="130"></canvas>
-        {#
-          This caption used to call Q2-Q4 a projection rather than a
-          model run, and that was accurate at the time:
-          they were Q1 multiplied by three hardcoded constants. They
-          are four real Random Forest runs now, so the caption says
-          what is actually true -- including what is projected and what
-          is held, which is the part that keeps it honest rather than
-          just impressive. With a plan, the viability bars are the PLAN
-          model's (stage 2) re-run per quarter, so Q1 matches the gauge.
-        #}
-        <p class="text-muted mb-3" style="font-size:.68rem;">
-          {% if quarterly_outlook and quarterly_outlook.recalibrated %}
-            Each quarter is a separate run of the trained models: the market model re-scores
-            saturation with the competitor count projected along
-            {{ quarterly_outlook.assumptions.series }}{% if quarterly_outlook.viability_model == 'plan' %},
-            and the plan model re-scores this plan's viability from that quarter's saturation with
-            your capital, staff, prices and offering held as you entered them{% endif %}.
-            Held: {{ quarterly_outlook.assumptions.held }}. Demand is
-            {{ quarterly_outlook.assumptions.demand_proxy }}. Confidence falls with the
-            forecast horizon
-            {%- if quarterly_outlook.confidence and quarterly_outlook.confidence[0] %}
-              ({{ quarterly_outlook.confidence[0] }}% at Q1 to
-              {{ quarterly_outlook.confidence[-1] }}% at Q{{ quarterly_outlook.labels|length }})
-            {%- endif %}.
-          {% else %}
-            Q1 uses this forecast's real AI score and this barangay's real foot-traffic data.
-            Later quarters could not be recalibrated -- no market data is on file for this
-            industry and barangay yet -- so they repeat Q1's figure rather than inventing a trend.
-          {% endif %}
-        </p>
-
-        <div class="bg-light rounded p-3" data-tour="recommendation-summary">
-          <div class="d-flex gap-3">
-            <div class="fs-3">💡</div>
-            <div class="flex-grow-1">
-              <div class="small">
-                <span class="fw-bold">Recommendation:</span><br>
-                {% if rec and rec.headline %}
-                  <strong>{{ rec.headline }}</strong><br>
-                  {{ rec.summary }}
-                {% else %}
-                  No recommendation available yet.
-                {% endif %}
-              </div>
-              {{ innovation_panel(rec, compact=True) }}
-              <a href="{{ url_for('sme.recommendations', sme_id=selected_plan.sme_id if selected_plan else None) }}" class="d-inline-block mt-2 small">See full AI-Powered Recommendations &raquo;</a>
-            </div>
-          </div>
-        </div>
       {% else %}
-        <div class="text-center text-muted py-5">
-          <i class="bi bi-cpu display-4"></i>
-          <p class="mt-2">Add a business plan to generate your first AI forecast.</p>
-          <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addPlanModal">
-            <i class="bi bi-plus-lg"></i> Add New Plan
-          </button>
+        <div class="text-center py-4">
+          <i class="bi bi-clipboard-plus display-6 text-muted" aria-hidden="true"></i>
+          <p class="text-muted mt-2 mb-3">You have no business plan yet. Planning is where you describe one and get its forecast.</p>
+          <a href="{{ url_for('sme.planning') }}?new_plan=1" class="btn btn-primary btn-sm">Start a plan</a>
         </div>
       {% endif %}
-
-    </div>
+    </section>
   </div>
-</div>
 
-<!-- Footer -- matches Reference/Figma_Storyboard/src/app/pages/home.tsx.
-     Moved into shared/_footer.html so the LGU and Admin dashboards get
-     the same bar, and so Contact Us exists for every role rather than
-     only for an SME. -->
-{% include "shared/_footer.html" %}
-
-<!-- One barangay list for every plan form on the page (Add, and each
-     plan's Edit) -- 76 options once, not once per dialog. -->
-<datalist id="locationOptions">
-  {% for loc in locations %}<option value="{{ loc }}">{% endfor %}
-</datalist>
-
-<!-- "+ New Business Plan" modal. The same form body as each plan's Edit
-     dialog below (plan_core_fields in shared/_plan_fields.html):
-     sub-category, what you sell, the REQUIRED capital, what makes you
-     different, the optional price list -- and no monthly revenue. -->
-<div class="modal fade" id="addPlanModal" tabindex="-1" aria-hidden="true" aria-labelledby="addPlanTitle">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
-    <div class="modal-content">
-      <form method="POST" action="{{ url_for('sme.analyze') }}" data-plan-form class="d-flex flex-column" style="min-height:0;">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="modal-header">
-          <h5 class="modal-title" id="addPlanTitle"><i class="bi bi-sliders"></i> New Business Plan</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <div class="modal-body">
-          {{ plan_core_fields('ap', None, business_types=business_types, business_stages=business_stages,
-                              subcategories=PLAN_SUBCATEGORIES, default_location=default_location) }}
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary"><i class="bi bi-cpu"></i> Run AI Forecast</button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
-
-{#
-  EDIT DIALOGS -- one per plan, rendered by the server with the plan's
-  current values, like the old Settings forms. Each is a real form
-  posting to sme.update_plan, so it saves with scripting off (the server
-  flashes and redirects back here). With scripting on, plan_manage.js
-  posts it over fetch() asking for JSON, shows a validation error inside
-  the dialog without losing what was typed, and on success reloads Home
-  onto the edited plan -- every panel on this page depends on the plan,
-  so repainting one row in place (as Settings did) would leave the map,
-  the score and the forecast showing the old plan.
-#}
-{% for c in plan_choices %}
-{% set p = c.profile %}
-<div class="modal fade" id="editPlanModal-{{ p.sme_id }}" tabindex="-1" aria-hidden="true"
-     aria-labelledby="editPlanTitle-{{ p.sme_id }}">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
-    <div class="modal-content">
-      <form method="POST" action="{{ url_for('sme.update_plan', sme_id=p.sme_id) }}" data-plan-form
-            data-plan-edit-form data-plan-id="{{ p.sme_id }}" class="d-flex flex-column" style="min-height:0;">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="modal-header">
-          <h5 class="modal-title text-truncate" id="editPlanTitle-{{ p.sme_id }}">
-            <i class="bi bi-pencil-square" aria-hidden="true"></i> Edit &ldquo;{{ p.business_name }}&rdquo;
-          </h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <div class="modal-body">
-          {# Filled by plan_manage.js with the server's message, as text. #}
-          <div class="alert alert-danger py-2 small" role="alert" data-plan-form-error hidden></div>
-          {{ plan_core_fields('ep-' ~ p.sme_id, p, business_types=business_types, business_stages=business_stages,
-                              subcategories=PLAN_SUBCATEGORIES) }}
-          <p class="form-text mb-0"><i class="bi bi-arrow-repeat" aria-hidden="true"></i>
-            Saving re-runs the forecast for this plan straight away.</p>
-        </div>
-        <div class="modal-footer">
-          {# A link, so it also closes the dialog with scripting off. #}
-          <a href="#planBar" class="btn btn-light" data-bs-dismiss="modal" role="button">Cancel</a>
-          <button type="submit" class="btn btn-primary" data-plan-save>
-            <i class="bi bi-check-lg" aria-hidden="true"></i> Save plan
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
-{% endfor %}
-
-{#
-  MOVE TO TRASH -- one shared confirm dialog. plan_manage.js fills in the
-  plan's name (as text) and points the form at that plan's trash URL
-  when a chip's bin button is pressed. With scripting off the chip's own
-  form posts straight to the same URL instead, which is safe because
-  Trash is reversible.
-#}
-<div class="modal fade" id="planTrashConfirmModal" tabindex="-1" aria-hidden="true"
-     aria-labelledby="planTrashConfirmTitle" aria-describedby="planTrashConfirmText">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content">
-      <form method="POST" action="" data-plan-trash-confirm-form>
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="modal-header">
-          <h5 class="modal-title" id="planTrashConfirmTitle"><i class="bi bi-trash" aria-hidden="true"></i> Move to Trash</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <div class="modal-body">
-          <p class="mb-0" id="planTrashConfirmText">
-            Move &ldquo;<strong data-plan-trash-name></strong>&rdquo; to Trash? You can restore it from Trash at any time.
-          </p>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-danger"><i class="bi bi-trash" aria-hidden="true"></i> Move to Trash</button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
-
-{#
-  TRASH -- the plans this owner removed, newest first. Nothing in here
-  is deleted, and there is deliberately no "delete forever": restoring
-  a plan brings it back with every forecast it had. Read with
-  include_archived (sme_controller._trashed_plans_for); no other part of
-  the app can see these rows.
-#}
-<div class="modal fade" id="planTrashModal" tabindex="-1" aria-hidden="true" aria-labelledby="planTrashTitle">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="planTrashTitle"><i class="bi bi-trash3" aria-hidden="true"></i> Trash</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+  {# ---------------------------- Saturation Map ---------------------------- #}
+  <div class="col-lg-5">
+    <section class="dss-card h-100 dss-overview-card" aria-labelledby="ovMap">
+      <div class="dss-overview-head">
+        <h5 id="ovMap"><i class="bi bi-map" aria-hidden="true"></i> Saturation Map</h5>
+        <a href="{{ url_for('sme.saturation_map') }}{% if selected_plan %}?industry_type={{ selected_plan.industry_type|urlencode }}&amp;location={{ selected_plan.location|urlencode }}{% endif %}"
+           class="btn btn-sm btn-outline-primary">Open Map &raquo;</a>
       </div>
-      <div class="modal-body">
-        <p class="small text-muted">
-          Plans in Trash are kept, not deleted. Restoring brings back the plan and all its forecasts.
-        </p>
-        {% if trashed_plans %}
-          <ul class="list-unstyled mb-0 dss-trash-list">
-            {% for t in trashed_plans %}
-              {% set p = t.profile %}
-              <li class="dss-trash-item">
-                <div class="min-w-0 flex-grow-1">
-                  <div class="fw-semibold text-truncate">{{ p.business_name }}</div>
-                  <div class="small text-muted">
-                    {{ short_industry(p.industry_type) }}{% if p.subcategory and p.subcategory != 'other' %} &middot; {{ p.subcategory_label }}{% endif %}
-                    &middot; {{ p.location }}
-                  </div>
-                  <div class="small text-muted">
-                    Capital &#8369;{{ '{:,.0f}'.format(p.capital) }} &middot; {{ (p.business_stage or 'startup')|capitalize }}
-                    {# Named for what the stored row holds -- see the chips above. #}
-                    {% if t.viability_score is not none %}&middot; last {{ 'viability' if t.is_plan_score else 'market score' }}
-                      {{ '%.1f'|format(t.viability_score|float) }}/10{% endif %}
-                  </div>
-                  <div class="small text-muted">
-                    {# archived_local: archived_at (UTC) in Philippine time. #}
-                    Moved to Trash on {{ t.archived_local.strftime('%B %d, %Y') if t.archived_local else 'an unknown date' }}
-                  </div>
-                </div>
-                <form method="POST" action="{{ url_for('sme.restore_plan', sme_id=p.sme_id) }}" class="flex-shrink-0">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button type="submit" class="dss-icon-btn dss-icon-btn-restore"
-                          aria-label="Restore “{{ p.business_name }}”" title="Restore “{{ p.business_name }}”">
-                    <i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i>
-                  </button>
-                </form>
-              </li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p class="text-center text-muted py-3 mb-0" data-trash-empty>
-            <i class="bi bi-trash3 d-block fs-3 mb-1" aria-hidden="true"></i> Trash is empty.
-          </p>
+      {% if selected_plan and top_industries %}
+        <p class="small text-muted">Industries with the most room in <strong>{{ selected_plan.location }}</strong>,
+          where &ldquo;{{ selected_plan.business_name }}&rdquo; would open (market score out of 10):</p>
+        <ol class="small mb-2 ps-3">
+          {% for row in top_industries %}
+            <li><strong>{{ row.short }}</strong> &mdash; {{ '%.1f'|format(row.score|float) }}/10
+              <span class="text-muted">({{ row.saturation|round|int }}% saturated)</span></li>
+          {% endfor %}
+        </ol>
+        <p class="small text-muted mb-1">Most crowded there:</p>
+        <ol class="small mb-0 ps-3">
+          {% for row in crowded_industries %}
+            <li>{{ row.short }} &mdash; {{ row.saturation|round|int }}% saturated, {{ row.competitors or 0 }} businesses</li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <p class="small text-muted mb-0">The map shades all 76 barangays by how crowded an industry already is.
+          Add a plan and this card will summarise the area around it.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  {# ---------------------------- Recommendations ---------------------------- #}
+  <div class="col-lg-7">
+    <section class="dss-card h-100 dss-overview-card" aria-labelledby="ovRec">
+      <div class="dss-overview-head">
+        <h5 id="ovRec"><i class="bi bi-lightbulb" aria-hidden="true"></i> Recommendations</h5>
+        <a href="{{ url_for('sme.recommendations', sme_id=selected_plan.sme_id if selected_plan else None) }}"
+           class="btn btn-sm btn-outline-primary">Open Recommendations &raquo;</a>
+      </div>
+      {% if featured_rec and featured_rec.summary %}
+        <p class="small mb-2">{{ featured_rec.summary }}</p>
+        {% if featured_rec.competitor_insight %}
+          <p class="small text-muted mb-2"><i class="bi bi-shop-window" aria-hidden="true"></i>
+            {{ featured_rec.competitor_insight.short }}</p>
         {% endif %}
+        <p class="small text-muted mb-0">The full reasons, risks, competitor insight and other barangays to
+          consider are on the Recommendations page.</p>
+      {% else %}
+        <p class="small text-muted mb-0">Once a plan has a forecast, the AI's recommendation and the best
+          barangays for it appear here.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  {# ---------------------------- Trend Reports ---------------------------- #}
+  <div class="col-lg-5">
+    <section class="dss-card h-100 dss-overview-card" aria-labelledby="ovTrends">
+      <div class="dss-overview-head">
+        <h5 id="ovTrends"><i class="bi bi-graph-up-arrow" aria-hidden="true"></i> Trend Reports</h5>
+        <a href="{{ url_for('sme.trend_reports') }}" class="btn btn-sm btn-outline-primary">Open Trends &raquo;</a>
       </div>
-      <div class="modal-footer">
-        <a href="#planBar" class="btn btn-light" data-bs-dismiss="modal" role="button">Close</a>
-      </div>
-    </div>
+      <p class="small text-muted mb-2">How each industry has grown across Tarlac City month by month, how the
+        quarters compare, and which industries make up the city's businesses &mdash; with a plain-language
+        reading under every chart.</p>
+      {% if unread %}
+        <p class="small fw-semibold mb-1">Latest alerts</p>
+        <ul class="small mb-0 ps-3">
+          {% for n in unread %}<li>{{ n.message }}</li>{% endfor %}
+        </ul>
+      {% else %}
+        <p class="small mb-0"><i class="bi bi-check2-circle text-success" aria-hidden="true"></i> No new market alerts.</p>
+      {% endif %}
+    </section>
   </div>
 </div>
 
-<!-- Pick-a-location dialog for the search bar: a map of the 76
-     barangays instead of a dropdown. Click a barangay, then Use. -->
-<div class="modal fade" id="locationPickerModal" tabindex="-1" aria-hidden="true" aria-labelledby="locationPickerTitle">
-  <div class="modal-dialog modal-dialog-centered modal-lg">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="locationPickerTitle"><i class="bi bi-geo-alt"></i> Pick a location on the map</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <div class="dss-location-picker-map dss-location-picker-map-lg" data-location-picker-map></div>
-        <div class="small mt-2" data-location-picker-status>Click a barangay on the map to choose it.</div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary" id="locationPickerUse" disabled>
-          <i class="bi bi-check-lg"></i> Use this barangay
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-{% endblock %}
-
-{% block extra_scripts %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"
-        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script>
-  // The registration-date field now follows the stage picker in every
-  // plan form on the page -- see [data-plan-stage] in plan_form.js.
-
-  {% if profiles and not featured_forecast %}
-  // A plan exists but couldn't produce a forecast for some reason -- no-op, keep quiet in the UI.
-  {% endif %}
-
-  // ?new_plan=1 opens the Add New Plan dialog straight away. Older
-  // links (the "New plan" button the old Settings plans pane had,
-  // bookmarks) still arrive with it; every part of managing a plan --
-  // add, edit, move to Trash, restore -- now lives on this page.
-  if (new URLSearchParams(window.location.search).get('new_plan') === '1') {
-    document.addEventListener('DOMContentLoaded', function () {
-      const addPlanModalEl = document.getElementById('addPlanModal');
-      if (addPlanModalEl && window.bootstrap) {
-        new bootstrap.Modal(addPlanModalEl).show();
-      }
-    });
-  }
-</script>
-<script>
-  // ---- SME Home search bar ---------------------------------------
-  // Searches locations using the same AI engine / market data the rest
-  // of the app uses (GET /api/forecast) -- see app/controllers/api_controller.py.
-  // No barangays table exists in the real schema, so "known locations"
-  // here means the 76 reference Tarlac City barangays in
-  // app/ml/seed_data.py; any other typed location still works (the AI
-  // engine falls back to dataset averages / an auto-generated
-  // placeholder for it -- see forecasting_service.py), it's just
-  // flagged as an estimate rather than "on file" data.
-  window.DSS_SME_LOCATIONS = {{ locations|tojson }};
-  window.DSS_SME_BUSINESS_TYPES = {{ business_types|tojson }};
-  window.DSS_FORECAST_URL = "{{ url_for('api.forecast') }}";
-  window.DSS_SATURATION_MAP_URL = "{{ url_for('sme.saturation_map') }}";
-</script>
-<script src="{{ url_for('static', filename='js/sme_search.js') }}"></script>
-<script>window.DSS_SUBCATEGORIES = {{ PLAN_SUBCATEGORIES|tojson }};</script>
-<script src="{{ url_for('static', filename='js/plan_form.js') }}"></script>
-<script src="{{ url_for('static', filename='js/plan_manage.js') }}"></script>
-<script src="{{ url_for('static', filename='js/location_picker.js') }}"></script>
-{# The industry slider's buttons, keys and "Showing 1-4 of 20" count --
-   the row itself scrolls without it. #}
-<script src="{{ url_for('static', filename='js/industry_slider.js') }}"></script>
-
-{% if featured_forecast %}
-<script>
-  // Current vs. Projected Demand & Viability bar chart. Every quarter
-  // is a separate Random Forest run on a recalibrated feature vector
-  // -- see project_quarterly_outlook() in
-  // app/services/trend_analytics_service.py for what is projected
-  // (the competitor count, from this barangay's own recorded trend
-  // where it has one) and what is held at today's value.
-  const outlook = {{ quarterly_outlook|tojson }};
-  new Chart(document.getElementById('outlookBarChart'), {
-    type: 'bar',
-    data: {
-      labels: outlook.labels,
-      datasets: [
-        { label: 'Demand', data: outlook.demand, backgroundColor: '#3b82f6' },
-        { label: 'Saturation', data: outlook.saturation, backgroundColor: '#ef4444' },
-        { label: 'Viability', data: outlook.viability, backgroundColor: '#22c55e' },
-      ],
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
-      scales: { y: { beginAtZero: true, max: 60 } },
-    },
-  });
-
-  // Real-data doughnut gauge for the chosen plan's viability score
-  // (matches the storyboard's radial score gauge, but with actual numbers).
-  new Chart(document.getElementById('viabilityGauge'), {
-    type: 'doughnut',
-    data: {
-      datasets: [{
-        data: [{{ featured_forecast.viability_score }}, {{ 10 - featured_forecast.viability_score }}],
-        backgroundColor: ['#2563eb', '#e5e7eb'],
-        borderWidth: 0,
-      }],
-    },
-    options: {
-      cutout: '72%',
-      plugins: { legend: { display: false }, tooltip: { enabled: false } },
-      rotation: -90,
-      circumference: 360,
-      responsive: false,
-    },
-  });
-</script>
-{% endif %}
-
-<script>
-  // ---- LGU recommendations (Forecast & Recommendations panel) -------
-  // Ranks all known barangays by AI saturation score for the featured
-  // industry (same endpoint the full Saturation Map page uses) and
-  // shows the real top-3 opportunity / top-3 saturated barangays --
-  // no placeholder barangay names. The mini map itself is drawn by
-  // map.js below, which calls this same endpoint on its own.
-  (function () {
-    const industryType = {{ plan_industry|tojson }};
-    // Absent in the cold-start state: the template renders the empty
-    // card instead of this container, so the ranking endpoint is never
-    // called and no barangay is ranked off placeholder rows.
-    const lguBox = document.getElementById('lguRecommendationList');
-    if (!lguBox) return;
-
-    // The ranking is done server-side now (see api.lgu_recommendations).
-    // This used to fetch every barangay's score and sort them here,
-    // which meant the page and the API could disagree about which
-    // barangay was best, and any second consumer had to re-implement
-    // the same sort to get the same answer.
-    fetch(`{{ url_for('api.lgu_recommendations') }}?industry_type=${encodeURIComponent(industryType)}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (!data || data.has_lgu_data === false) {
-          // Server says there is no active dataset after all -- one may
-          // have been deactivated since this page rendered.
-          lguBox.innerHTML = '<div class="text-muted">No record yet &mdash; no official LGU dataset is active.</div>';
-          return;
-        }
-        const opportunity = data.top_opportunity || [];
-        const saturated = data.top_saturated || [];
-        if (!opportunity.length && !saturated.length) {
-          lguBox.innerHTML = '<div class="text-muted">No barangay data yet.</div>';
-          return;
-        }
-        // Barangay names can come from an LGU upload, so they are
-        // escaped before they go into markup.
-        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g,
-          (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-        const line = (label, r) =>
-          `<li>${label}: Brgy. ${esc(r.location)} (${Number(r.saturation_index).toFixed(0)}% saturated,`
-          + ` ${Number(r.competitor_count) || 0} competitor(s))</li>`;
-        lguBox.innerHTML = '<ul class="mt-1 mb-0 ps-3">'
-          + opportunity.map((r) => line('Top Opportunity', r)).join('')
-          + saturated.map((r) => line('Top Saturated', r)).join('')
-          + '</ul>';
-      })
-      .catch(() => {
-        lguBox.innerHTML = '<div class="text-muted">Could not load rankings.</div>';
-      });
-  })();
-</script>
-
-<script>
-  // Reuses the exact same map.js the full Saturation Map page runs
-  // (same #dss-map id, same shaded-zone circles, same click-to-select
-  // behavior) -- just smaller (see .dss-mini-map in style.css) and
-  // defaulted to this SME's featured industry instead of a <select>.
-  // OpenStreetMap/Leaflet basemap -- no API key required.
-  // The map follows the CHOSEN plan: its industry is the one shaded,
-  // and its barangay is outlined, centred and opened.
-  window.DSS_DEFAULT_INDUSTRY = {{ plan_industry|tojson }};
-  window.DSS_FOCUS_LOCATION = {{ (selected_plan.location if selected_plan else '')|tojson }};
-  window.DSS_LOCATIONS_FORECAST_URL = "{{ url_for('api.locations_forecast') }}";
-  window.DSS_FORECAST_URL = "{{ url_for('api.forecast') }}";
-  window.DSS_PLACES_URL = "{{ url_for('api.places_nearby') }}";
-  window.DSS_BARANGAY_DETAIL_URL = "{{ url_for('api.barangay_detail') }}";
-  // REAL, PhilAtlas-sourced coordinates for all 76 Tarlac City barangays
-  // (app/services/geocoding_service.py + app/static/data/barangay_coords.json).
-  window.DSS_BARANGAY_COORDS_URL = "{{ url_for('api.barangay_coords') }}";
-  // The official PSA/NAMRIA barangay boundaries (2023) -- see
-  // app/services/choropleth_service.py.
-  window.DSS_BARANGAY_CHOROPLETH_URL = "{{ url_for('api.barangay_choropleth') }}";
-  // Tarlac City's own real outline (OpenStreetMap, ODbL), drawn as its
-  // own bold overlay on this mini map preview too.
-  window.DSS_TARLAC_CITY_BOUNDARY_URL = "{{ url_for('api.tarlac_city_boundary') }}";
-  window.DSS_CSRF_TOKEN = "{{ csrf_token() }}";
-  // Real PSA FIES (2023) household spending-category figures -- see
-  // app/services/socio_demographic_service.py.
-  window.DSS_DEMAND_SUMMARY = {{ demand_summary|tojson }};
-</script>
-<script src="{{ url_for('static', filename='js/map.js') }}"></script>
-
+{% include "shared/_footer.html" %}
 {% endblock %}

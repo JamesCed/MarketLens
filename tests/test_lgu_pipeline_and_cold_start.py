@@ -383,7 +383,7 @@ def test_the_home_panel_shows_the_empty_state_before_any_upload(app):
     client = app.test_client()
     client.post("/login", data={"email": "sme@cold.test", "password": "password123"},
                 follow_redirects=True)
-    page = client.get("/home").get_data(as_text=True)
+    page = client.get("/planning").get_data(as_text=True)
 
     assert "No record yet" in page
     assert "No official LGU dataset is active" in page
@@ -409,7 +409,7 @@ def test_an_sme_is_not_offered_an_upload_button_they_cannot_use(app):
     client = app.test_client()
     client.post("/login", data={"email": "sme2@cold.test", "password": "password123"},
                 follow_redirects=True)
-    page = client.get("/home").get_data(as_text=True)
+    page = client.get("/planning").get_data(as_text=True)
 
     assert "Upload Dataset" not in page
     assert "LGU account can upload one" in page

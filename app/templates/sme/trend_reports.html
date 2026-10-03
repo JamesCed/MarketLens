@@ -118,9 +118,21 @@
        viewport width, so marking only today's shorter one would put the
        gap back the first time that changed. See style.css. #}
     <div class="dss-card dss-card-fill">
-      <h6>Monthly Industry Trends</h6>
-      <p class="text-muted small mb-2">Saturation % &middot; real forecast months shown as-is, other months filled from the city-wide baseline (see page note above)</p>
-      <canvas id="monthlyChart" height="220"></canvas>
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <h6 class="mb-1">Monthly Industry Trends</h6>
+        {# Pick one industry to read its own line (and get a note about
+           it); "All industries" shows every line and a city-wide note. #}
+        <select id="monthlyFocus" class="form-select form-select-sm" style="max-width:240px;"
+                aria-label="Industry to show in Monthly Industry Trends">
+          <option value="">All industries</option>
+          {% for bt in business_types %}<option value="{{ bt }}">{{ bt }}</option>{% endfor %}
+        </select>
+      </div>
+      <p class="text-muted small mb-2">How crowded each industry is (saturation %), month by month. Higher means
+        more businesses competing for the same customers. Real forecast months are shown as-is; other months are
+        filled from the city-wide baseline (see page note above).</p>
+      <canvas id="monthlyChart" height="220" role="img" aria-label="Line chart of saturation per industry by month"></canvas>
+      <p class="dss-chart-note" id="monthlyNote" aria-live="polite"></p>
       <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
         <span class="text-muted small" id="monthlyTrackedCount">industries tracked &middot; click to toggle</span>
         <div class="btn-group btn-group-sm">
@@ -134,12 +146,19 @@
   <div class="col-lg-6">
     <div class="dss-card dss-card-fill">
       <h6>Industry Distribution</h6>
-      <p class="text-muted small mb-2">Share of every business on file across Tarlac City: all market data
-        (Google Places lookups + PSA/DTI and reference rows) plus registered SME plans. Every industry gets
-        its own slice &mdash; hover a slice, or read the list below, for exact counts.</p>
-      <canvas id="distributionChart" height="220"></canvas>
+      <p class="text-muted small mb-2">How many businesses each industry has across Tarlac City, largest first:
+        all market data (Google Places lookups + PSA/DTI and reference rows) plus registered SME plans. Each bar
+        is labelled with its industry, its count and its share of all businesses.</p>
+      {# A sorted bar chart, not a pie: twenty slices cannot be told apart
+         by colour, while bars of one colour are compared by length alone
+         and every bar carries its own name. The wrapper's height follows
+         the number of industries (set by the script), so no bar is
+         squeezed. #}
+      <div class="dss-distribution-wrap" id="distributionWrap">
+        <canvas id="distributionChart" role="img" aria-label="Bar chart of businesses per industry"></canvas>
+      </div>
       <div class="text-muted small mt-2" id="distributionCount"></div>
-      <div id="distributionLegend" class="dss-scroll-legend mt-2"></div>
+      <p class="dss-chart-note" id="distributionNote" aria-live="polite"></p>
     </div>
   </div>
 </div>
@@ -168,13 +187,34 @@
        Reading them together is the point: rising demand with falling
        growth is a market flattening out, which two separate charts
        side by side made much harder to see. -->
-  <canvas id="quarterlyChart" height="110"></canvas>
+  <canvas id="quarterlyChart" height="110" role="img"
+          aria-label="Chart of businesses on file and quarter-over-quarter growth"></canvas>
   <div class="text-muted small mt-2" id="quarterlyProvenance"></div>
+  {# HOW TO READ IT. This chart puts two different things on one picture,
+     which is exactly what makes it hard to read cold -- so the reading is
+     spelled out once, plainly, and then applied to the numbers on screen. #}
+  <div class="dss-chart-guide mt-3">
+    <div class="fw-semibold small mb-1"><i class="bi bi-info-circle" aria-hidden="true"></i> How to read this chart</div>
+    <ul class="small mb-2 ps-3">
+      <li><strong>The blue area</strong> (left scale) is how many businesses are on file each quarter &mdash; the
+        size of the market. Higher means more businesses are operating.</li>
+      <li><strong>The green area</strong> (right scale) is the <em>growth rate</em>: how much that number changed
+        compared with the quarter before, in percent. Above 0% the market grew; below 0% it shrank.</li>
+      <li><strong>Read them together.</strong> Blue rising while green falls means the market is still growing
+        but more slowly &mdash; it is filling up. Both rising means it is expanding fast. Blue flat and green
+        near 0% means a stable, mature market.</li>
+      <li>Hollow points are early quarters estimated from national data, because the app had no records yet.</li>
+    </ul>
+    <p class="dss-chart-note mb-0" id="quarterlyReading" aria-live="polite"></p>
+  </div>
 </div>
 
 <div class="dss-card mb-3">
-  <h6 class="mb-3">Top Performing Industries (blended baseline + real data)</h6>
+  <h6 class="mb-1">Top Performing Industries (blended baseline + real data)</h6>
+  <p class="text-muted small mb-3">Industries ranked by Market Score (out of 10: higher means more room for a new
+    business), with how much the score changed since the previous month.</p>
   <div id="topIndustriesList"></div>
+  <p class="dss-chart-note" id="topIndustriesNote" aria-live="polite"></p>
 </div>
 
 
@@ -243,16 +283,6 @@ function buildLineChartLegend(chart, containerId, rankedLabelsDesc) {
       chart.update();
     });
   });
-  return container;
-}
-
-function buildPieChartLegend(chart, containerId) {
-  const container = document.getElementById(containerId);
-  const labels = chart.data.labels;
-  container.innerHTML = labels.map((label, i) => `
-    <div class="dss-scroll-legend-item" data-index="${i}">
-      <span class="dss-legend-swatch" style="background:${chart.data.datasets[0].backgroundColor[i]}"></span><span>${label}</span>
-    </div>`).join("");
   return container;
 }
 
@@ -358,6 +388,8 @@ function renderQuarterly(q) {
         : " &middot; every quarter shown is measured, not projected.")
     : "No market_data snapshots on file yet -- this chart fills in as the app fetches business data.";
 
+  renderQuarterlyReading(q);
+
   if (quarterlyChart) quarterlyChart.destroy();
 
   // Reference palette from the paper's Figure 4.1: a solid steel-blue
@@ -440,6 +472,40 @@ function renderQuarterly(q) {
   });
 }
 
+// The plain-language reading of the quarterly chart: the size of the
+// market at the start and end, the overall change, the fastest and the
+// slowest quarter, and what the pairing means.
+function renderQuarterlyReading(q) {
+  const box = document.getElementById("quarterlyReading");
+  if (!box) return;
+  const labels = q.labels || [], counts = q.businesses || [], growth = q.growth_rate_percent || [];
+  if (labels.length < 2 || !counts.length) {
+    box.textContent = "Not enough quarters on file yet to describe a trend.";
+    return;
+  }
+  const scope = q.industry_type ? q.industry_type : "all industries in Tarlac City";
+  const first = Number(counts[0]) || 0, last = Number(counts[counts.length - 1]) || 0;
+  const change = first ? ((last - first) / first) * 100 : 0;
+  const rated = growth.map((g, i) => ({ g: Number(g), label: labels[i] })).slice(1).filter((r) => !Number.isNaN(r.g));
+  const fastest = rated.reduce((a, b) => (b.g > a.g ? b : a), rated[0] || { g: 0, label: labels[1] });
+  const slowest = rated.reduce((a, b) => (b.g < a.g ? b : a), rated[0] || { g: 0, label: labels[1] });
+  const recent = rated.slice(-2);
+  let pace = "";
+  if (recent.length === 2) {
+    if (recent[1].g > recent[0].g + 0.5) pace = "Growth is speeding up in the latest quarter, so the market is still expanding.";
+    else if (recent[1].g < recent[0].g - 0.5) pace = last >= first
+      ? "Growth is slowing in the latest quarter: the market is still getting bigger, but more slowly, so it is filling up."
+      : "Growth is slowing and the market is shrinking, so new entrants should be careful.";
+    else pace = "Growth has held steady over the last two quarters, a sign of a stable market.";
+  }
+  const fmt = (n) => Number(n).toLocaleString();
+  box.textContent =
+    `For ${scope}, the number of businesses on file went from ${fmt(first)} in ${labels[0]} to ${fmt(last)} in `
+    + `${labels[labels.length - 1]} (${change >= 0 ? "+" : ""}${change.toFixed(1)}% overall). `
+    + `The strongest quarter was ${fastest.label} (${fastest.g > 0 ? "+" : ""}${fastest.g}%) and the weakest was `
+    + `${slowest.label} (${slowest.g > 0 ? "+" : ""}${slowest.g}%). ${pace}`;
+}
+
 // ---- Monthly Industry Trends (line) ---------------------------------
 // Built once and then UPDATED in place when the month changes. Chart.js
 // keeps the same canvas, the same 24 datasets and -- importantly -- the
@@ -471,6 +537,7 @@ function updateMonthlyChart(monthly) {
       if (next) ds.data = next;
     });
     monthlyChart.update();
+    renderMonthlyNote();
     return;
   }
 
@@ -482,8 +549,74 @@ function updateMonthlyChart(monthly) {
   });
   document.getElementById("monthlyTrackedCount").textContent = `${datasets.length} industries tracked · click to toggle`;
   monthlyLegendBox = buildLineChartLegend(monthlyChart, "monthlyLegend", rankedLabelsDesc);
-  document.getElementById("monthlyShowAll").addEventListener("click", () => setAllHidden(monthlyChart, monthlyLegendBox, false));
-  document.getElementById("monthlyHideAll").addEventListener("click", () => setAllHidden(monthlyChart, monthlyLegendBox, true));
+  document.getElementById("monthlyShowAll").addEventListener("click", () => {
+    setAllHidden(monthlyChart, monthlyLegendBox, false);
+    const focus = document.getElementById("monthlyFocus");
+    if (focus) focus.value = "";
+    renderMonthlyNote();
+  });
+  document.getElementById("monthlyHideAll").addEventListener("click", () => {
+    setAllHidden(monthlyChart, monthlyLegendBox, true);
+    renderMonthlyNote();
+  });
+  // Toggling a legend entry changes what is on screen, so the note follows.
+  monthlyLegendBox.addEventListener("click", () => setTimeout(renderMonthlyNote, 0));
+  const focus = document.getElementById("monthlyFocus");
+  if (focus) focus.addEventListener("change", () => focusMonthly(focus.value));
+  renderMonthlyNote();
+}
+
+// "Focus on one industry": shows that industry's line alone (or every
+// line again for "All industries") and rewrites the note for it.
+function focusMonthly(name) {
+  if (!monthlyChart) return;
+  monthlyChart.data.datasets.forEach((ds, i) => {
+    const hide = !!name && ds.label !== name;
+    monthlyChart.getDatasetMeta(i).hidden = hide;
+    const item = monthlyLegendBox && monthlyLegendBox.querySelector(`[data-index="${i}"]`);
+    if (item) item.classList.toggle("dss-legend-off", hide);
+  });
+  monthlyChart.update();
+  renderMonthlyNote();
+}
+
+// The plain-language reading of the monthly chart, from the lines that
+// are VISIBLE: one line gets a note about that industry; several get a
+// city-wide summary (average, direction, most and least crowded).
+function renderMonthlyNote() {
+  const box = document.getElementById("monthlyNote");
+  if (!box || !monthlyChart) return;
+  const labels = monthlyChart.data.labels || [];
+  const visible = monthlyChart.data.datasets.filter((ds, i) => !monthlyChart.getDatasetMeta(i).hidden);
+  if (!visible.length || labels.length < 2) {
+    box.textContent = visible.length ? "" : "Every industry is hidden. Press Show All, or pick one industry above.";
+    return;
+  }
+  const firstLabel = labels[0], lastLabel = labels[labels.length - 1];
+  const at = (ds, i) => Number(ds.data[i]) || 0;
+  const verdict = (v) => (v >= 75 ? "very crowded" : v >= 50 ? "crowded" : v >= 25 ? "moderately busy" : "open, with room for new businesses");
+  if (visible.length === 1) {
+    const ds = visible[0];
+    const a = at(ds, 0), b = at(ds, labels.length - 1), d = b - a;
+    const move = Math.abs(d) < 1 ? "stayed about the same"
+      : (d > 0 ? `rose by ${d.toFixed(1)} points` : `fell by ${Math.abs(d).toFixed(1)} points`);
+    const meaning = Math.abs(d) < 1 ? "Competition here is steady."
+      : (d > 0 ? "More businesses are competing for the same customers, so it is getting harder for a newcomer."
+               : "Competition is easing, so a new business has more room than it did.");
+    box.textContent = `${ds.label}: saturation ${move}, from ${a.toFixed(1)}% in ${firstLabel} to ${b.toFixed(1)}% `
+      + `in ${lastLabel}. At ${b.toFixed(1)}% this market is ${verdict(b)}. ${meaning}`;
+    return;
+  }
+  const avg = (i) => visible.reduce((sum, ds) => sum + at(ds, i), 0) / visible.length;
+  const a = avg(0), b = avg(labels.length - 1), d = b - a;
+  const ranked = [...visible].sort((x, y) => at(y, labels.length - 1) - at(x, labels.length - 1));
+  const top = ranked[0], low = ranked[ranked.length - 1];
+  box.textContent = `Across the ${visible.length} industries shown, average saturation `
+    + (Math.abs(d) < 1 ? "stayed about the same" : (d > 0 ? "went up" : "went down"))
+    + `, from ${a.toFixed(1)}% in ${firstLabel} to ${b.toFixed(1)}% in ${lastLabel}. `
+    + `Most crowded now: ${top.label} (${at(top, labels.length - 1).toFixed(1)}%). `
+    + `Most room: ${low.label} (${at(low, labels.length - 1).toFixed(1)}%). `
+    + "Pick one industry above for a reading of its own line.";
 }
 
 function renderTopIndustries(rows) {
@@ -501,6 +634,14 @@ function renderTopIndustries(rows) {
       <span class="fw-bold"><i class="bi ${arrow}"></i> ${sign}${ind.change_percent}%</span>
     </div>`;
   }).join("") || '<p class="text-muted">No industries to rank yet.</p>';
+  const note = document.getElementById("topIndustriesNote");
+  if (note && rows && rows.length) {
+    const best = rows[0];
+    const rising = rows.filter((r) => r.change_percent > 0).length;
+    note.textContent = `${best.name} has the most room right now (Market Score ${best.market_score}/10). `
+      + `${rising} of the ${rows.length} industries listed improved since last month; `
+      + "an upward arrow means it became easier to enter, a downward arrow that it became harder.";
+  }
 }
 
 function currentMonth() {
@@ -677,7 +818,7 @@ async function loadTrendData() {
   renderPeriodCards(data.period_overview);
   updateMonthlyChart(data.monthly_trends);
 
-  // ---- Industry Distribution (pie, real counts) ----------------------
+  // ---- Industry Distribution (sorted bars, real counts) --------------
   // Every business on file across Tarlac City, by industry: the freshest
   // market_data competitor_count for each (industry, barangay) combo --
   // live Google Places rows AND rows already on file -- plus registered
@@ -700,31 +841,38 @@ async function loadTrendData() {
     color: BUSINESS_COLORS[d.name] || "#8a8a8a",
   }));
 
-  const distributionChart = new Chart(document.getElementById("distributionChart"), {
-    type: "pie",
+  // Largest first, so the chart reads top-down like a ranking.
+  slices.sort((a, b) => b.count - a.count);
+  const wrap = document.getElementById("distributionWrap");
+  if (wrap) wrap.style.height = Math.max(220, slices.length * 26 + 40) + "px";
+  const total = slices.reduce((sum, s) => sum + s.count, 0);
+
+  new Chart(document.getElementById("distributionChart"), {
+    type: "bar",
     data: {
-      labels: slices.map(s => s.name),
-      // Plot the raw COUNT and let Chart.js derive the angles -- charting
-      // pre-rounded percentages makes the wedges disagree with the labels.
+      labels: slices.map((s) => s.name),
       datasets: [{
-        data: slices.map(s => s.count),
-        backgroundColor: slices.map(s => s.color),
-        borderColor: "#ffffff",
-        borderWidth: 2,
+        label: "Businesses",
+        data: slices.map((s) => s.count),
+        // One colour: the bars are compared by length, and the top three
+        // are a shade darker so the leaders stand out without a legend.
+        backgroundColor: slices.map((_, i) => (i < 3 ? "#1d4ed8" : "#60a5fa")),
+        borderRadius: 4,
+        barThickness: 16,
       }],
     },
     options: {
+      indexAxis: "y",
       responsive: true,
+      maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
         tooltip: {
           callbacks: {
             label: (ctx) => {
               const s = slices[ctx.dataIndex];
-              return `${s.name}: ${s.count.toLocaleString()} businesses (${s.percent}%)`;
+              return `${s.count.toLocaleString()} businesses (${s.percent}% of all)`;
             },
-            // Spell out where each slice's businesses came from, so the
-            // pie itself answers "is this real Google data or not?".
             afterLabel: (ctx) => {
               const s = slices[ctx.dataIndex];
               return `Places API ${s.fromPlaces.toLocaleString()} · market data ${s.fromMarket.toLocaleString()} · plans ${s.registered.toLocaleString()}`;
@@ -732,26 +880,41 @@ async function loadTrendData() {
           },
         },
       },
+      scales: {
+        x: { beginAtZero: true, title: { display: true, text: "Number of businesses" }, grid: { color: "rgba(127,127,127,.15)" } },
+        y: {
+          grid: { display: false },
+          // Short names, so long PSIC titles do not crowd out the bars;
+          // the tooltip and the note give the full name.
+          ticks: {
+            autoSkip: false,
+            callback: function (value) {
+              const name = this.getLabelForValue(value);
+              const s = slices[value];
+              const short = name.length > 28 ? name.slice(0, 26) + "…" : name;
+              return s ? `${short}  ${s.percent}%` : short;
+            },
+          },
+        },
+      },
     },
   });
 
-  // The legend IS the identity layer: with 24 industries, colour alone
-  // can't distinguish them, so every industry is listed by name with its
-  // count and share. Doubles as the table view of the chart.
-  const distLegend = document.getElementById("distributionLegend");
-  if (!dist.length) {
-    distLegend.innerHTML =
-      '<p class="text-muted small mb-0">No businesses on file yet -- add a business plan, or open the Saturation Map so the app fetches competitor data from Google Places.</p>';
+  const distNote = document.getElementById("distributionNote");
+  if (!slices.length) {
+    distNote.textContent = "No businesses on file yet — add a business plan, or open the Saturation Map so the app fetches competitor data.";
   } else {
-    distLegend.innerHTML = slices.map(s => `
-      <div class="dss-scroll-legend-item d-flex justify-content-between align-items-center">
-        <span class="text-truncate" style="min-width:0;">
-          <span class="dss-legend-swatch" style="background:${s.color}"></span>${s.name}
-        </span>
-        <span class="text-muted small ms-2 flex-shrink-0">${s.count.toLocaleString()} &middot; ${s.percent}%</span>
-      </div>`).join("");
     document.getElementById("distributionCount").textContent =
-      `${slices.length} industries · ${slices.reduce((sum, s) => sum + s.count, 0).toLocaleString()} businesses`;
+      `${slices.length} industries · ${total.toLocaleString()} businesses on file`;
+    const top3 = slices.slice(0, 3);
+    const top3Share = top3.reduce((sum, s) => sum + s.percent, 0);
+    const smallest = slices[slices.length - 1];
+    distNote.textContent =
+      `${top3[0].name} is the largest industry in Tarlac City, with ${top3[0].count.toLocaleString()} businesses `
+      + `(${top3[0].percent}% of all). Together, the top ${top3.length} industries make up about ${top3Share.toFixed(1)}% `
+      + `of every business on file. ${smallest.name} is the smallest (${smallest.count.toLocaleString()}). `
+      + "A long bar means many businesses already compete there; a short bar can mean an underserved market "
+      + "— check its saturation on the map before deciding.";
   }
 
   // ---- Quarterly Performance & Growth Rate ---------------------------

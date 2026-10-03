@@ -33,6 +33,14 @@ document.addEventListener("DOMContentLoaded", function () {
     submit.textContent = data.verb || "Confirm";
     submit.className = "btn " + (tones[data.tone] || "btn-primary");
     field.value = "";
+    // The suspension-length picker: shown (and submitted) only for a
+    // Suspend button; disabled otherwise so it is never posted.
+    const duration = modal.querySelector("[data-reason-duration]");
+    if (duration) {
+      const ask = data.askDuration === "1";
+      duration.hidden = !ask;
+      duration.querySelector("select").disabled = !ask;
+    }
   });
 
   modal.addEventListener("shown.bs.modal", function () {

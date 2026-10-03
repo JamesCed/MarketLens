@@ -459,7 +459,7 @@ def test_the_caption_no_longer_calls_it_illustrative(app, user):
     client = app.test_client()
     client.post("/login", data={"email": "sme@recal.test", "password": "password123"},
                 follow_redirects=True)
-    page = client.get("/home").get_data(as_text=True)
+    page = client.get("/planning").get_data(as_text=True)
 
     assert "illustrative projection" not in page, (
         "the caption still calls the later quarters illustrative, which is now false"

@@ -20,7 +20,7 @@
     <button class="nav-link {{ 'active' if active_tab == 'current' }}" id="tab-current" data-bs-toggle="tab"
             data-bs-target="#pane-current" type="button" role="tab" aria-controls="pane-current"
             aria-selected="{{ 'true' if active_tab == 'current' else 'false' }}">
-      Active &amp; suspended <span class="badge rounded-pill text-bg-secondary ms-1">{{ users|length }}</span>
+      Accounts <span class="badge rounded-pill text-bg-secondary ms-1">{{ counts.all }}</span>
     </button>
   </li>
   <li class="nav-item" role="presentation">
@@ -35,30 +35,87 @@
 <div class="tab-content">
   {# ------------------------------------------------ active & suspended #}
   <div class="tab-pane fade {{ 'show active' if active_tab == 'current' }}" id="pane-current" role="tabpanel" aria-labelledby="tab-current">
+    {# SEARCH AND FILTER. Name, email or the account's ID (UID, e.g. 42 or
+       #42); and which accounts: online now, active (seen in the last 30
+       days), inactive (dormant 30+ days or never seen) or suspended. #}
+    <form method="GET" action="{{ url_for('admin.users') }}" class="dss-card dss-filter-bar mb-3" role="search">
+      <div class="row g-2 align-items-end">
+        <div class="col-12 col-md">
+          <label class="form-label" for="u-q">Search</label>
+          <input type="search" class="form-control form-control-sm" id="u-q" name="q" value="{{ q }}"
+                 placeholder="Name, email or account ID (e.g. 42)">
+        </div>
+        <div class="col-8 col-md-4">
+          <label class="form-label" for="u-status">Show</label>
+          <select class="form-select form-select-sm" id="u-status" name="status">
+            {% for value, label in status_choices %}
+              <option value="{{ value }}" {{ 'selected' if status == value }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-4 col-md-auto d-flex gap-2">
+          <button type="submit" class="btn btn-primary btn-sm flex-fill"><i class="bi bi-funnel" aria-hidden="true"></i> Apply</button>
+          {% if filters %}<a href="{{ url_for('admin.users') }}" class="btn btn-outline-secondary btn-sm flex-fill">Clear</a>{% endif %}
+        </div>
+      </div>
+    </form>
+
     <div class="dss-card">
+      <div class="dss-meta mb-2">
+        {{ pagination.total }} account{{ 's' if pagination.total != 1 }}{{ ' match' if filters else '' }}
+        &middot; {{ counts.suspended }} suspended of {{ counts.all }} in total.
+        An account is <strong>inactive</strong> when it has not been used for 30 days.
+      </div>
       <div class="table-responsive">
         <table class="table align-middle dss-admin-table">
-          <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Joined</th><th></th></tr></thead>
+          <thead><tr><th>Account</th><th>Role</th><th>Status</th><th>Last seen</th><th>Joined</th><th></th></tr></thead>
           <tbody>
+            {% set state_badge = {
+              'online': ('text-bg-success', 'Online now'),
+              'active': ('text-bg-primary', 'Active'),
+              'inactive': ('text-bg-secondary', 'Inactive'),
+              'suspended': ('text-bg-danger', 'Suspended'),
+            } %}
             {% for u in users %}
             {% set is_self = u.user_id == current_user.user_id %}
             {% set is_system = u.email == system_email %}
+            {% set badge = state_badge.get(u.activity_state, ('text-bg-secondary', u.activity_state|capitalize)) %}
             <tr>
               <td>
                 {{ u.name }}{% if is_self %} <span class="dss-meta">(you)</span>{% endif %}
-                <div class="dss-meta text-break">{{ u.email }}</div>
+                <div class="dss-meta text-break">{{ u.email }} &middot; UID #{{ u.user_id }}</div>
               </td>
               <td>{{ role_badge(u.role) }}</td>
-              <td>{% if u.is_active %}<span class="text-success">Active</span>{% else %}<span class="text-danger">Suspended</span>{% endif %}</td>
+              <td>
+                <span class="badge {{ badge[0] }}">{{ badge[1] }}</span>
+                {% if u.is_suspended %}
+                  <div class="dss-meta">
+                    {% if u.suspended_until %}until {{ local_time(u.suspended_until).strftime('%b %d, %Y %I:%M %p') }} {{ tz_label }}
+                    {% else %}until lifted{% endif %}
+                  </div>
+                {% endif %}
+              </td>
+              <td class="dss-meta text-nowrap">
+                {% if u.last_seen_at %}
+                  {{ local_time(u.last_seen_at).strftime('%b %d, %Y') }}
+                  <div>{{ local_time(u.last_seen_at).strftime('%I:%M %p') }} {{ tz_label }}</div>
+                {% else %}never{% endif %}
+              </td>
               <td class="dss-meta">{{ u.created_at.strftime('%b %d, %Y') }}</td>
               <td class="text-end text-nowrap">
+                {# That account's own audit trail: everything it did, nothing else. #}
+                <a href="{{ url_for('admin.audit_log', user=u.user_id, importance='all') }}"
+                   class="btn btn-sm btn-outline-primary" title="View the audit trail of {{ u.name }}"
+                   aria-label="View the audit trail of {{ u.name }}">
+                  <i class="bi bi-journal-text" aria-hidden="true"></i> Activity
+                </a>
                 <button type="button" class="btn btn-sm btn-outline-secondary" {{ 'disabled' if is_self }}
                         data-bs-toggle="modal" data-bs-target="#reasonModal"
                         data-action="{{ url_for('admin.toggle_active', user_id=u.user_id) }}"
                         data-subject="{{ u.name }} ({{ u.email }})"
                         {% if u.is_active %}
-                        data-title="Suspend account" data-verb="Suspend" data-tone="warning"
-                        data-note="They won't be able to sign in until the account is activated again."
+                        data-title="Suspend account" data-verb="Suspend" data-tone="warning" data-ask-duration="1"
+                        data-note="They will not be able to sign in until the suspension ends or you lift it."
                         {% else %}
                         data-title="Activate account" data-verb="Activate" data-tone="primary"
                         data-note="They will be able to sign in again."
@@ -66,22 +123,33 @@
                   {{ 'Suspend' if u.is_active else 'Activate' }}
                 </button>
                 <button type="button" class="btn btn-sm btn-outline-danger" {{ 'disabled' if is_self or is_system }}
-                        {% if is_system %}title="The system account owns auto-generated data and can't be archived."{% endif %}
+                        {% if is_system %}title="The system account owns auto-generated data and can not be archived."{% endif %}
                         data-bs-toggle="modal" data-bs-target="#reasonModal"
                         data-action="{{ url_for('admin.archive_user', user_id=u.user_id) }}"
                         data-subject="{{ u.name }} ({{ u.email }})"
                         data-title="Archive account" data-verb="Archive" data-tone="danger"
-                        data-note="They won't be able to sign in. Their history is kept, and you can restore the account at any time.">
+                        data-note="They will not be able to sign in. Their history is kept, and you can restore the account at any time.">
                   <i class="bi bi-archive"></i> Archive
                 </button>
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="5" class="text-center text-muted py-4">No accounts yet.</td></tr>
+            <tr><td colspan="6" class="text-center text-muted py-4">{{ 'No accounts match.' if filters else 'No accounts yet.' }}</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
+      {% if pagination.pages > 1 %}
+      <nav class="mt-3" aria-label="User pages">
+        <ul class="pagination pagination-sm justify-content-center flex-wrap mb-0">
+          {% for pg in pagination.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+            {% if pg is none %}<li class="page-item disabled"><span class="page-link">&hellip;</span></li>
+            {% else %}<li class="page-item {{ 'active' if pg == pagination.page }}">
+              <a class="page-link" href="{{ url_for('admin.users', page=pg, **filters) }}">{{ pg }}</a></li>{% endif %}
+          {% endfor %}
+        </ul>
+      </nav>
+      {% endif %}
     </div>
   </div>
 

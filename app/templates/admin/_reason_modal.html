@@ -34,6 +34,19 @@
         <div class="modal-body">
           <p class="fw-semibold mb-1 text-break" data-reason-subject></p>
           <p class="text-muted small mb-3" data-reason-note></p>
+          {# Only for Suspend (the button sets data-ask-duration): how long
+             the suspension lasts. It ends on its own after a set length. #}
+          <div class="mb-3" data-reason-duration hidden>
+            <label for="reasonDuration" class="form-label">Suspend for</label>
+            <select class="form-select" id="reasonDuration" name="duration" disabled>
+              <option value="1">1 day</option>
+              <option value="3">3 days</option>
+              <option value="7" selected>7 days</option>
+              <option value="30">30 days</option>
+              <option value="">Until I lift it</option>
+            </select>
+            <div class="form-text">A timed suspension ends by itself; the account can then sign in again.</div>
+          </div>
           <label for="reasonText" class="form-label">Reason</label>
           <textarea class="form-control" id="reasonText" name="reason" rows="3"
                     required minlength="{{ min_reason_length }}" maxlength="255"

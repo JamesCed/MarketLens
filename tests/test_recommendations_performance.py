@@ -444,7 +444,7 @@ def test_the_home_page_scores_its_industry_cards_in_one_batch(app):
     with app.app_context():
         _seed()
         client = _login(app)
-        client.get("/home")  # warm
+        client.get("/planning")  # warm
 
         calls = {"n": 0}
         real = fs.compute_scores
@@ -455,7 +455,7 @@ def test_the_home_page_scores_its_industry_cards_in_one_batch(app):
 
         fs.compute_scores = counting
         try:
-            response = client.get("/home")
+            response = client.get("/planning")
         finally:
             fs.compute_scores = real
 

@@ -84,7 +84,7 @@ from app.models import SystemSetting
 # None on rows written before the two-stage model existed, and on any
 # context built without a plan forecast.
 _KEYS = ("headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
-         "subcategory_analysis", "innovation", "forecast", "explanation")
+         "subcategory_analysis", "innovation", "forecast", "explanation", "competitor_insight")
 
 # The provenance stamp on a transcript nobody's LLM wrote -- the
 # rule-based model summary. Hyphenated (unlike the recommendation's own
@@ -536,6 +536,116 @@ def _rule_based_innovation(context):
         "suggestions": list(_DIFFERENTIATION_SUGGESTIONS.get(need, [])),
         "generated_by": "rule_based",
     }
+
+
+# ---------------------------------------------------------------------
+# 2a. The competitor insight -- "how many of you are already here, and
+#     can this plan still win?"
+# ---------------------------------------------------------------------
+# The Planning page shows it SHORT (one or two sentences next to the
+# direct-competitor count) and the Recommendations page shows it IN FULL,
+# so the two pages say the same thing at two lengths rather than two
+# different things.
+#
+# The AI writes both (llm_service asks for "competitor_insight"), because
+# the judgement it needs -- is THIS pandesal idea new against the
+# pandesal shops already trading here? -- is a reading of words, which a
+# template cannot do. This rule-based version is what stands when the AI
+# is off or its text quotes a figure it was not given; it says only what
+# the numbers say, and names the novelty only when the AI rated it.
+#
+# Built from STORED fields alone (the sub-category analysis, the market
+# payload, the innovation read), so parse_recommendation() can give a
+# forecast written before this existed the same insight.
+
+def competitor_insight_from(analysis, competitor_count, industry_type, location, innovation):
+    """{"short", "detail", "generated_by", "label", "direct_count",
+    "industry_count", "is_estimated", "source"} -- the rule-based insight."""
+    innovation = innovation or {}
+    has_idea = bool(innovation.get("has_idea"))
+    novelty = innovation.get("novelty")
+    need = (innovation.get("differentiation_need") or "Moderate").lower()
+    industry_count = int(_number(competitor_count, 0) or 0)
+    location = location or "this barangay"
+
+    if analysis:
+        label = str(analysis.get("label") or "Direct competitor")
+        direct = int(_number(analysis.get("direct_count"), 0) or 0)
+        estimated = bool(analysis.get("is_estimated"))
+        kind = label.lower()
+        ratio = _number(analysis.get("density_ratio"), 1.0) or 1.0
+        if estimated:
+            crowd = ("No count of this exact kind of business is on file for this barangay yet, "
+                     "so that number is an estimate.")
+        elif ratio < 1:
+            crowd = ("That is fewer than a barangay with this many businesses usually has, so direct "
+                     "competition is lighter than the industry figure suggests.")
+        elif ratio > 1:
+            crowd = ("That is more than a barangay with this many businesses usually has, so direct "
+                     "competition is heavier than the industry figure suggests.")
+        else:
+            crowd = "That is about what is usual for a barangay with this many businesses."
+    else:
+        label = industry_type or "Competitor"
+        direct = industry_count
+        estimated = False
+        kind = (industry_type or "business").lower()
+        crowd = "Pick a sub-category on the plan to count only the businesses that sell what you sell."
+    count_text = f"{'About ' if estimated else ''}{direct} {kind} business{'es' if direct != 1 else ''}"
+
+    if novelty == "High":
+        chance_short = "Your idea reads as genuinely new here, so the plan has a real chance."
+        chance = ("Your idea reads as genuinely new here, so even with that competition the plan has a "
+                  "real chance, provided customers can see the difference from day one.")
+    elif novelty == "Moderate":
+        chance_short = "Your idea is partly new here and can set you apart."
+        chance = ("Your idea is partly new here: it can set you apart, but expect competitors to copy what "
+                  "works, so make it the thing you are known for.")
+    elif novelty == "Low":
+        chance_short = "Your idea looks close to what is already offered, so sharpen the difference."
+        chance = ("Your idea looks close to what is already offered here, so it will not set you apart on "
+                  "its own; sharpen the difference before you open.")
+    elif has_idea:
+        chance_short = f"Your idea is what has to set you apart (differentiation need: {need})."
+        chance = (f"You have described what makes you different; with a differentiation need of {need}, "
+                  "that idea is what has to carry the plan against them.")
+    else:
+        chance_short = f"Add what makes you different for a clearer read (differentiation need: {need})."
+        chance = (f"You have not said what makes you different yet, and the differentiation need here is "
+                  f"{need}. Add your idea to the plan for a clearer read.")
+
+    return {
+        "short": f"{count_text} already trade in {location}. {chance_short}",
+        "detail": f"{count_text} already trade in {location}. {crowd} {chance}",
+        "generated_by": RULE_BASED_EXPLANATION,
+        "label": label,
+        "direct_count": direct,
+        "industry_count": industry_count,
+        "is_estimated": estimated,
+        "source": (analysis or {}).get("source"),
+    }
+
+
+def _rule_based_competitor_insight(context, innovation):
+    return competitor_insight_from(
+        context.get("subcategory_analysis"), context.get("competitor_count"),
+        context.get("industry_type"), context.get("location"), innovation,
+    )
+
+
+def _choose_competitor_insight(llm_value, writer, rule_insight, context):
+    """The AI's insight when it is present and quotes only figures it was
+    given (the same check as the transcript), else the rule-based one.
+    The counts shown beside it are always the measured ones."""
+    if not isinstance(llm_value, dict):
+        return rule_insight
+    short = " ".join(str(llm_value.get("short") or "").split())
+    detail = " ".join(str(llm_value.get("detail") or "").split())
+    if not short or not detail or len(short) > 400 or len(detail) > TRANSCRIPT_MAX_CHARS:
+        return rule_insight
+    if ungrounded_numbers(short + " " + detail, context):
+        return rule_insight
+    return {**rule_insight, "short": short, "detail": detail, "generated_by": writer}
 
 
 # ---------------------------------------------------------------------
@@ -1191,6 +1301,7 @@ def _rule_based_recommendation(context):
         "innovation": _rule_based_innovation(context),
         "forecast": _forecast(context),
         "explanation": _rule_based_explanation(context),
+        "competitor_insight": _rule_based_competitor_insight(context, _rule_based_innovation(context)),
     }
 
 
@@ -1270,6 +1381,7 @@ def build_recommendation(context):
             llm_payload = dict(llm_payload)
             llm_innovation = llm_payload.pop("innovation", None)
             llm_explanation = llm_payload.pop("explanation", None)
+            llm_competitor_insight = llm_payload.pop("competitor_insight", None)
             llm_model = llm_payload.pop("model", None)
             llm_payload.pop("forecast", None)
             recommendation = dict(llm_payload)
@@ -1299,6 +1411,12 @@ def build_recommendation(context):
                 }
             else:
                 recommendation["innovation"] = rule_innovation
+            # Judged AFTER the innovation, so the rule-based fallback can
+            # name the novelty the AI just rated.
+            recommendation["competitor_insight"] = _choose_competitor_insight(
+                llm_competitor_insight, writer,
+                _rule_based_competitor_insight(context, recommendation["innovation"]), context,
+            )
 
         explanation = recommendation.get("explanation")
         still_the_summary = isinstance(explanation, dict) and \
@@ -1346,7 +1464,29 @@ def _empty_recommendation():
         "innovation": None,
         "forecast": None,
         "explanation": None,
+        "competitor_insight": None,
     }
+
+
+def _parse_competitor_insight(payload):
+    """The stored insight, or -- for a forecast written before insights
+    existed -- the rule-based one rebuilt from what that row DID store,
+    so the Planning and Recommendations pages never show a gap."""
+    value = payload.get("competitor_insight")
+    if isinstance(value, dict) and value.get("short"):
+        return value
+    forecast = payload.get("forecast") if isinstance(payload.get("forecast"), dict) else {}
+    market = forecast.get("market") or {}
+    inputs = forecast.get("inputs") or {}
+    analysis = payload.get("subcategory_analysis")
+    analysis = analysis if isinstance(analysis, dict) else None
+    if not analysis and not market:
+        return None
+    innovation = payload.get("innovation")
+    return competitor_insight_from(
+        analysis, market.get("competitor_count"), inputs.get("industry_type"),
+        inputs.get("location"), innovation if isinstance(innovation, dict) else None,
+    )
 
 
 def _parse_explanation(value):
@@ -1539,6 +1679,7 @@ def parse_recommendation(raw_text):
                 "forecast": payload.get("forecast")
                 if isinstance(payload.get("forecast"), dict) else None,
                 "explanation": _parse_explanation(payload.get("explanation")),
+                "competitor_insight": _parse_competitor_insight(payload),
             }
 
     # Legacy plain-text fallback (pre-JSON format).
@@ -1564,6 +1705,7 @@ def parse_recommendation(raw_text):
         "innovation": None,
         "forecast": None,
         "explanation": None,
+        "competitor_insight": None,
     }
 
 

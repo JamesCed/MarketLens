@@ -71,7 +71,7 @@ from app.controllers.onboarding_controller import describe_walkthrough
 from app.extensions import db
 from app.models import SmeProfile, PlanSave, ForecastResult, Notification, SystemSetting
 from app.models.user import User
-from app.utils.audit import log_action
+from app.utils.audit import diff_fields, log_action
 
 profile_bp = Blueprint("profile", __name__)
 
@@ -99,7 +99,7 @@ SME_ONLY_SECTIONS = ()
 # (302 -- a bookmark that keeps working, not a permanent rename of
 # Settings). Any other role never had that pane and simply gets Profile,
 # as it always did.
-SME_SECTION_REDIRECTS = {"plans": "sme.home"}
+SME_SECTION_REDIRECTS = {"plans": "sme.planning"}
 
 # The Notification Preferences switches, in the order they are shown.
 #
@@ -222,13 +222,15 @@ def settings():
             # the "off" signal. Reading it as a value ("off"/"false")
             # would leave every switch permanently on.
             saved = {}
+            before = {field: bool(getattr(current_user, field)) for field in NOTIFICATION_FIELDS}
             for field in NOTIFICATION_FIELDS:
                 value = bool(request.form.get(field))
                 setattr(current_user, field, value)
                 saved[field] = value
             db.session.commit()
             log_action("update_notification_prefs",
-                       details=", ".join(f"{k}={v}" for k, v in saved.items()))
+                       details=", ".join(f"{k}={v}" for k, v in saved.items()),
+                       changes=diff_fields(before, saved))
             flash("Notification preferences saved.", "success")
             return redirect(url_for("profile.settings", section="notifications"))
 
@@ -270,12 +272,15 @@ def settings():
                 flash("Password updated.", "success")
             return redirect(url_for("profile.settings"))
 
+        before = {"name": current_user.name, "contact_number": current_user.contact_number}
         name = request.form.get("name", "").strip()
         if name:
             current_user.name = name
         current_user.contact_number = request.form.get("contact_number", "").strip() or None
         db.session.commit()
-        log_action("update_profile")
+        changed = diff_fields(before, {"name": current_user.name, "contact_number": current_user.contact_number})
+        log_action("update_profile", details=("changed " + ", ".join(changed)) if changed else "no changes",
+                   changes=changed)
         flash("Profile updated.", "success")
         return redirect(url_for("profile.settings"))
 

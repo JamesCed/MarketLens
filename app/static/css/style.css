@@ -2165,3 +2165,60 @@ body.dss-skin .dss-main .table > thead th {
 @media (prefers-reduced-motion: reduce) {
   .dss-industry-track { scroll-behavior: auto; }
 }
+
+/* =====================================================================
+   HOME OVERVIEW, COMPETITOR INSIGHT, CHART NOTES (revisions part 2)
+   ---------------------------------------------------------------------
+   Built on Bootstrap's own theme variables (--bs-*), which already
+   switch in [data-bs-theme="dark"], so these need no dark override.
+   ===================================================================== */
+.dss-overview-hero {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+}
+.dss-stat-card { padding: 1rem 1.1rem; }
+.dss-stat-label { font-size: .78rem; color: var(--bs-secondary-color); display: flex; gap: .4rem; align-items: center; }
+.dss-stat-value { font-size: 1.6rem; font-weight: 700; line-height: 1.2; margin-top: .25rem; }
+.dss-stat-note { font-size: .74rem; color: var(--bs-secondary-color); }
+.dss-overview-card { display: flex; flex-direction: column; }
+.dss-overview-head {
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin-bottom: .6rem;
+}
+.dss-overview-head h5 { margin: 0; font-size: 1.05rem; display: flex; gap: .45rem; align-items: center; }
+.dss-overview-plans li + li { border-top: 1px solid var(--bs-border-color); }
+.dss-overview-plan {
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+  padding: .55rem .25rem; color: inherit; text-decoration: none; border-radius: .4rem;
+}
+.dss-overview-plan:hover, .dss-overview-plan:focus-visible { background: var(--bs-tertiary-bg); }
+.dss-overview-callout {
+  border-left: 3px solid var(--dss-blue); background: var(--bs-tertiary-bg); padding: .5rem .75rem; border-radius: .35rem;
+}
+
+.dss-competitor-panel {
+  display: flex; gap: .75rem; align-items: flex-start;
+  border: 1px solid var(--bs-border-color); border-radius: .6rem; padding: .65rem .75rem;
+  background: var(--bs-tertiary-bg);
+}
+.dss-competitor-count {
+  flex-shrink: 0; min-width: 3.4rem; text-align: center; border-radius: .5rem; padding: .35rem .4rem;
+  background: var(--dss-blue-light); color: var(--dss-blue);
+}
+.dss-competitor-count strong { display: block; font-size: 1.35rem; line-height: 1.1; }
+.dss-competitor-count span { font-size: .66rem; text-transform: uppercase; letter-spacing: .04em; }
+.dss-ai-badge {
+  display: inline-flex; gap: .25rem; align-items: center; font-size: .68rem; font-weight: 600;
+  padding: .1rem .45rem; border-radius: 999px; background: var(--dss-hue-violet-bg); color: var(--dss-hue-violet-fg);
+}
+
+/* The plain-language reading under a chart. */
+.dss-chart-note {
+  font-size: .8rem; line-height: 1.45; color: var(--bs-body-color);
+  background: var(--bs-tertiary-bg); border-left: 3px solid var(--dss-blue);
+  border-radius: .35rem; padding: .5rem .7rem; margin: .5rem 0 .75rem;
+}
+.dss-chart-note:empty { display: none; }
+.dss-chart-note strong { font-weight: 600; }
+.dss-distribution-wrap { position: relative; width: 100%; min-height: 220px; }
+.dss-chart-guide {
+  border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .7rem .85rem; background: var(--bs-body-bg);
+}

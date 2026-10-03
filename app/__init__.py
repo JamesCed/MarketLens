@@ -81,6 +81,24 @@ def create_app(config_name=None):
 
     install_archive_filter()
 
+    # LAST SEEN (Admin > Manage Users). Written at most once every
+    # User.LAST_SEEN_RESOLUTION per account -- the account row is already
+    # loaded for the request, so the check itself costs nothing, and the
+    # write happens a few times an hour at most, not on every page.
+    @app.before_request
+    def _record_last_seen():
+        from flask_login import current_user as _user
+
+        try:
+            if _user.is_authenticated and _user.touch_last_seen():
+                from app.extensions import db as _db
+
+                _db.session.commit()
+        except Exception:  # noqa: BLE001 -- monitoring must never break a page
+            from app.extensions import db as _db
+
+            _db.session.rollback()
+
     # ---- blueprints (controllers) ----
     from app.controllers.auth_controller import auth_bp
     from app.controllers.sme_controller import sme_bp

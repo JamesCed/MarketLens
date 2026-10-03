@@ -77,6 +77,51 @@
 {%- endmacro %}
 
 
+{#
+  competitor_insight_panel(rec, full=False, more_url=None)
+  "How many of you are already here, and can this plan still win?" --
+  the direct-competitor count (the sub-category's own, e.g. bakeries, or
+  the whole industry when no sub-category is set) beside the insight the
+  AI wrote about it. Planning shows the SHORT insight with a link to
+  Recommendations (`more_url`); Recommendations shows the FULL one, so
+  the two pages say one thing at two lengths.
+#}
+{% macro competitor_insight_panel(rec, full=False, more_url=None) -%}
+  {% set ci = rec.competitor_insight if rec else None %}
+  {% if ci %}
+    {% set by = ci.generated_by or '' %}
+    <div class="dss-competitor-panel {{ 'mb-3' if full else 'mb-2' }}">
+      <div class="dss-competitor-count" aria-hidden="true">
+        <strong>{{ ci.direct_count }}</strong>
+        <span>{{ 'est.' if ci.is_estimated else 'here' }}</span>
+      </div>
+      <div class="flex-grow-1 min-w-0">
+        <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+          <span class="small fw-semibold"><i class="bi bi-shop-window" aria-hidden="true"></i>
+            {{ ci.label }} competitors</span>
+          {% if by.startswith('llm:gemini') %}
+            <span class="dss-ai-badge"><i class="bi bi-stars" aria-hidden="true"></i> Gemini insight</span>
+          {% elif by.startswith('llm:') %}
+            <span class="dss-ai-badge"><i class="bi bi-stars" aria-hidden="true"></i> AI insight</span>
+          {% endif %}
+        </div>
+        <span class="visually-hidden">{{ ci.direct_count }} {{ ci.label }} competitor(s){{ ' (estimated)' if ci.is_estimated }}.</span>
+        <p class="small mb-1">{{ ci.detail if full else ci.short }}</p>
+        {% if ci.industry_count and ci.industry_count != ci.direct_count %}
+          <div class="text-muted" style="font-size:.72rem;">
+            Out of {{ ci.industry_count }} businesses in the whole industry in this barangay{% if ci.source %}
+            &middot; source: {{ 'Google Places' if ci.source == 'Google Places API' else 'LGU permit records' if ci.source == 'DTI' else ci.source }}{% endif %}.
+          </div>
+        {% endif %}
+        {% if more_url and not full %}
+          <a class="small d-inline-block mt-1" href="{{ more_url }}">Full insight and recommendations &raquo;</a>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+{%- endmacro %}
+
+
 {% macro innovation_panel(rec, compact=False) -%}
   {% set i = rec.innovation if rec else None %}
   {% if i %}

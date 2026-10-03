@@ -117,16 +117,16 @@ def test_trash_hides_the_plan_from_home_but_keeps_the_row(app, two_plans):
         client = _client(app)
         response = client.post(f"/home/plans/{two_plans['bin']}/trash")
         assert response.status_code == 302
-        assert response.headers["Location"].endswith("/home")
+        assert response.headers["Location"].endswith("/planning")
 
         row = _row(two_plans["bin"])
         assert row is not None, "trash must never delete the row"
         assert row.archived_at is not None and row.is_archived
         assert two_plans["bin"] not in _live_ids()
 
-        page = client.get("/home").get_data(as_text=True)
-        assert f'href="/home?plan={two_plans["bin"]}"' not in page
-        assert f'href="/home?plan={two_plans["keep"]}"' in page
+        page = client.get("/planning").get_data(as_text=True)
+        assert f'href="/planning?plan={two_plans["bin"]}"' not in page
+        assert f'href="/planning?plan={two_plans["keep"]}"' in page
         # ...but it is listed in the Trash dialog.
         trash = _section(page, "planTrashModal")
         assert "Tibag Pandesal" in trash
@@ -171,7 +171,7 @@ def test_a_trashed_plan_gets_no_market_alerts(app, two_plans):
 def test_restore_brings_back_the_plan_and_its_forecasts(app, two_plans):
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['bin']}")      # forecasts it
+        client.get(f"/planning?plan={two_plans['bin']}")      # forecasts it
         forecasts = ForecastResult.query.filter_by(sme_id=two_plans["bin"]).count()
         assert forecasts >= 1
 
@@ -180,13 +180,13 @@ def test_restore_brings_back_the_plan_and_its_forecasts(app, two_plans):
 
         response = client.post(f"/home/plans/{two_plans['bin']}/restore")
         assert response.status_code == 302
-        assert response.headers["Location"].endswith(f"/home?plan={two_plans['bin']}")
+        assert response.headers["Location"].endswith(f"/planning?plan={two_plans['bin']}")
         assert _row(two_plans["bin"]).archived_at is None
         assert two_plans["bin"] in _live_ids()
         assert ForecastResult.query.filter_by(sme_id=two_plans["bin"]).count() >= forecasts
 
         page = client.get(response.headers["Location"]).get_data(as_text=True)
-        assert f'href="/home?plan={two_plans["bin"]}"' in page
+        assert f'href="/planning?plan={two_plans["bin"]}"' in page
         assert "Trash is empty." in _section(page, "planTrashModal")
 
 
@@ -205,7 +205,7 @@ def test_the_legacy_delete_url_only_trashes(app, two_plans):
     clients may still call it; it must now do exactly what Trash does."""
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         forecasts = ForecastResult.query.filter_by(sme_id=two_plans["bin"]).count()
 
         response = client.post(f"/home/plans/{two_plans['bin']}/delete", headers=JSON)
@@ -252,7 +252,7 @@ def test_trashing_the_selected_plan_clears_the_selection(app, two_plans):
 
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         with client.session_transaction() as sess:
             assert sess[HOME_PLAN_SESSION_KEY] == two_plans["bin"]
 
@@ -260,7 +260,7 @@ def test_trashing_the_selected_plan_clears_the_selection(app, two_plans):
         with client.session_transaction() as sess:
             assert HOME_PLAN_SESSION_KEY not in sess
 
-        page = client.get("/home").get_data(as_text=True)
+        page = client.get("/planning").get_data(as_text=True)
         assert f"{RETAIL} in Balibago I" in page
 
 
@@ -268,7 +268,7 @@ def test_a_trashed_plan_cannot_be_chosen_by_url(app, two_plans):
     with app.app_context():
         client = _client(app)
         client.post(f"/home/plans/{two_plans['bin']}/trash")
-        page = client.get(f"/home?plan={two_plans['bin']}").get_data(as_text=True)
+        page = client.get(f"/planning?plan={two_plans['bin']}").get_data(as_text=True)
         assert f"{FOOD} in Tibag" not in page
         assert f"{RETAIL} in Balibago I" in page
 
@@ -278,7 +278,7 @@ def test_a_historical_forecast_still_resolves_its_trashed_plan(app, two_plans):
     forecast built on a plan now in Trash must still name its plan."""
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         forecast_id = ForecastResult.query.filter_by(sme_id=two_plans["bin"]).first().forecast_id
         client.post(f"/home/plans/{two_plans['bin']}/trash")
         db.session.expunge_all()
@@ -363,7 +363,7 @@ def test_someone_elses_plan_is_refused(app, strangers_plans, which, verb, header
 
 def test_someone_elses_trash_is_not_listed(app, strangers_plans):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
         assert "Not Yours Either" not in page
         assert "Not Yours" not in page
         assert "Trash is empty." in _section(page, "planTrashModal")
@@ -384,7 +384,7 @@ def test_update_answers_json_to_fetch(app, two_plans):
         assert payload["success"] is True
         assert payload["plan"]["capital"] == 750000.0
         assert payload["plan"]["startup_capital"] == 750000.0
-        assert payload["redirect"].endswith(f"/home?plan={two_plans['bin']}")
+        assert payload["redirect"].endswith(f"/planning?plan={two_plans['bin']}")
 
         saved = _row(two_plans["bin"])
         assert saved.business_name == "Renamed Pandesal"
@@ -399,7 +399,7 @@ def test_update_redirects_a_plain_form_post(app, two_plans):
         response = client.post(f"/home/plans/{two_plans['bin']}/update",
                                data=_edit_form(business_name="Plain Post Pandesal"))
         assert response.status_code == 302
-        assert response.headers["Location"].endswith(f"/home?plan={two_plans['bin']}")
+        assert response.headers["Location"].endswith(f"/planning?plan={two_plans['bin']}")
         page = client.get(response.headers["Location"]).get_data(as_text=True)
         assert "“Plain Post Pandesal” updated" in page
         # A browser's ordinary Accept header prefers HTML: still a redirect.
@@ -543,7 +543,7 @@ def test_a_legacy_plan_without_capital_reads_zero_and_is_flagged(app):
         user = _user()
         legacy = _plan(user, "No Capital Yet", capital=None)
         assert legacy.capital == 0.0 and legacy.capital_missing
-        page = _client(app).get(f"/home?plan={legacy.sme_id}").get_data(as_text=True)
+        page = _client(app).get(f"/planning?plan={legacy.sme_id}").get_data(as_text=True)
         assert "Capital missing" in page
         assert "Add your capital to get an accurate forecast." in page
         assert f'data-bs-target="#editPlanModal-{legacy.sme_id}"' in page
@@ -561,7 +561,7 @@ def test_a_new_plan_without_capital_is_refused(app, two_plans):
 
 def test_every_plan_form_on_home_asks_for_a_required_capital(app, two_plans):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     capital_inputs = re.findall(r'<input type="number" id="[^"]+-capital" name="capital"[^>]*>', page)
     assert len(capital_inputs) == 3                     # Add + one Edit per plan
     for tag in capital_inputs:
@@ -574,7 +574,7 @@ def test_every_plan_form_on_home_asks_for_a_required_capital(app, two_plans):
 def test_recommendations_say_capital_and_break_even(app, two_plans):
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         page = client.get("/recommendations").get_data(as_text=True)
         assert "Startup Capital" not in page
         assert "> Capital</div>" in page
@@ -593,7 +593,7 @@ def _visible_text(html):
 
 def test_plan_chips_have_icon_only_edit_and_trash_buttons(app, two_plans):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
 
     actions = re.findall(r'<div class="dss-plan-chip-actions">(.*?)</form>\s*</div>', page, flags=re.S)
     assert len(actions) == 2
@@ -607,13 +607,13 @@ def test_plan_chips_have_icon_only_edit_and_trash_buttons(app, two_plans):
     assert f'action="/home/plans/{two_plans["bin"]}/trash"' in page
     assert f'action="/home/plans/{two_plans["bin"]}/update"' in page
     # The selection link holds no button: nothing interactive is nested.
-    for link in re.findall(r'<a href="/home\?plan=\d+" class="dss-plan-chip-link".*?</a>', page, flags=re.S):
+    for link in re.findall(r'<a href="/planning\?plan=\d+" class="dss-plan-chip-link".*?</a>', page, flags=re.S):
         assert "<button" not in link and "<form" not in link
 
 
 def test_each_plan_has_a_prefilled_edit_dialog(app, two_plans):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     dialog = _section(page, f"editPlanModal-{two_plans['bin']}")
     assert 'value="Tibag Pandesal"' in dialog
     assert 'value="250000"' in dialog
@@ -628,12 +628,12 @@ def test_each_plan_has_a_prefilled_edit_dialog(app, two_plans):
 def test_the_trash_button_is_icon_only_with_a_count(app, two_plans):
     with app.app_context():
         client = _client(app)
-        page = client.get("/home").get_data(as_text=True)
+        page = client.get("/planning").get_data(as_text=True)
         assert 'aria-label="Trash (0)"' in page
         assert 'title="Trash"' in page
 
         client.post(f"/home/plans/{two_plans['bin']}/trash")
-        page = client.get("/home").get_data(as_text=True)
+        page = client.get("/planning").get_data(as_text=True)
     button = re.search(r'<a href="#planTrashModal"[^>]*>(.*?)</a>', page, flags=re.S)
     assert button and 'aria-label="Trash (1)"' in button.group(0)
     assert 'class="bi bi-trash3"' in button.group(1)
@@ -644,13 +644,13 @@ def test_restore_buttons_are_icon_only(app, two_plans):
     with app.app_context():
         client = _client(app)
         client.post(f"/home/plans/{two_plans['bin']}/trash")
-        trash = _section(client.get("/home").get_data(as_text=True), "planTrashModal")
+        trash = _section(client.get("/planning").get_data(as_text=True), "planTrashModal")
     button = re.search(r'<button type="submit" class="dss-icon-btn dss-icon-btn-restore"[^>]*>(.*?)</button>',
                        trash, flags=re.S)
     assert button
     assert 'aria-label="Restore “Tibag Pandesal”"' in button.group(0)
     assert _visible_text(button.group(1)) == ""
-    assert "Plans in Trash are kept, not deleted." in trash
+    assert "Plans in Trash are archived for 30 days, then deleted permanently." in trash
 
 
 def test_the_trash_button_shows_when_every_plan_is_in_trash(app):
@@ -659,7 +659,7 @@ def test_the_trash_button_shows_when_every_plan_is_in_trash(app):
         only = _plan(user, "Only Plan")
         client = _client(app)
         client.post(f"/home/plans/{only.sme_id}/trash")
-        page = client.get("/home").get_data(as_text=True)
+        page = client.get("/planning").get_data(as_text=True)
     assert 'aria-label="Trash (1)"' in page
     assert "in Trash" in page and "Only Plan" in _section(page, "planTrashModal")
 
@@ -683,21 +683,21 @@ def test_a_chip_scored_before_the_plan_model_says_market_score(app, two_plans):
     scores under the same "Viability" name."""
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['keep']}")
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['keep']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         old = ForecastResult.query.filter_by(sme_id=two_plans["keep"]).first()
         _strip_payload(old)
         old.viability_score = 7.3
         db.session.commit()
 
-        page = client.get(f"/home?plan={two_plans['bin']}").get_data(as_text=True)
+        page = client.get(f"/planning?plan={two_plans['bin']}").get_data(as_text=True)
         stale, fresh = _chip(page, two_plans["keep"]), _chip(page, two_plans["bin"])
         assert re.search(r"Market score 7\.3/10 &middot; open to update", stale)
         assert "Viability " not in stale
         assert re.search(r"Viability \d+\.\d/10", fresh) and "Market score" not in fresh
 
         # Opening it re-runs the forecast, and the chip becomes a plan score.
-        page = client.get(f"/home?plan={two_plans['keep']}").get_data(as_text=True)
+        page = client.get(f"/planning?plan={two_plans['keep']}").get_data(as_text=True)
         assert "Market score" not in _chip(page, two_plans["keep"])
 
 
@@ -709,12 +709,12 @@ def test_the_chip_pill_is_coloured_by_its_own_score_not_the_market_tier(app, two
     so it is coloured by it."""
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         row = ForecastResult.query.filter_by(sme_id=two_plans["bin"]).first()
         row.viability_score = score
         row.saturation_index = 10.0          # a "Low" saturation tier, whatever the score
         db.session.commit()
-        page = client.get(f"/home?plan={two_plans['keep']}").get_data(as_text=True)
+        page = client.get(f"/planning?plan={two_plans['keep']}").get_data(as_text=True)
         chip = _chip(page, two_plans["bin"])
     assert f"dss-stat-pill {pill}" in chip
     assert f"Viability {score:.1f}/10" in chip
@@ -723,52 +723,55 @@ def test_the_chip_pill_is_coloured_by_its_own_score_not_the_market_tier(app, two
 def test_the_trash_row_names_the_kind_of_score_it_shows(app, two_plans):
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         client.post(f"/home/plans/{two_plans['bin']}/trash")
-        trash = _section(client.get("/home").get_data(as_text=True), "planTrashModal")
+        trash = _section(client.get("/planning").get_data(as_text=True), "planTrashModal")
         assert re.search(r"last viability\s+\d+\.\d/10", trash)
 
         _strip_payload(ForecastResult.query.filter_by(sme_id=two_plans["bin"]).first())
         db.session.commit()
-        trash = _section(client.get("/home").get_data(as_text=True), "planTrashModal")
+        trash = _section(client.get("/planning").get_data(as_text=True), "planTrashModal")
         assert re.search(r"last market score\s+\d+\.\d/10", trash)
         assert "last viability" not in trash
 
 
 def test_the_trash_date_is_shown_in_philippine_time(app, two_plans):
-    """archived_at is stored in UTC. 23:30 UTC on 1 March is 07:30 on
-    2 March in Tarlac -- the day the owner actually trashed it."""
-    from datetime import datetime
+    """archived_at is stored in UTC. 23:30 UTC is 07:30 the NEXT day in
+    Tarlac -- the day the owner actually trashed it. (A date inside the
+    30-day window: an older one would be purged before the page shows it.)"""
+    from datetime import datetime, timedelta
 
+    stamp = (datetime.utcnow() - timedelta(days=3)).replace(hour=23, minute=30, second=0, microsecond=0)
+    expected = (stamp + timedelta(hours=8)).strftime("%B %d, %Y")
     with app.app_context():
         client = _client(app)
         client.post(f"/home/plans/{two_plans['bin']}/trash")
         row = _row(two_plans["bin"])
-        row.archived_at = datetime(2026, 3, 1, 23, 30)
+        row.archived_at = stamp
         db.session.commit()
-        trash = _section(client.get("/home").get_data(as_text=True), "planTrashModal")
-    assert "Moved to Trash on March 02, 2026" in trash
+        trash = _section(client.get("/planning").get_data(as_text=True), "planTrashModal")
+    assert f"Moved to Trash on {expected}" in trash
 
 
 def test_recommendations_name_a_pre_model_score_for_what_it_is(app, two_plans):
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         page = client.get("/recommendations").get_data(as_text=True)
-        assert "Plan Viability" in page and "Open on Home to update" not in page
+        assert "Plan Viability" in page and "Open in Planning to update" not in page
 
         _strip_payload(ForecastResult.query.filter_by(sme_id=two_plans["bin"]).first())
         db.session.commit()
         page = client.get("/recommendations").get_data(as_text=True)
         assert "Market Score" in page
-        assert f'href="/home?plan={two_plans["bin"]}"' in page and "Open on Home to update" in page
+        assert f'href="/planning?plan={two_plans["bin"]}"' in page and "Open in Planning to update" in page
 
 
 def test_the_idea_help_text_no_longer_says_it_changes_nothing(app, two_plans):
     """Having an idea is the plan model's differentiation input, and that
     model's score is the one on the gauge and the chips."""
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     assert "never changes the market score" not in page
     assert "counts towards your plan's viability score" in page
     assert "never changes the market saturation figure" in page
@@ -776,14 +779,14 @@ def test_the_idea_help_text_no_longer_says_it_changes_nothing(app, two_plans):
 
 def test_home_no_longer_points_to_business_preferences(app, two_plans):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     assert "Business Preferences" not in page
     assert "section=plans" not in page
     assert "Viability " in page and "Market score" not in page
 
 
 def test_the_shared_form_macro_is_used_by_add_and_edit():
-    with open("app/templates/sme/home.html", encoding="utf-8") as handle:
+    with open("app/templates/sme/planning.html", encoding="utf-8") as handle:
         home = handle.read()
     assert home.count("plan_core_fields(") == 2
     with open("app/templates/shared/_plan_fields.html", encoding="utf-8") as handle:
@@ -810,7 +813,7 @@ def test_the_chip_actions_are_styled_for_both_themes():
 def test_an_old_forecast_without_the_model_payload_is_regenerated(app, two_plans):
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         old = (ForecastResult.query.filter_by(sme_id=two_plans["bin"])
                .order_by(ForecastResult.forecast_id.desc()).first())
         stored = json.loads(old.recommendation)
@@ -820,20 +823,20 @@ def test_an_old_forecast_without_the_model_payload_is_regenerated(app, two_plans
         db.session.commit()
         before = ForecastResult.query.filter_by(sme_id=two_plans["bin"]).count()
 
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         assert ForecastResult.query.filter_by(sme_id=two_plans["bin"]).count() == before + 1
         newest = (ForecastResult.query.filter_by(sme_id=two_plans["bin"])
                   .order_by(ForecastResult.forecast_id.desc()).first())
         assert json.loads(newest.recommendation).get("forecast"), "the regenerated row carries the payload"
 
         # ...and a fresh one is NOT regenerated on every visit.
-        client.get(f"/home?plan={two_plans['bin']}")
+        client.get(f"/planning?plan={two_plans['bin']}")
         assert ForecastResult.query.filter_by(sme_id=two_plans["bin"]).count() == before + 1
 
 
 def test_the_forecast_panel_shows_the_plan_model_breakdown(app, two_plans):
     with app.app_context():
-        page = _client(app).get(f"/home?plan={two_plans['bin']}").get_data(as_text=True)
+        page = _client(app).get(f"/planning?plan={two_plans['bin']}").get_data(as_text=True)
     assert "Plan viability" in page
     assert "Break-even:" in page
     assert "Capital runway:" in page

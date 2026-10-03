@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}Diversification Plan{% endblock %}
+
+{#
+  lgu/diversification.html -- THE LGU DIVERSIFICATION PLAN
+  -----------------------------------------------------------
+  Every figure comes from diversification_service.build_diversification_plan()
+  (see that module for each measure and threshold). This page only lays
+  it out: the headline, the industries to encourage / regulate, the
+  barangays to act on first, and the full per-barangay table -- each
+  chart with a plain-language reading under it.
+#}
+
+{% block content %}
+{% set t = plan.thresholds %}
+<div class="dss-overview-hero mb-3">
+  <div>
+    <h2 class="mb-1">Tarlac City Diversification Plan</h2>
+    <p class="text-muted mb-0">Which barangays depend on too few industries, what the city should encourage or
+      regulate, and where to start.</p>
+  </div>
+  <a href="{{ url_for('lgu.diversification_csv') }}" class="btn btn-outline-primary">
+    <i class="bi bi-filetype-csv" aria-hidden="true"></i> Export plan (CSV)
+  </a>
+</div>
+
+{% if plan.summary %}
+<div class="dss-card mb-4 dss-overview-callout">
+  <div class="fw-semibold mb-1"><i class="bi bi-clipboard-check" aria-hidden="true"></i> Summary</div>
+  <ul class="mb-0 small ps-3">{% for line in plan.summary %}<li>{{ line }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3"><div class="dss-card dss-stat-card h-100">
+    <div class="dss-stat-label"><i class="bi bi-pie-chart" aria-hidden="true"></i> City diversity</div>
+    <div class="dss-stat-value">{{ plan.city_diversity if plan.city_diversity is not none else '—' }}<span class="fs-6 text-muted">/100</span></div>
+    <div class="dss-stat-note">100 = businesses spread evenly across all industries</div>
+  </div></div>
+  <div class="col-6 col-lg-3"><div class="dss-card dss-stat-card h-100">
+    <div class="dss-stat-label"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> Priority barangays</div>
+    <div class="dss-stat-value">{{ plan.priority|length }}</div>
+    <div class="dss-stat-note">low diversity, one dominant industry or few businesses</div>
+  </div></div>
+  <div class="col-6 col-lg-3"><div class="dss-card dss-stat-card h-100">
+    <div class="dss-stat-label"><i class="bi bi-arrow-up-right-circle text-success" aria-hidden="true"></i> Industries to encourage</div>
+    <div class="dss-stat-value">{{ plan.industries|selectattr('stance', 'equalto', 'Encourage')|list|length }}</div>
+    <div class="dss-stat-note">more room than the city's typical industry</div>
+  </div></div>
+  <div class="col-6 col-lg-3"><div class="dss-card dss-stat-card h-100">
+    <div class="dss-stat-label"><i class="bi bi-sign-stop text-danger" aria-hidden="true"></i> Industries to regulate</div>
+    <div class="dss-stat-value">{{ plan.industries|selectattr('stance', 'equalto', 'Regulate')|list|length }}</div>
+    <div class="dss-stat-note">saturated in at least {{ t.regulate_share_percent }}% of barangays</div>
+  </div></div>
+</div>
+
+<div class="row g-4 mb-4">
+  {# ------------------------- industry stance ------------------------- #}
+  <div class="col-lg-6">
+    <section class="dss-card h-100" aria-labelledby="stanceTitle">
+      <h5 id="stanceTitle" class="mb-1">What to encourage, monitor or regulate</h5>
+      <p class="text-muted small">Each industry's share of the city's businesses, coloured by the action the data
+        supports: <span class="text-success fw-semibold">Encourage</span> (more room than the city's typical industry),
+        <span class="text-warning fw-semibold">Monitor</span>, <span class="text-danger fw-semibold">Regulate</span>
+        (saturated in many barangays).</p>
+      <div class="dss-distribution-wrap" style="height: {{ [220, plan.industries|length * 24 + 40]|max }}px;">
+        <canvas id="stanceChart" role="img" aria-label="Bar chart of each industry's share of businesses, coloured by recommended action"></canvas>
+      </div>
+      <p class="dss-chart-note" id="stanceNote"></p>
+    </section>
+  </div>
+
+  {# ------------------------- diversity by barangay ------------------------- #}
+  <div class="col-lg-6">
+    <section class="dss-card h-100" aria-labelledby="divTitle">
+      <h5 id="divTitle" class="mb-1">Least diversified barangays</h5>
+      <p class="text-muted small">Diversity score (0-100) of the 15 barangays whose businesses are most concentrated in a
+        few industries. Below {{ t.low_diversity|int }} counts as low.</p>
+      <div class="dss-distribution-wrap" style="height: 420px;">
+        <canvas id="diversityChart" role="img" aria-label="Bar chart of the least diversified barangays"></canvas>
+      </div>
+      <p class="dss-chart-note" id="diversityNote"></p>
+    </section>
+  </div>
+</div>
+
+{# ------------------------- priority barangays ------------------------- #}
+<section class="mb-4" aria-labelledby="priorityTitle">
+  <h5 id="priorityTitle" class="mb-2">Start here: priority barangays</h5>
+  {% if plan.priority %}
+    <div class="row g-3">
+      {% for b in plan.priority %}
+        <div class="col-md-6 col-xl-4">
+          <div class="dss-card h-100">
+            <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
+              <h6 class="mb-0">{{ loop.index }}. {{ b.location }}</h6>
+              <span class="dss-stat-pill dss-pill-high" title="Need score: higher means more urgent">need {{ b.need_score }}</span>
+            </div>
+            <div class="small text-muted mb-2">
+              {{ '{:,}'.format(b.businesses) }} businesses &middot; diversity {{ b.diversity if b.diversity is not none else '—' }}/100
+              {% if b.per_thousand is not none %}&middot; {{ b.per_thousand }} per 1,000 residents{% endif %}
+            </div>
+            <div class="small"><strong>Why:</strong> {{ b.reasons|join('; ') }}.</div>
+            {% if b.actions %}
+              <ul class="small mb-2 mt-1 ps-3">{% for a in b.actions %}<li>{{ a }}</li>{% endfor %}</ul>
+            {% endif %}
+            <a class="small" href="{{ url_for('sme.saturation_map') }}?location={{ b.location|urlencode }}">See it on the map &raquo;</a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="text-muted">No barangay crosses the priority thresholds with the data on file.</p>
+  {% endif %}
+</section>
+
+{# ------------------------- industry table ------------------------- #}
+<section class="dss-card mb-4" aria-labelledby="industryTableTitle">
+  <h5 id="industryTableTitle" class="mb-2">Industry stance, city-wide</h5>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr>
+        <th>Industry</th><th class="text-end">Businesses</th><th class="text-end">Share</th>
+        <th class="text-end">Avg. saturation</th><th class="text-end">Saturated in</th><th class="text-end">Open in</th><th>Action</th>
+      </tr></thead>
+      <tbody>
+        {% set stance_pill = {'Encourage': 'dss-pill-low', 'Monitor': 'dss-pill-moderate', 'Regulate': 'dss-pill-saturated'} %}
+        {% for i in plan.industries %}
+          <tr>
+            <td title="{{ i.industry }}">{{ i.short }}</td>
+            <td class="text-end">{{ '{:,}'.format(i.businesses) }}</td>
+            <td class="text-end">{{ i.share }}%</td>
+            <td class="text-end">{{ (i.avg_saturation ~ '%') if i.avg_saturation is not none else '—' }}</td>
+            <td class="text-end">{{ i.saturated_barangays }} of {{ i.barangays_scored }}</td>
+            <td class="text-end">{{ i.open_barangays }} of {{ i.barangays_scored }}</td>
+            <td><span class="dss-stat-pill {{ stance_pill[i.stance] }}">{{ i.stance }}</span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{# ------------------------- every barangay ------------------------- #}
+<section class="dss-card mb-4" aria-labelledby="barangayTableTitle">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+    <h5 id="barangayTableTitle" class="mb-0">Every barangay</h5>
+    <input id="divFilter" type="search" class="form-control form-control-sm" style="max-width:240px;"
+           placeholder="Filter barangays..." aria-label="Filter barangays">
+  </div>
+  <div class="table-responsive" style="max-height:560px; overflow-y:auto;">
+    <table class="table table-sm align-middle mb-0" id="divTable">
+      <thead class="table-light" style="position:sticky; top:0; z-index:1;"><tr>
+        <th>Barangay</th><th class="text-end">Businesses</th><th class="text-end">Per 1,000</th>
+        <th class="text-end">Diversity</th><th class="text-end">Industries on file</th><th>Dominant industry</th><th>Encourage</th><th>Review permits</th>
+      </tr></thead>
+      <tbody>
+        {% for b in plan.barangays %}
+          <tr data-location="{{ b.location|lower }}">
+            <td class="fw-medium">{{ b.location }}</td>
+            <td class="text-end">{{ '{:,}'.format(b.businesses) }}</td>
+            <td class="text-end">{{ b.per_thousand if b.per_thousand is not none else '—' }}</td>
+            <td class="text-end {{ 'text-danger fw-semibold' if b.diversity is not none and b.diversity < t.low_diversity }}">
+              {{ b.diversity if b.diversity is not none else '—' }}</td>
+            <td class="text-end">{{ b.industries_on_file }}</td>
+            <td class="small">{% if b.dominant %}{{ b.dominant }} ({{ b.dominant_share }}%){% else %}&mdash;{% endif %}</td>
+            <td class="small">{{ b.promote|map(attribute='short')|join(', ') or '—' }}</td>
+            <td class="small">{{ b.limit|map(attribute='short')|join(', ') or '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="dss-card mb-4 small text-muted" aria-labelledby="methodTitle">
+  <h6 id="methodTitle" class="text-body">How this plan is worked out</h6>
+  <ul class="mb-0 ps-3">
+    <li><strong>Diversity score</strong> uses the Herfindahl-Hirschman Index (HHI), the standard measure of market
+      concentration: HHI is the sum of each industry's squared share of a barangay's businesses, rescaled so 0 means one
+      industry holds everything and 100 means every industry has an equal share.</li>
+    <li><strong>Saturation</strong> comes from the system's trained market model for each industry in each barangay,
+      from the business counts on file (Google Places and LGU permit records, reconciled).</li>
+    <li><strong>Regulate</strong> = saturated (&ge; {{ t.saturated_at|int }}%) in at least {{ t.regulate_share_percent }}% of the
+      barangays that have the industry, or an average saturation of {{ t.regulate_avg|int }}% or more.
+      <strong>Encourage</strong> = an average saturation at least {{ t.encourage_margin|int }} points below the city's median industry
+      ({{ plan.city_median_saturation if plan.city_median_saturation is not none else '—' }}%) with fewer than
+      {{ t.encourage_max_saturated_percent }}% of its barangays saturated. Otherwise <strong>Monitor</strong>.</li>
+    <li>A barangay's diversity is scored only once counts exist for at least {{ t.min_industries }} of its industries, and
+      measures how evenly its businesses spread across the industries on file.</li>
+    <li><strong>Priority</strong> barangays have low diversity (below {{ t.low_diversity|int }}), one industry holding at least
+      {{ t.dominance_percent }}% of businesses, or fewer than half the city's median businesses per 1,000 residents
+      ({{ plan.median_access if plan.median_access is not none else '—' }}). The need score adds up how far past each line they are.</li>
+  </ul>
+</section>
+
+{% include "shared/_footer.html" %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  const industries = {{ plan.industries|tojson }};
+  const barangays = {{ plan.barangays|tojson }};
+  const lowDiversity = {{ plan.thresholds.low_diversity|tojson }};
+  const stanceColor = { Encourage: "#16a34a", Monitor: "#f59e0b", Regulate: "#dc2626" };
+
+  // ---- Industry share, coloured by stance ----
+  new Chart(document.getElementById("stanceChart"), {
+    type: "bar",
+    data: {
+      labels: industries.map((i) => i.short),
+      datasets: [{ data: industries.map((i) => i.share), backgroundColor: industries.map((i) => stanceColor[i.stance]),
+                   borderRadius: 4, barThickness: 14 }],
+    },
+    options: {
+      indexAxis: "y", responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: {
+        label: (ctx) => { const i = industries[ctx.dataIndex];
+          return `${i.share}% of businesses (${i.businesses.toLocaleString()}) · ${i.stance}`; } } } },
+      scales: { x: { beginAtZero: true, title: { display: true, text: "Share of all businesses (%)" } },
+                y: { grid: { display: false }, ticks: { autoSkip: false } } },
+    },
+  });
+  const enc = industries.filter((i) => i.stance === "Encourage").map((i) => i.short);
+  const reg = industries.filter((i) => i.stance === "Regulate").map((i) => i.short);
+  document.getElementById("stanceNote").textContent =
+    `${industries[0] ? industries[0].short + " is the largest industry (" + industries[0].share + "% of businesses). " : ""}`
+    + (enc.length ? `Green bars are industries with more room than the city's typical industry (${enc.slice(0, 4).join(", ")}): good candidates for incentives. ` : "")
+    + (reg.length ? `Red bars (${reg.slice(0, 4).join(", ")}) are already crowded in many barangays; new permits there deserve a closer look. ` : "")
+    + "A long bar is a big part of the city's economy; colour is what the data says to do about it.";
+
+  // ---- Least diversified barangays ----
+  const least = barangays.filter((b) => b.diversity !== null).slice(0, 15);
+  new Chart(document.getElementById("diversityChart"), {
+    type: "bar",
+    data: { labels: least.map((b) => b.location),
+            datasets: [{ data: least.map((b) => b.diversity),
+                         backgroundColor: least.map((b) => (b.diversity < lowDiversity ? "#dc2626" : "#60a5fa")),
+                         borderRadius: 4, barThickness: 16 }] },
+    options: {
+      indexAxis: "y", responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: {
+        label: (ctx) => { const b = least[ctx.dataIndex];
+          return `Diversity ${b.diversity}/100 · ${b.dominant || "—"} holds ${b.dominant_share}%`; } } } },
+      scales: { x: { min: 0, max: 100, title: { display: true, text: "Diversity score (0-100)" } },
+                y: { grid: { display: false }, ticks: { autoSkip: false } } },
+    },
+  });
+  const lowCount = barangays.filter((b) => b.diversity !== null && b.diversity < lowDiversity).length;
+  document.getElementById("diversityNote").textContent = least.length
+    ? `${least[0].location} is the least diversified barangay (${least[0].diversity}/100)`
+      + (least[0].dominant ? `, where ${least[0].dominant} holds ${least[0].dominant_share}% of all businesses` : "")
+      + ". "
+      + (lowCount
+        ? `${lowCount} barangay${lowCount === 1 ? "" : "s"} score below ${lowDiversity} (red bars): their economies lean on a few industries, `
+          + "so a slump in one of them would hit hard. These are where encouraging new kinds of business helps most."
+        : `No barangay scores below ${lowDiversity}, so none depends heavily on just a few industries; the shorter bars are still the first places to encourage new kinds of business.`)
+    : "No business records on file yet to measure diversity.";
+
+  // ---- Table filter ----
+  const filter = document.getElementById("divFilter");
+  const rows = Array.from(document.querySelectorAll("#divTable tbody tr"));
+  if (filter) filter.addEventListener("input", () => {
+    const needle = filter.value.trim().toLowerCase();
+    rows.forEach((tr) => { tr.hidden = needle !== "" && !tr.dataset.location.includes(needle); });
+  });
+})();
+</script>
+{% endblock %}

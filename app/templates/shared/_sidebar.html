@@ -18,7 +18,7 @@
       paper describes.
     #}
     <a class="dss-sidebar-brand-link"
-       href="{{ url_for('sme.home') if current_user.is_sme() else url_for('lgu.dashboard') }}">
+       href="{{ url_for('sme.home') if current_user.is_sme() else url_for('lgu.dashboard') if current_user.is_lgu() else url_for('admin.dashboard') }}">
       {% with variant='auto', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
       <span class="dss-sidebar-sub">SME Market Entry<br>Decision Support System</span>
     </a>
@@ -29,11 +29,21 @@
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.home' }}" href="{{ url_for('sme.home') }}" data-tour="nav-home">
         <i class="bi bi-house-door"></i> Home
       </a>
+      {# The main workspace: plans, forecasts, competitors. Home only
+         summarises it. #}
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'sme.planning' }}" href="{{ url_for('sme.planning') }}" data-tour="nav-planning">
+        <i class="bi bi-clipboard-data"></i> Planning
+      </a>
     {% endif %}
 
-    {% if current_user.is_lgu() or current_user.is_admin() %}
+    {# LGU only. An Admin account runs the SYSTEM (its own section
+       below) -- it does not plan the city or upload the city's records. #}
+    {% if current_user.is_lgu() %}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.dashboard' }}" href="{{ url_for('lgu.dashboard') }}" data-tour="nav-lgu-dashboard">
         <i class="bi bi-speedometer2"></i> LGU Dashboard
+      </a>
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.diversification' }}" href="{{ url_for('lgu.diversification') }}" data-tour="nav-diversification">
+        <i class="bi bi-diagram-3"></i> Diversification Plan
       </a>
     {% endif %}
 
@@ -54,7 +64,7 @@
     {# Community is not a page in the menu: it is the project's Discord
        server, opened from the "Community Forum" link in the footer. #}
 
-    {% if current_user.is_lgu() or current_user.is_admin() %}
+    {% if current_user.is_lgu() %}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.government_upload' }}" href="{{ url_for('lgu.government_upload') }}" data-tour="nav-data-upload">
         <i class="bi bi-database-add"></i> Gov't Data Upload
       </a>
@@ -141,12 +151,19 @@
         <dl class="row small mb-3">
           {% if current_user.is_sme() %}
           <dt class="col-5">Home</dt>
+          <dd class="col-7">A summary of everything: your plans, the market around them and alerts.</dd>
+          <dt class="col-5">Planning</dt>
           <dd class="col-7">
-            Search a barangay or industry and see its market score. Your business
-            plans live here too: the pencil edits a plan (and re-runs its forecast),
-            the bin moves it to Trash, and the Trash button brings it back &mdash;
-            nothing is deleted for good.
+            Where you add, edit and compare business plans, see each forecast and the
+            competitors around it. The pencil edits a plan (and re-runs its forecast),
+            the bin moves it to Trash, and the Trash button restores it within 30 days.
           </dd>
+          {% endif %}
+          {% if current_user.is_lgu() %}
+          <dt class="col-5">LGU Dashboard</dt>
+          <dd class="col-7">The whole city at a glance: industries, the map and every barangay.</dd>
+          <dt class="col-5">Diversification Plan</dt>
+          <dd class="col-7">Which industries to encourage or regulate, and which barangays need help first.</dd>
           {% endif %}
           <dt class="col-5">Saturation Map</dt>
           <dd class="col-7">All 76 barangays shaded by how crowded the chosen industry already is.</dd>

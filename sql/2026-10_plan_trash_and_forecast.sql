@@ -12,9 +12,10 @@
 --
 --   * The plan Trash: archived_at / archived_by / archive_reason on
 --     sme_profile. Removing a plan from the Home page moves it to Trash
---     (these three are set); restoring it clears them. A plan, and the
+--     (these three are set); restoring it clears them. Within 30 days a plan, and the
 --     forecast history built on it, is never hard-deleted. The app hides
---     archived plans from every ordinary query -- see
+--     archived plans from every ordinary query (and, since part 2,
+--     deletes a plan left in Trash for 30 days) -- see
 --     app/models/archive.py.
 --
 --   * Capital is REQUIRED (> 0) from now on, and is labelled "Capital"
@@ -42,3 +43,20 @@ ALTER TABLE sme_profile ADD COLUMN archive_reason VARCHAR(255) NULL;
 
 -- sme_profile.startup_capital: unchanged (DECIMAL(12,2) NULL). Shown as
 -- "Capital"; required (> 0) by the application, not by the schema.
+
+-- ---------------------------------------------------------------------
+-- Revisions part 2 (Admin module)
+-- ---------------------------------------------------------------------
+--   * user.last_seen_at -- when the account last used the system
+--     (written at sign-in and at most every 5 minutes after), for the
+--     Manage Users "Last seen" column and the active / inactive filter.
+--   * user.suspended_until -- the end of a timed suspension (NULL with
+--     status 'inactive' = until an administrator lifts it).
+--   * audit_logs.changes -- the full before/after record (JSON) behind
+--     an audit entry's "Details" button.
+--   * Plans in Trash are deleted permanently after 30 days
+--     (sme_controller.purge_expired_trash), and that deletion is itself
+--     written to the audit trail.
+ALTER TABLE `user` ADD COLUMN last_seen_at DATETIME NULL;
+ALTER TABLE `user` ADD COLUMN suspended_until DATETIME NULL;
+ALTER TABLE audit_logs ADD COLUMN changes TEXT NULL;

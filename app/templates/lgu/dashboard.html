@@ -1,11 +1,16 @@
 {% extends "base.html" %}
 {% block title %}LGU Dashboard{% endblock %}
 
+{% block extra_head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
+      crossorigin="anonymous" referrerpolicy="no-referrer">
+{% endblock %}
+
 {% block content %}
-<!-- Hero / city-wide search -- deliberately the same shape as the SME
-     Home page (sme/home.html), so both roles get the same dashboard
-     experience; the difference is that every figure here is CITY-WIDE
-     rather than scoped to one business plan. -->
+<!-- Hero / city-wide search -- the same shape as the SME Planning page
+     (sme/planning.html), so both roles get the same tools: the industry
+     slider, the mini map and the search. The difference is that every
+     figure here is CITY-WIDE rather than scoped to one business plan. -->
 <div class="dss-hero mb-4">
   <h2 class="text-center mb-1">Tarlac City Diversification &amp; Planning Dashboard</h2>
   <p class="text-center text-muted mb-3">City-wide market saturation across all {{ locations|length }} barangays</p>
@@ -96,30 +101,14 @@
   {% endif %}
 </div>
 
-<!-- City-wide industry cards (same layout as the SME Home cards) -->
-<div class="row g-3 mb-2">
-  {% for card in industry_cards %}
-  <div class="col-6 col-lg-3">
-    <div class="dss-card dss-card-hover text-center h-100">
-      <div class="dss-industry-icon">{{ card.icon }}</div>
-      <h6 class="mb-0">{{ card.name }}</h6>
-      {% if card.subtitle %}<p class="dss-text-muted-sm mb-2">({{ card.subtitle }})</p>{% else %}<p class="mb-2">&nbsp;</p>{% endif %}
-      <div class="d-flex align-items-center justify-content-center gap-2 small">
-        <span>Market Score</span>
-        <strong class="fs-5">{{ card.score }}</strong>
-        {% if card.trend == 'up' %}<i class="bi bi-arrow-up-circle-fill text-success"></i>
-        {% elif card.trend == 'down' %}<i class="bi bi-arrow-down-circle-fill text-danger"></i>
-        {% else %}<i class="bi bi-dash-circle text-secondary"></i>{% endif %}
-      </div>
-      <div class="text-muted" style="font-size:.7rem;">{{ "{:,}".format(card.businesses) }} businesses on file</div>
-    </div>
-  </div>
-  {% else %}
-  <div class="col-12 text-muted">No industry data on file yet.</div>
-  {% endfor %}
-</div>
+<!-- City-wide industry slider: the SAME partial the SME Planning page
+     uses (icons, score bands, Previous/Next), so both roles see one design.
+     Scores here are city-wide averages over the sample barangays below. -->
+{% set slider_title = 'Industries across Tarlac City' %}
+{% set slider_location = None %}
+{% include "shared/_industry_slider.html" %}
 <p class="text-muted small mb-4">
-  Market Scores are AI viability scores (0-10) sampled across the city's most populous barangays
+  Each card's Market Score (0-10, higher = more room for new businesses) is the average over the city's most populous barangays
   ({{ sample_barangays|join(', ') }}) so this page stays fast &mdash; open
   <a href="{{ url_for('sme.trend_reports') }}">Trend Reports</a> for the full all-barangay sweep, or
   <a href="{{ url_for('sme.saturation_map') }}">Saturation Map</a> for a per-barangay view.
@@ -159,49 +148,52 @@
 
 <h4 class="text-center mb-3">City-Wide Market Saturation &amp; Diversification</h4>
 <div class="row g-4 mb-4">
-  <div class="col-lg-6">
-    <div class="dss-card h-100">
-      <h6 class="mb-3">Businesses On File</h6>
-      <div class="d-flex align-items-baseline gap-2 mb-1">
-        <span class="display-5 fw-bold">{{ "{:,}".format(totals.businesses) }}</span>
-        <span class="text-muted small">across Tarlac City</span>
+  <div class="col-lg-7">
+    <div class="dss-card h-100 d-flex flex-column">
+      <div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-2">
+        <h6 class="mb-0">Saturation Map: Tarlac City Barangays</h6>
+        <span class="small text-muted">{{ "{:,}".format(totals.businesses) }} businesses on file &middot;
+          {{ "{:,}".format(totals.from_places_api) }} confirmed live on Google Places</span>
       </div>
-      <p class="text-muted small">
-        {{ "{:,}".format(totals.from_places_api) }} of these were fetched live from the
-        <strong>Google Places API</strong>; the rest come from market data already on file
-        (PSA/DTI uploads and the reference dataset).
-      </p>
-      <div class="small">
-        <div class="mb-2"><span class="fw-bold">Saturation Intensity Scale</span></div>
-        <div class="d-flex align-items-center gap-2 mb-1"><span class="dss-legend-swatch" style="background:#b91c1c"></span><span>High Saturation</span></div>
-        <div class="d-flex align-items-center gap-2 mb-1"><span class="dss-legend-swatch" style="background:#f97316"></span><span>Moderate</span></div>
-        <div class="d-flex align-items-center gap-2 mb-1"><span class="dss-legend-swatch" style="background:#fde047"></span><span>Low-Moderate</span></div>
-        <div class="d-flex align-items-center gap-2"><span class="dss-legend-swatch" style="background:#22c55e"></span><span>High Opportunity</span></div>
+      <!-- The same map.js the Saturation Map page and the SME Planning page
+           run, so the LGU sees the same boundaries, colours and pop-ups. -->
+      <div id="dss-map" class="dss-mini-map dss-home-map mb-2"></div>
+      <div class="dss-legend-inline small" aria-label="Saturation intensity scale">
+        <span class="fw-semibold me-1">Saturation:</span>
+        <span><span class="dss-legend-swatch" style="background:#b91c1c"></span>High</span>
+        <span><span class="dss-legend-swatch" style="background:#f97316"></span>Moderate</span>
+        <span><span class="dss-legend-swatch" style="background:#fde047"></span>Low-Moderate</span>
+        <span><span class="dss-legend-swatch" style="background:#22c55e"></span>High Opportunity</span>
       </div>
-      <a href="{{ url_for('sme.saturation_map') }}" class="btn btn-outline-primary btn-sm w-100 mt-3">
+      <p class="dss-chart-note">The map is shaded for {{ default_industry }}: red barangays already have many such
+        businesses, green ones have room. Click a barangay for its details, or open the full map to switch industry.</p>
+      <a href="{{ url_for('sme.saturation_map') }}" class="btn btn-outline-primary btn-sm mt-auto">
         <i class="bi bi-map"></i> Open Full Interactive Map
       </a>
     </div>
   </div>
 
-  <div class="col-lg-6">
-    <div class="dss-card h-100">
-      <h6 class="mb-3">Diversification Guidance</h6>
-      <div class="bg-light rounded p-3 mb-3">
-        <div class="d-flex gap-3">
-          <div class="fs-3">💡</div>
-          <div class="small">
-            Use the <a href="{{ url_for('sme.saturation_map') }}">Saturation Map</a> to see which barangays are
-            over-saturated vs. underserved per industry, and
-            <a href="{{ url_for('sme.trend_reports') }}">Trend Reports</a> for longitudinal demand trends.
-          </div>
-        </div>
+  <div class="col-lg-5">
+    <div class="dss-card h-100 d-flex flex-column">
+      <h6 class="mb-2"><i class="bi bi-diagram-3" aria-hidden="true"></i> Diversification Plan</h6>
+      <div class="d-flex align-items-baseline gap-2 mb-2">
+        <span class="display-6 fw-bold">{{ plan.city_diversity if plan.city_diversity is not none else '—' }}</span>
+        <span class="text-muted small">/100 city diversity score</span>
       </div>
-      <p class="small text-muted mb-0">
-        Upload fresh PSA/DTI/CLUP data any time from
-        <a href="{{ url_for('lgu.government_upload') }}">Gov't Data Upload</a> to keep these forecasts current --
-        <strong>{{ "{:,}".format(lgu_data_count) }}</strong> LGU data row(s) and
-        <strong>{{ "{:,}".format(market_data_count) }}</strong> market data row(s) are on file right now.
+      <ul class="small ps-3 mb-2">{% for line in plan.summary %}<li>{{ line }}</li>{% endfor %}</ul>
+      {% if plan.priority %}
+        <div class="small fw-semibold mb-1">Priority barangays</div>
+        <ol class="small ps-3 mb-3">
+          {% for b in plan.priority[:5] %}<li><strong>{{ b.location }}</strong> &mdash; {{ b.reasons[0] }}</li>{% endfor %}
+        </ol>
+      {% endif %}
+      <a href="{{ url_for('lgu.diversification') }}" class="btn btn-primary btn-sm mt-auto">
+        <i class="bi bi-clipboard-data" aria-hidden="true"></i> Open the full Diversification Plan
+      </a>
+      <p class="small text-muted mb-0 mt-2">
+        <strong>{{ "{:,}".format(lgu_data_count) }}</strong> LGU and <strong>{{ "{:,}".format(market_data_count) }}</strong>
+        market data rows on file &middot; upload fresh records from
+        <a href="{{ url_for('lgu.government_upload') }}">Gov't Data Upload</a>.
       </p>
     </div>
   </div>
@@ -278,6 +270,23 @@
   window.DSS_SATURATION_MAP_URL = "{{ url_for('sme.saturation_map') }}";
 </script>
 <script src="{{ url_for('static', filename='js/sme_search.js') }}"></script>
+<script src="{{ url_for('static', filename='js/industry_slider.js') }}"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+  // The same mini map the SME Planning page runs (map.js), city-wide:
+  // no plan to focus on, shaded for the default industry.
+  window.DSS_DEFAULT_INDUSTRY = {{ default_industry|tojson }};
+  window.DSS_FOCUS_LOCATION = "";
+  window.DSS_LOCATIONS_FORECAST_URL = "{{ url_for('api.locations_forecast') }}";
+  window.DSS_PLACES_URL = "{{ url_for('api.places_nearby') }}";
+  window.DSS_BARANGAY_DETAIL_URL = "{{ url_for('api.barangay_detail') }}";
+  window.DSS_BARANGAY_COORDS_URL = "{{ url_for('api.barangay_coords') }}";
+  window.DSS_BARANGAY_CHOROPLETH_URL = "{{ url_for('api.barangay_choropleth') }}";
+  window.DSS_TARLAC_CITY_BOUNDARY_URL = "{{ url_for('api.tarlac_city_boundary') }}";
+  window.DSS_CSRF_TOKEN = "{{ csrf_token() }}";
+</script>
+<script src="{{ url_for('static', filename='js/map.js') }}"></script>
 <script>
   // Client-side filter + click-through for the barangay table.
   (function () {

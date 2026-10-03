@@ -420,11 +420,25 @@ def login():
             flash("Invalid email or password.", "danger")
             return render_template("auth/login.html", email=email)
 
+        # A timed suspension whose end has passed is lifted here, at the
+        # moment it matters, and the trail records that it ended.
+        if user.lift_expired_suspension():
+            db.session.commit()
+            log_action("admin_toggle_active", details="Reactivated: timed suspension ended", target=user,
+                       user_id=user.user_id, changes={"status": ["suspended", "active"]},
+                       reason="The suspension period set by an administrator ended")
+
         if not user.is_active:
-            flash("This account has been deactivated. Contact your administrator.", "danger")
+            if user.status == "inactive" and user.suspended_until and user.archived_at is None:
+                until = (user.suspended_until + timedelta(hours=8)).strftime("%B %d, %Y %I:%M %p")
+                flash(f"This account is suspended until {until}. Contact your administrator.", "danger")
+            else:
+                flash("This account has been deactivated. Contact your administrator.", "danger")
             return render_template("auth/login.html", email=email)
 
         login_user(user, remember=remember)
+        user.touch_last_seen()
+        db.session.commit()
         log_action("login", details=f"role={user.role}")
         flash(f"Welcome back, {user.name.split(' ')[0]}!", "success")
         return redirect(url_for("auth.index"))

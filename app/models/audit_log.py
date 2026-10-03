@@ -29,6 +29,14 @@ class AuditLog(db.Model):
     target_id = db.Column(db.String(50), nullable=True)
     target_label = db.Column(db.String(255), nullable=True)
     details = db.Column(db.String(500))
+    # The FULL record of what changed, as JSON -- {"field": [before,
+    # after]} for an edit, {"field": value} for something created. The
+    # one-line `details` stays the concise summary the table shows; this
+    # is what the "Details" button opens, so a plan's every field (or a
+    # settings change's old and new values) can be traced without
+    # flooding the trail with long lines. NULL for actions with nothing
+    # more to say (a theme change, a sign-in).
+    changes = db.Column(db.Text, nullable=True)
 
     # WHEN
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

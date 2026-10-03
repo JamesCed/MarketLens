@@ -80,22 +80,22 @@ def two_plans(app):
 
 def test_every_plan_is_on_the_choice_bar(app, two_plans):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     assert 'data-tour="plan-selector"' in page
     assert len(re.findall(r'class="dss-plan-chip(?: is-selected)?"', page)) == 2
-    assert f'href="/home?plan={two_plans["tibag"]}"' in page
-    assert f'href="/home?plan={two_plans["balibago"]}"' in page
+    assert f'href="/planning?plan={two_plans["tibag"]}"' in page
+    assert f'href="/planning?plan={two_plans["balibago"]}"' in page
 
 
 def test_choosing_a_plan_switches_the_forecast_and_the_map(app, two_plans):
     with app.app_context():
         client = _client(app)
-        page = client.get(f"/home?plan={two_plans['tibag']}").get_data(as_text=True)
+        page = client.get(f"/planning?plan={two_plans['tibag']}").get_data(as_text=True)
         assert f"{FOOD} in Tibag" in page
         assert _global(page, "DSS_FOCUS_LOCATION") == "Tibag"
         assert _global(page, "DSS_DEFAULT_INDUSTRY") == FOOD
 
-        page = client.get(f"/home?plan={two_plans['balibago']}").get_data(as_text=True)
+        page = client.get(f"/planning?plan={two_plans['balibago']}").get_data(as_text=True)
         assert f"{RETAIL} in Balibago I" in page
         assert _global(page, "DSS_FOCUS_LOCATION") == "Balibago I"
         assert _global(page, "DSS_DEFAULT_INDUSTRY") == RETAIL
@@ -106,9 +106,9 @@ def test_choosing_a_plan_switches_the_forecast_and_the_map(app, two_plans):
 def test_the_choice_is_remembered_and_both_plans_keep_their_scores(app, two_plans):
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['tibag']}")
-        client.get(f"/home?plan={two_plans['balibago']}")
-        page = client.get("/home").get_data(as_text=True)
+        client.get(f"/planning?plan={two_plans['tibag']}")
+        client.get(f"/planning?plan={two_plans['balibago']}")
+        page = client.get("/planning").get_data(as_text=True)
         assert f"{RETAIL} in Balibago I" in page, "coming back to Home should keep the chosen plan"
         # Both plans were scored by visiting them, and neither was lost.
         # The chip label is the plan model's viability now, not the
@@ -127,16 +127,16 @@ def test_someone_elses_plan_cannot_be_chosen(app, two_plans):
     with app.app_context():
         stranger = _user("stranger@home.test")
         theirs = _plan(stranger, "Not Yours", FOOD, "Poblacion")
-        page = _client(app).get(f"/home?plan={theirs.sme_id}").get_data(as_text=True)
+        page = _client(app).get(f"/planning?plan={theirs.sme_id}").get_data(as_text=True)
     assert "Not Yours" not in page
 
 
 def test_switching_is_audited_once_not_on_every_reload(app, two_plans):
     with app.app_context():
         client = _client(app)
-        client.get(f"/home?plan={two_plans['tibag']}")
-        client.get(f"/home?plan={two_plans['tibag']}")
-        client.get("/home")
+        client.get(f"/planning?plan={two_plans['tibag']}")
+        client.get(f"/planning?plan={two_plans['tibag']}")
+        client.get("/planning")
         logs = AuditLog.query.filter_by(action="select_plan").all()
         assert len(logs) == 1
         assert logs[0].target_label and "Tibag Pandesal" in logs[0].target_label
@@ -148,7 +148,7 @@ def test_switching_is_audited_once_not_on_every_reload(app, two_plans):
 
 def test_the_search_row_has_a_map_picker_a_visible_industry_box_and_clear(app, two_plans):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     assert 'id="locationPickerModal"' in page
     assert 'data-tour="location-picker"' in page
     assert '<label class="form-label small fw-semibold mb-1" for="smeSearchIndustry">Industry type</label>' in page
@@ -160,7 +160,7 @@ def test_the_search_row_has_a_map_picker_a_visible_industry_box_and_clear(app, t
 
 def test_the_map_is_bigger_and_fills_its_card(app, two_plans):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     assert 'class="dss-mini-map dss-home-map' in page
     with open("app/static/css/style.css", encoding="utf-8") as handle:
         css = handle.read()
@@ -174,7 +174,7 @@ def test_the_map_is_bigger_and_fills_its_card(app, two_plans):
 ])
 def test_the_walkthrough_anchors_are_on_home(app, two_plans, anchor):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     assert f'data-tour="{anchor}"' in page
 
 
@@ -184,7 +184,7 @@ def test_the_walkthrough_anchors_are_on_home(app, two_plans, anchor):
 
 def test_the_add_plan_dialog_has_the_new_fields_and_no_revenue(app, two_plans):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     assert 'name="monthly_revenue_est"' not in page
     for name in ("subcategory", "product_offering", "innovation_idea", "offering_item", "capital"):
         assert f'name="{name}"' in page
@@ -203,14 +203,16 @@ def test_a_new_plan_is_selected_without_logging_a_switch(app, two_plans):
         })
         assert response.status_code == 302
         created = SmeProfile.query.filter_by(business_name="Kape sa Tibag").one()
-        assert response.headers["Location"].endswith(f"/home?plan={created.sme_id}")
+        assert response.headers["Location"].endswith(f"/planning?plan={created.sme_id}")
         assert created.subcategory == "coffee_shop"
         assert created.offering_items == [{"item": "Americano", "price": 85.0}]
         assert created.capital == 150000.0
 
         client.get(response.headers["Location"])
         assert AuditLog.query.filter_by(action="select_plan").count() == 0
-        assert AuditLog.query.filter_by(action="run_forecast").count() == 1
+        # Logged as the plan's creation, with every field it was created with.
+        created_entry = AuditLog.query.filter_by(action="create_plan").one()
+        assert "Kape sa Tibag" in created_entry.changes
 
 
 def test_a_bad_new_plan_is_refused_with_the_reason(app, two_plans):
@@ -232,7 +234,7 @@ def test_client_side_output_is_escaped():
         search = handle.read()
     assert "${e(scores.location)}" in search
     assert "${scores.location}" not in search
-    with open("app/templates/sme/home.html", encoding="utf-8") as handle:
+    with open("app/templates/sme/planning.html", encoding="utf-8") as handle:
         home = handle.read()
     assert "${esc(r.location)}" in home
     with open("app/static/js/location_picker.js", encoding="utf-8") as handle:
@@ -247,7 +249,7 @@ def test_client_side_output_is_escaped():
 def test_signed_in_pages_carry_the_skin_and_the_landing_does_not(app, two_plans):
     with app.app_context():
         client = _client(app)
-        for path in ("/home", "/settings", "/saturation-map", "/recommendations"):
+        for path in ("/planning", "/settings", "/saturation-map", "/recommendations"):
             page = client.get(path).get_data(as_text=True)
             assert '<body class="dss-body dss-skin">' in page, path
     landing = app.test_client().get("/login").get_data(as_text=True)

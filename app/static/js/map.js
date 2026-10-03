@@ -679,6 +679,62 @@ function renderDetailPanel(detail) {
   if (btn) btn.addEventListener("click", () => toggleIsolate(detail.location));
 }
 
+// THE WHOLE CITY, when no barangay is picked. The side panel used to
+// keep showing the last barangay clicked even after "Show All" put every
+// barangay back on the map -- a panel about Dalayap next to a map of all
+// of Tarlac City. With nothing selected it now summarises the city for
+// the chosen industry, from the same rows the map is drawn from: how
+// many businesses, the average saturation, how many barangays sit in
+// each tier, and where there is the most and the least room.
+function renderCityOverviewPanel() {
+  const panel = document.getElementById("detailPanel");
+  if (!panel) return;
+  const rows = dssLocationsCache || [];
+  if (!rows.length) {
+    panel.innerHTML = '<div class="text-muted text-center py-4">Loading Tarlac City&hellip;</div>';
+    return;
+  }
+  const industry = rows[0].industry_type || currentBusinessType();
+  const businesses = rows.reduce((sum, r) => sum + (Number(r.competitor_count) || 0), 0);
+  const population = rows.reduce((sum, r) => sum + (Number(r.population) || 0), 0);
+  const avgSat = rows.reduce((sum, r) => sum + (Number(r.saturation_index) || 0), 0) / rows.length;
+  const tiers = {};
+  rows.forEach((r) => { tiers[r.cluster_label] = (tiers[r.cluster_label] || 0) + 1; });
+  const bySat = [...rows].sort((a, b) => Number(a.saturation_index) - Number(b.saturation_index));
+  const open = bySat.slice(0, 3);
+  const crowded = bySat.slice(-3).reverse();
+  const line = (r) => `<li><button type="button" class="btn btn-link btn-sm p-0 align-baseline dss-city-pick" data-location="${escapeHtml(r.location)}">${escapeHtml(r.location)}</button>
+      <span class="text-muted">&middot; ${Number(r.saturation_index).toFixed(1)}%, ${Number(r.competitor_count).toLocaleString()} businesses</span></li>`;
+  const tierRows = ["Low", "Moderate", "High", "Saturated"]
+    .filter((t) => tiers[t])
+    .map((t) => `<div class="d-flex justify-content-between border-bottom py-1">
+        <span><span class="dss-stat-pill ${pillClass(t)}">${displayLabelFor(t)}</span></span><strong>${tiers[t]} barangay${tiers[t] === 1 ? "" : "s"}</strong></div>`)
+    .join("");
+  const verdict = avgSat >= 75 ? "very crowded" : avgSat >= 50 ? "crowded" : avgSat >= 25 ? "moderately busy" : "open";
+
+  panel.innerHTML = `
+    <div class="d-flex align-items-start gap-2 mb-3">
+      <i class="bi bi-buildings fs-4 text-primary" aria-hidden="true"></i>
+      <div>
+        <h5 class="mb-0">Tarlac City</h5>
+        <div class="text-muted small">All ${rows.length} barangays &middot; ${escapeHtml(industry)}</div>
+      </div>
+    </div>
+    <div class="small mb-3">
+      <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Businesses in this industry</span><strong>${businesses.toLocaleString()}</strong></div>
+      ${population ? `<div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Population</span><strong>${population.toLocaleString()}</strong></div>` : ""}
+      <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Average saturation</span><strong>${avgSat.toFixed(1)}%</strong></div>
+      <div class="text-muted pt-2 pb-1" style="${SUBHEADING_STYLE}">Barangays by level</div>
+      ${tierRows}
+    </div>
+    <div class="small mb-2"><strong>Most room for a new business</strong><ul class="mb-0 ps-3">${open.map(line).join("")}</ul></div>
+    <div class="small mb-2"><strong>Most crowded</strong><ul class="mb-0 ps-3">${crowded.map(line).join("")}</ul></div>
+    <p class="dss-chart-note mb-0">Across the city this industry is ${verdict} on average (${avgSat.toFixed(1)}% saturated).
+      Click a barangay on the map or in the list for its own details.</p>`;
+  panel.querySelectorAll(".dss-city-pick").forEach((el) =>
+    el.addEventListener("click", () => isolateAndSelect(el.dataset.location)));
+}
+
 async function selectLocation(location) {
   dssSelectedLocation = location;
   const seq = ++dssSelectSeq;
@@ -753,6 +809,9 @@ async function isolateAndSelect(location) {
 // "Show All" button, or searching the same name again all call this.
 function restoreAllLocations() {
   dssIsolatedLocation = null;
+  // Nothing is focused any more, so the panel describes the whole city
+  // rather than the barangay that was isolated.
+  dssSelectedLocation = null;
   // Cancel any detail request still in flight (it must not zoom back in
   // afterwards), and close the info popup BEFORE re-centring: it is
   // keepInView, and would otherwise drag the map straight back to it.
@@ -761,13 +820,7 @@ function restoreAllLocations() {
   applyTierVisibility();
   renderLocationList(dssLocationsCache);
   updateIsolationBanner();
-  const detailBtn = document.getElementById("detailIsolateBtn");
-  if (detailBtn && dssSelectedLocation) {
-    // Refresh the detail panel's own button label without a network
-    // round trip -- selectLocation() already populated everything else.
-    detailBtn.outerHTML = `<button type="button" class="btn btn-sm btn-outline-primary" id="detailIsolateBtn"><i class="bi bi-crosshair"></i> Isolate on Map</button>`;
-    document.getElementById("detailIsolateBtn").addEventListener("click", () => toggleIsolate(dssSelectedLocation));
-  }
+  renderCityOverviewPanel();
   if (dssMap) {
     dssMap.setView([15.4869, 120.59], 13); // Tarlac City center -- see dssInitMap
   }
@@ -1292,12 +1345,11 @@ async function loadLocationsInner(businessType) {
     // page passes the chosen plan's) -- see focusBarangay(). Later loads
     // take the branch above, since this sets dssSelectedLocation.
     focusBarangay(focusLocationSetting());
-  } else if (rows.length && hasDetailPanel()) {
-    // Default view on first load: show ALL barangays, just populate
-    // the detail panel with the first one -- no isolation. Only where
-    // there IS a panel: without one this would just zoom the map into
-    // whichever barangay sorts first (see PAGE SETTINGS at the top).
-    selectLocation(rows[0].location);
+  } else if (hasDetailPanel()) {
+    // Default view on first load: ALL barangays on the map, and the
+    // panel summarising the whole city -- nothing has been picked, so
+    // the panel should not pretend the first barangay was.
+    renderCityOverviewPanel();
   }
 
   updateCoordStatus();
@@ -1474,10 +1526,10 @@ document.addEventListener("dss:side-panel", function (event) {
     closeInfoPopup();
     if (dssSelectedLocation) {
       selectLocation(dssSelectedLocation);
-    } else if (dssLocationsCache && dssLocationsCache.length) {
-      // Opened folded, nothing picked yet: fill the panel the way a
-      // normal first load does, rather than leave it empty.
-      selectLocation(dssLocationsCache[0].location);
+    } else {
+      // Opened folded, nothing picked yet: the whole-city summary, the
+      // same as a normal first load.
+      renderCityOverviewPanel();
     }
   }
 });

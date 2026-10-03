@@ -470,7 +470,7 @@ def test_the_my_plans_popup_is_gone_from_every_page(app):
         _plan(user)
         client = _client(app)
 
-        for path in ("/settings", "/home", "/saturation-map", "/trend-reports"):
+        for path in ("/settings", "/planning", "/saturation-map", "/trend-reports"):
             body = client.get(path).get_data(as_text=True)
             assert 'id="myPlansModal"' not in body, f"the popup is still on {path}"
             assert "dss-myplans-btn" not in body, f"the top-bar button is still on {path}"
@@ -581,7 +581,7 @@ def test_a_stale_plans_link_sends_an_sme_to_home(app):
         _user(app)
         response = _client(app).get("/settings?section=plans")
         assert response.status_code == 302
-        assert response.headers["Location"].endswith("/home")
+        assert response.headers["Location"].endswith("/planning")
 
 
 def test_a_stale_plans_link_does_not_blank_the_page_for_an_lgu(app):

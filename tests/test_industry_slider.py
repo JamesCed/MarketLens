@@ -95,7 +95,7 @@ def _client(app, email="owner@slider.test"):
 def _slider(page):
     """The slider's own markup: from its wrapper to the caption under it."""
     start = page.index('data-tour="industry-cards"')
-    return page[page.rindex("<div", 0, start):page.index("Scores above are for", start)]
+    return page[page.rindex("<div", 0, start):page.index("These market scores are for", start)]
 
 
 def _cards(page):
@@ -127,7 +127,7 @@ def education_plan(app):
 
 def test_all_twenty_industries_are_cards_once_each(app, education_plan):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     names = [_industry(card) for card in _cards(page)]
     assert len(names) == len(BUSINESS_TYPES) == 20
     assert sorted(names) == sorted(BUSINESS_TYPES), "every section exactly once"
@@ -135,7 +135,7 @@ def test_all_twenty_industries_are_cards_once_each(app, education_plan):
 
 def test_the_plans_industry_leads_then_featured_then_the_rest(app, education_plan):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     cards = _cards(page)
     assert [_industry(card) for card in cards] == _expected_order(EDUCATION)
 
@@ -151,7 +151,7 @@ def test_a_featured_industry_is_not_listed_twice_when_it_leads(app):
     with app.app_context():
         user = _user()
         _plan(user, "Balibago Gulong", RETAIL, "Balibago I")
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     names = [_industry(card) for card in _cards(page)]
     assert names == _expected_order(RETAIL)
     assert names.count(RETAIL) == 1
@@ -162,9 +162,9 @@ def test_switching_plans_moves_the_new_plans_industry_to_the_front(app, educatio
         user = User.query.filter_by(email="owner@slider.test").one()
         retail = _plan(user, "Balibago Gulong", RETAIL, "Balibago I")
         client = _client(app)
-        page = client.get(f"/home?plan={retail.sme_id}").get_data(as_text=True)
+        page = client.get(f"/planning?plan={retail.sme_id}").get_data(as_text=True)
         assert _industry(_cards(page)[0]) == RETAIL
-        page = client.get(f"/home?plan={education_plan}").get_data(as_text=True)
+        page = client.get(f"/planning?plan={education_plan}").get_data(as_text=True)
         assert _industry(_cards(page)[0]) == EDUCATION
 
 
@@ -173,7 +173,7 @@ def test_each_card_opens_the_map_for_its_industry_and_the_plans_barangay(app, ed
     from html import unescape
 
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     for card in _cards(page):
         href = unescape(re.search(r'href="([^"]+)"', card).group(1))
         url = urlparse(href)
@@ -186,7 +186,7 @@ def test_each_card_opens_the_map_for_its_industry_and_the_plans_barangay(app, ed
 def test_the_page_still_renders_with_no_plans(app):
     with app.app_context():
         _user()
-        response = _client(app).get("/home")
+        response = _client(app).get("/planning")
     page = response.get_data(as_text=True)
     assert response.status_code == 200
     cards = _cards(page)
@@ -194,7 +194,7 @@ def test_the_page_still_renders_with_no_plans(app):
     # No plan, so nothing is "your plan's industry".
     assert not any('aria-current="true"' in card or "dss-card-current" in card for card in cards)
     # The scores are for the first barangay, and the caption says so.
-    assert f"Scores above are for <strong>{BARANGAY_NAMES[0]}</strong>" in page
+    assert f"These market scores are for <strong>{BARANGAY_NAMES[0]}</strong>" in page
 
 
 # ---------------------------------------------------------------------
@@ -203,7 +203,7 @@ def test_the_page_still_renders_with_no_plans(app):
 
 def test_the_track_is_a_focusable_labelled_region(app, education_plan):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     slider = _slider(page)
     track = re.search(r'<div class="dss-industry-track"([^>]*)>', slider)
     assert track, "the scroll-snap track is missing"
@@ -223,7 +223,7 @@ def test_the_track_is_a_focusable_labelled_region(app, education_plan):
 ])
 def test_previous_and_next_are_icon_only_and_labelled(app, education_plan, which, icon, label):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     slider = _slider(page)
     button = re.search(rf'<button([^>]*data-industry-slider-{which}[^>]*)>(.*?)</button>', slider, re.S)
     assert button, f"no {which} button"
@@ -240,7 +240,7 @@ def test_the_buttons_are_hidden_until_the_script_runs(app, education_plan):
     """Without scripting the row still scrolls by itself, and a button
     that would do nothing must not be shown."""
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     assert re.search(r'<div class="dss-industry-slider-nav" data-industry-slider-nav hidden>', _slider(page))
 
 
@@ -250,7 +250,7 @@ def test_the_buttons_are_hidden_until_the_script_runs(app, education_plan):
 
 def test_every_card_has_a_bootstrap_icon_and_no_emoji(app, education_plan):
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     slider = _slider(page)
     assert not EMOJI.search(slider), f"emoji left in the slider: {EMOJI.findall(slider)}"
     assert "dss-industry-icon" not in slider, "the old blue emoji circle is gone from Home"
@@ -281,7 +281,7 @@ def test_the_arrow_and_score_colour_are_described_in_words(app, education_plan, 
 
     monkeypatch.setattr(sme_controller, "compute_scores_batch", fake_batch)
     with app.app_context():
-        page = _client(app).get("/home").get_data(as_text=True)
+        page = _client(app).get("/planning").get_data(as_text=True)
     expected = {
         7.2: ("dss-pill-low", "bi-arrow-up-circle-fill", "a good chance"),
         6.5: ("dss-pill-low", "bi-arrow-up-circle-fill", "a good chance"),
@@ -317,7 +317,7 @@ def test_all_twenty_are_scored_in_one_batch_call(app, education_plan, monkeypatc
         # its own and not the one being counted.
         client = _client(app)
         monkeypatch.setattr(sme_controller, "compute_scores_batch", spy)
-        page = client.get("/home").get_data(as_text=True)
+        page = client.get("/planning").get_data(as_text=True)
     assert len(calls) == 1, f"Home scored its industry cards in {len(calls)} calls"
     pairs = calls[0]
     assert [industry for industry, _location in pairs] == _expected_order(EDUCATION)

@@ -2,59 +2,193 @@
 {% import "admin/_audit_macros.html" as audit with context %}
 {% block title %}Admin Dashboard{% endblock %}
 
+{#
+  admin/dashboard.html -- THE SYSTEM MONITOR
+  --------------------------------------------
+  The Admin module's own dashboard. It does not repeat the city-market
+  dashboards (those are the LGU's and the SME's): it shows what an
+  administrator is responsible for -- the accounts, what is happening in
+  the system, whether anything looks suspicious, the data, and whether
+  every part of the engine works. Built by admin_controller.dashboard().
+#}
+
 {% block extra_head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
 {% endblock %}
 
 {% block content %}
 <h4 class="mb-1"><i class="bi bi-shield-check"></i> Admin Dashboard</h4>
-<p class="text-muted small mb-4">System-wide monitoring and quick links to every Admin Module function.</p>
+<p class="text-muted small mb-4">Monitor the system: its users, its activity, its data and its health.</p>
 
-<div class="row g-3 mb-4">
-  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Users</div><div class="fs-3">{{ stats.total_users }}</div><div class="dss-meta">+ {{ stats.archived_users }} archived</div></div></div>
-  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">SME Accounts</div><div class="fs-3">{{ stats.sme_users }}</div></div></div>
-  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">LGU Accounts</div><div class="fs-3">{{ stats.lgu_users }}</div></div></div>
-  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Forecasts Run</div><div class="fs-3">{{ stats.total_forecasts }}</div></div></div>
-  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">LGU Data Rows</div><div class="fs-3">{{ stats.total_lgu_data }}</div></div></div>
-  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Market Data Rows</div><div class="fs-3">{{ stats.total_market_data }}</div></div></div>
-  <div class="col-6 col-lg-2"><div class="dss-card text-center"><div class="text-muted small">Notifications</div><div class="fs-3">{{ stats.total_notifications }}</div></div></div>
-</div>
-
-<div class="row g-3 mb-4">
-  <div class="col-md-3"><a href="{{ url_for('admin.users') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-people d-block fs-3 mb-1"></i> Manage Users</a></div>
-  <div class="col-md-3"><a href="{{ url_for('admin.audit_log') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-journal-text d-block fs-3 mb-1"></i> Audit Trail</a></div>
-  <div class="col-md-3"><a href="{{ url_for('admin.datasets') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-hdd-stack d-block fs-3 mb-1"></i> Datasets</a></div>
-  <div class="col-md-3"><a href="{{ url_for('admin.settings') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-gear d-block fs-3 mb-1"></i> System Settings</a></div>
-</div>
-
-<div class="dss-card">
-  <h6 class="mb-2">Recent Activity (Audit Trail)</h6>
-  {% if recent_activity %}
-  {#
-    One line per entry for WHO and WHAT, one quiet line for WHEN, WHERE
-    and WHY -- the whole five W's without the full table's width.
-  #}
-  <ul class="dss-activity">
-    {% for e in recent_activity %}
-    {% set t = audit.target(e) %}
-    <li>
-      <div>
-        <strong class="fw-semibold">{{ e.who_name }}</strong> {{ audit.role_badge(e.who_role) }}
-        <span class="ms-1">{{ e.what }}</span>{% if t %}<span class="dss-meta"> &middot; {{ t }}</span>{% endif %}
-      </div>
-      <div class="dss-meta">
-        {{ e.when.strftime('%b %d, %I:%M %p') if e.when else '—' }} {{ tz_label }}
-        &middot; {{ e.ip or 'no IP' }}{% if e.device %} ({{ e.device }}){% endif %}
-        {% if e.why %}&middot; <span class="{{ '' if e.why_is_stated else 'fst-italic' }}">{{ e.why }}</span>{% endif %}
-      </div>
-    </li>
-    {% endfor %}
+{% if alerts %}
+<div class="alert alert-danger" role="alert">
+  <div class="fw-semibold mb-1"><i class="bi bi-exclamation-octagon" aria-hidden="true"></i>
+    Possible password guessing in the last 24 hours</div>
+  <ul class="mb-1 small">
+    {% for a in alerts %}<li>{{ a.kind }} <strong>{{ a.value }}</strong>: {{ a.count }} failed sign-ins</li>{% endfor %}
   </ul>
-  <a href="{{ url_for('admin.audit_log') }}" class="small">View full audit trail &raquo;</a>
-  {% else %}
-  <p class="text-muted">No activity recorded yet.</p>
-  {% endif %}
+  <a class="small" href="{{ url_for('admin.audit_log', action='login_failed') }}">Review failed sign-ins in the audit trail &raquo;</a>
+</div>
+{% endif %}
+
+{# ------------------------------ accounts ------------------------------ #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-2"><a class="dss-card dss-stat-card d-block text-reset text-decoration-none h-100" href="{{ url_for('admin.users') }}">
+    <div class="dss-stat-label"><i class="bi bi-people" aria-hidden="true"></i> Accounts</div>
+    <div class="dss-stat-value">{{ stats.total_users }}</div>
+    <div class="dss-stat-note">{{ stats.by_role.SME }} SME &middot; {{ stats.by_role.LGU }} LGU &middot; {{ stats.by_role.Admin }} Admin</div>
+  </a></div>
+  <div class="col-6 col-lg-2"><a class="dss-card dss-stat-card d-block text-reset text-decoration-none h-100" href="{{ url_for('admin.users', status='online') }}">
+    <div class="dss-stat-label"><i class="bi bi-broadcast text-success" aria-hidden="true"></i> Online now</div>
+    <div class="dss-stat-value">{{ stats.online }}</div>
+    <div class="dss-stat-note">seen in the last 15 minutes</div>
+  </a></div>
+  <div class="col-6 col-lg-2"><a class="dss-card dss-stat-card d-block text-reset text-decoration-none h-100" href="{{ url_for('admin.users', status='active') }}">
+    <div class="dss-stat-label"><i class="bi bi-person-check" aria-hidden="true"></i> Active</div>
+    <div class="dss-stat-value">{{ stats.active }}</div>
+    <div class="dss-stat-note">used the system in 30 days</div>
+  </a></div>
+  <div class="col-6 col-lg-2"><a class="dss-card dss-stat-card d-block text-reset text-decoration-none h-100" href="{{ url_for('admin.users', status='inactive') }}">
+    <div class="dss-stat-label"><i class="bi bi-person-dash" aria-hidden="true"></i> Inactive</div>
+    <div class="dss-stat-value">{{ stats.inactive }}</div>
+    <div class="dss-stat-note">not seen in 30 days</div>
+  </a></div>
+  <div class="col-6 col-lg-2"><a class="dss-card dss-stat-card d-block text-reset text-decoration-none h-100" href="{{ url_for('admin.users', status='suspended') }}">
+    <div class="dss-stat-label"><i class="bi bi-slash-circle text-danger" aria-hidden="true"></i> Suspended</div>
+    <div class="dss-stat-value">{{ stats.suspended }}</div>
+    <div class="dss-stat-note">{{ stats.archived_users }} archived</div>
+  </a></div>
+  <div class="col-6 col-lg-2"><div class="dss-card dss-stat-card h-100">
+    <div class="dss-stat-label"><i class="bi bi-person-plus" aria-hidden="true"></i> New this week</div>
+    <div class="dss-stat-value">{{ stats.new_this_week }}</div>
+    <div class="dss-stat-note">accounts created in 7 days</div>
+  </div></div>
+</div>
+
+<div class="row g-4 mb-4">
+  {# ------------------------------ activity ------------------------------ #}
+  <div class="col-lg-8">
+    <section class="dss-card h-100" aria-labelledby="actTitle">
+      <div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2">
+        <h6 id="actTitle" class="mb-0">System activity, last 14 days</h6>
+        <span class="dss-meta">{{ stats.events_24h }} events in 24 h &middot; {{ stats.important_24h }} high-importance &middot; {{ failed_logins }} failed sign-ins</span>
+      </div>
+      <canvas id="activityChart" height="120" role="img" aria-label="Bar chart of audit events per day"></canvas>
+      <p class="dss-chart-note" id="activityNote"></p>
+    </section>
+  </div>
+
+  {# ------------------------------ health ------------------------------ #}
+  <div class="col-lg-4">
+    <section class="dss-card h-100" aria-labelledby="healthTitle">
+      <h6 id="healthTitle" class="mb-2">System health</h6>
+      <ul class="list-unstyled small mb-2">
+        {% for h in health %}
+          <li class="d-flex gap-2 py-1 border-bottom">
+            <i class="bi {{ 'bi-check-circle-fill text-success' if h.ok else 'bi-exclamation-circle-fill text-warning' }}" aria-hidden="true"></i>
+            <span><strong>{{ h.name }}</strong><span class="visually-hidden">: {{ 'working' if h.ok else 'needs attention' }}</span>
+              <span class="d-block dss-meta">{{ h.note }}</span></span>
+          </li>
+        {% endfor %}
+      </ul>
+      <a class="small" href="{{ url_for('admin.settings') }}">System settings &raquo;</a>
+    </section>
+  </div>
+</div>
+
+<div class="row g-4 mb-4">
+  {# ------------------------------ data ------------------------------ #}
+  <div class="col-lg-4">
+    <section class="dss-card h-100" aria-labelledby="dataTitle">
+      <h6 id="dataTitle" class="mb-2">Datasets &amp; uploaded records</h6>
+      <div class="small">
+        <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">LGU data rows</span><strong>{{ stats.total_lgu_data }}</strong></div>
+        <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Market data rows</span><strong>{{ stats.total_market_data }}</strong></div>
+        <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Archived records</span><strong>{{ stats.archived_records }}</strong></div>
+        <div class="d-flex justify-content-between py-1"><span class="text-muted">Forecasts generated</span><strong>{{ stats.total_forecasts }}</strong></div>
+      </div>
+      {% if recent_uploads %}
+        <div class="small fw-semibold mt-2">Latest LGU uploads</div>
+        <ul class="small ps-3 mb-2">
+          {% for e in recent_uploads %}<li>{{ e.who_name }} &middot; {{ e.when.strftime('%b %d, %Y') if e.when else '—' }}{% if e.details %} &middot; {{ e.details }}{% endif %}</li>{% endfor %}
+        </ul>
+      {% else %}
+        <p class="small text-muted mt-2 mb-2">No LGU dataset has been uploaded yet.</p>
+      {% endif %}
+      <a class="small" href="{{ url_for('admin.datasets') }}">Manage datasets &raquo;</a>
+    </section>
+  </div>
+
+  {# ------------------------------ recent important activity ------------------------------ #}
+  <div class="col-lg-8">
+    <section class="dss-card h-100" aria-labelledby="recentTitle">
+      <h6 id="recentTitle" class="mb-2">Recent important activity</h6>
+      {% if recent_activity %}
+      <ul class="dss-activity">
+        {% for e in recent_activity %}
+        {% set t = audit.target(e) %}
+        <li>
+          <div>
+            <strong class="fw-semibold">{{ e.who_name }}</strong> {{ audit.role_badge(e.who_role) }}
+            <span class="ms-1">{{ e.what }}</span>{% if t %}<span class="dss-meta"> &middot; {{ t }}</span>{% endif %}
+          </div>
+          <div class="dss-meta">
+            {{ e.when.strftime('%b %d, %I:%M %p') if e.when else '—' }} {{ tz_label }}
+            &middot; {{ e.ip or 'no IP' }}{% if e.device %} ({{ e.device }}){% endif %}
+            {% if e.why %}&middot; <span class="{{ '' if e.why_is_stated else 'fst-italic' }}">{{ e.why }}</span>{% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      <a href="{{ url_for('admin.audit_log') }}" class="small">View full audit trail &raquo;</a>
+      {% else %}
+      <p class="text-muted">No activity recorded yet.</p>
+      {% endif %}
+    </section>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md"><a href="{{ url_for('admin.users') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-people d-block fs-3 mb-1"></i> Manage Users</a></div>
+  <div class="col-6 col-md"><a href="{{ url_for('admin.audit_log') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-journal-text d-block fs-3 mb-1"></i> Audit Trail</a></div>
+  <div class="col-6 col-md"><a href="{{ url_for('admin.datasets') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-hdd-stack d-block fs-3 mb-1"></i> Datasets</a></div>
+  <div class="col-6 col-md"><a href="{{ url_for('admin.settings') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-sliders d-block fs-3 mb-1"></i> System Settings</a></div>
 </div>
 {% include "shared/_footer.html" %}
+{% endblock %}
 
+{% block extra_scripts %}
+<script>
+(function () {
+  const a = {{ activity|tojson }};
+  new Chart(document.getElementById("activityChart"), {
+    type: "bar",
+    data: {
+      labels: a.labels,
+      datasets: [
+        { label: "Important actions", data: a.important, backgroundColor: "#2563eb", stack: "s" },
+        { label: "Routine actions", data: a.routine, backgroundColor: "#94a3b8", stack: "s" },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: "bottom", labels: { boxWidth: 10 } } },
+      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
+  const total = (arr) => arr.reduce((s, v) => s + v, 0);
+  const imp = total(a.important), rout = total(a.routine);
+  const busiest = a.labels[a.important.map((v, i) => v + a.routine[i]).reduce((best, v, i, arr) => (v > arr[best] ? i : best), 0)];
+  const lastWeek = total(a.important.slice(7)) + total(a.routine.slice(7));
+  const prevWeek = total(a.important.slice(0, 7)) + total(a.routine.slice(0, 7));
+  const trend = lastWeek === prevWeek ? "the same as" : (lastWeek > prevWeek ? "more than" : "less than");
+  document.getElementById("activityNote").textContent = (imp + rout)
+    ? `Each bar is one day of activity recorded in the audit trail: blue for important actions (sign-ins, plans, `
+      + `uploads, account and settings changes), grey for routine ones (switching plans, the tour, themes). `
+      + `In 14 days there were ${imp} important and ${rout} routine actions; the busiest day was ${busiest}. `
+      + `The last 7 days saw ${lastWeek} actions, ${trend} the 7 days before (${prevWeek}). `
+      + "A sudden spike is worth a look in the audit trail."
+    : "No activity has been recorded in the last 14 days.";
+})();
+</script>
 {% endblock %}

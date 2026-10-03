@@ -1,0 +1,70 @@
+{#
+  shared/_industry_slider.html
+  ------------------------------
+  The industry slider, shared by the SME Planning page (scores for the
+  chosen plan's barangay) and the LGU dashboard (city-wide scores), so
+  both roles see the same cards, icons and controls.
+
+  Expects in the including scope:
+    industry_cards   list of dicts (name, short, subtitle, bi, hue, score,
+                     band, trend, is_current)
+    slider_title     heading text
+    slider_location  barangay the scores are for, or None for city-wide
+#}
+{% set industry_pill = {'good': 'dss-pill-low', 'fair': 'dss-pill-moderate', 'low': 'dss-pill-saturated'} %}
+{% set industry_level = {'up': 'a good chance', 'down': 'hard to compete', 'neutral': 'a fair chance'} %}
+<div class="dss-industry-slider mb-2" data-tour="industry-cards" data-industry-slider>
+  <div class="dss-industry-slider-head">
+    <div class="dss-industry-slider-title">
+      <h6 class="mb-0" id="industrySliderTitle">
+        <i class="bi bi-grid-3x3-gap" aria-hidden="true"></i> {{ slider_title }}
+      </h6>
+      <div class="small text-muted" id="industrySliderStatus" data-industry-slider-status aria-live="polite">
+        {{ industry_cards|length }} industries
+      </div>
+    </div>
+    {# Icon-only: each has an aria-label and a title, like the plan
+       chips' icon buttons. `hidden` until the script runs -- a button
+       that does nothing without it should not be on the page. #}
+    <div class="dss-industry-slider-nav" data-industry-slider-nav hidden>
+      <button type="button" class="dss-icon-btn dss-slider-btn" data-industry-slider-prev
+              aria-controls="industryTrack" aria-label="Previous industries" title="Previous industries">
+        <i class="bi bi-chevron-left" aria-hidden="true"></i>
+      </button>
+      <button type="button" class="dss-icon-btn dss-slider-btn" data-industry-slider-next
+              aria-controls="industryTrack" aria-label="Next industries" title="Next industries">
+        <i class="bi bi-chevron-right" aria-hidden="true"></i>
+      </button>
+    </div>
+  </div>
+  {% if industry_cards %}
+  <div class="dss-industry-track" id="industryTrack" tabindex="0" role="region" aria-label="Industries"
+       data-industry-track>
+    <ul class="dss-industry-list">
+      {% for card in industry_cards %}
+      <li class="dss-industry-item">
+        <a class="dss-card dss-card-hover dss-industry-card{{ ' dss-card-current' if card.is_current }}"
+           href="{{ url_for('sme.saturation_map') }}?industry_type={{ card.name|urlencode }}{% if slider_location %}&amp;location={{ slider_location|urlencode }}{% endif %}"
+           title="Open the Saturation Map for {{ card.name }}{{ ' in ' ~ slider_location if slider_location }}"
+           data-industry="{{ card.name }}"{{ ' aria-current="true"'|safe if card.is_current }}>
+          <span class="dss-industry-tile dss-hue-{{ card.hue }}" aria-hidden="true"><i class="bi {{ card.bi }}"></i></span>
+          {% if card.is_current %}<span class="dss-industry-current">Your plan</span>{% endif %}
+          <span class="dss-industry-name">{{ card.short }}</span>
+          {% if card.subtitle %}<span class="dss-industry-sub">{{ card.subtitle }}</span>{% endif %}
+          <span class="dss-industry-score">
+            <span class="text-muted">Market Score</span>
+            <strong class="dss-stat-pill {{ industry_pill.get(card.band, 'dss-pill-moderate') }}">{{ '%.1f'|format(card.score|float) }}</strong>
+            {% if card.trend == 'up' %}<i class="bi bi-arrow-up-circle-fill text-success" aria-hidden="true"></i>
+            {% elif card.trend == 'down' %}<i class="bi bi-arrow-down-circle-fill text-danger" aria-hidden="true"></i>
+            {% else %}<i class="bi bi-dash-circle text-secondary" aria-hidden="true"></i>{% endif %}
+            <span class="visually-hidden">({{ industry_level.get(card.trend, 'a fair chance') }})</span>
+          </span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% else %}
+  <p class="text-muted mb-0">Add a business profile to see live industry scores.</p>
+  {% endif %}
+</div>

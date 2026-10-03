@@ -51,7 +51,7 @@ automatically, and app/services/startup_migrations.py adds any that are
 missing on boot.)
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy.dialects.mysql import LONGTEXT
@@ -128,6 +128,62 @@ class User(ArchivableMixin, UserMixin, db.Model):
     # progress, then 'completed' or 'skipped'. A plain string so adding a
     # state later needs no migration.
     onboarding_state = db.Column(db.String(20), nullable=True)
+
+    # ---------------- Monitoring (Admin > Manage Users) ----------------
+    # last_seen_at: the last time this account used the system, written
+    # at sign-in and then at most once every LAST_SEEN_RESOLUTION by the
+    # before_request hook in app/__init__.py -- a write per page view
+    # would be the most expensive thing on every page. That resolution is
+    # plenty for "is this account active or dormant?".
+    #
+    # suspended_until: a suspension's end. NULL with status 'inactive'
+    # means suspended until an administrator lifts it; a date means the
+    # suspension ends on its own then (lift_expired_suspension).
+    last_seen_at = db.Column(db.DateTime, nullable=True)
+    suspended_until = db.Column(db.DateTime, nullable=True)
+
+    LAST_SEEN_RESOLUTION = timedelta(minutes=5)
+    # An account not seen for this long is "inactive" on the Manage Users
+    # page -- dormant, not suspended.
+    INACTIVE_AFTER = timedelta(days=30)
+
+    def touch_last_seen(self, now=None):
+        """Record activity; True when it wrote (i.e. the stored value was
+        older than LAST_SEEN_RESOLUTION)."""
+        now = now or datetime.utcnow()
+        if self.last_seen_at is None or now - self.last_seen_at >= self.LAST_SEEN_RESOLUTION:
+            self.last_seen_at = now
+            return True
+        return False
+
+    @property
+    def is_suspended(self):
+        return self.status == "inactive"
+
+    def lift_expired_suspension(self, now=None):
+        """End a timed suspension whose time is up. True when it did."""
+        now = now or datetime.utcnow()
+        if self.status == "inactive" and self.suspended_until is not None and now >= self.suspended_until:
+            self.status = "active"
+            self.suspended_until = None
+            return True
+        return False
+
+    @property
+    def activity_state(self):
+        """'archived' | 'suspended' | 'online' (seen in the last 15
+        minutes) | 'active' (seen within INACTIVE_AFTER) | 'inactive'
+        (dormant, or never seen)."""
+        if self.archived_at is not None:
+            return "archived"
+        if self.status == "inactive":
+            return "suspended"
+        if self.last_seen_at is None:
+            return "inactive"
+        idle = datetime.utcnow() - self.last_seen_at
+        if idle <= timedelta(minutes=15):
+            return "online"
+        return "active" if idle <= self.INACTIVE_AFTER else "inactive"
 
     # Kept as an alias so older code and databases that used the
     # original name keep working after the rename.

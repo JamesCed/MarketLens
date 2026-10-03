@@ -56,14 +56,21 @@ ACTION_META = {
     "restore_plan": ("Restored a business plan from Trash", "Business planning"),
     "delete_plan": ("Deleted a business plan (legacy)", "Business planning"),
     "select_plan": ("Switched the plan being viewed", "Business planning"),
+    # A plan left in Trash for 30 days is deleted for good, by the system.
+    "purge_plan": ("Permanently deleted a plan after 30 days in Trash", "Trash retention"),
     "save_recommended_location": ("Saved a recommended location as a plan", "Business planning"),
 
     # --- LGU data
     "dataset_upload": ("Uploaded a government dataset", "Data maintenance"),
+    "view_diversification_plan": ("Opened the Diversification Plan", "City planning"),
+    "export_diversification_plan": ("Exported the Diversification Plan", "City planning"),
 
     # --- administration
     "admin_create_user": ("Created a user account", "User administration"),
     "admin_toggle_active": ("Changed an account's access (suspend/activate)", "User administration"),
+    "admin_suspend_user": ("Suspended a user account", "User administration"),
+    "admin_reactivate_user": ("Reactivated a suspended account", "User administration"),
+    "suspension_expired": ("A timed suspension ended", "User administration"),
     "admin_delete_user": ("Deleted a user account (legacy)", "User administration"),
     "admin_archive_user": ("Archived a user account", "User administration"),
     "admin_restore_user": ("Restored an archived user account", "User administration"),
@@ -94,6 +101,89 @@ ACTION_META = {
 }
 
 GENERIC_PURPOSE = "General system activity"
+
+# ------------------------------------------------------------ categories
+# Every action belongs to one CATEGORY (what part of the system it
+# touched) and has an IMPORTANCE -- the audit trail's answer to flooding.
+# With many users, routine rows (someone switched the plan they are
+# viewing, changed their theme, stepped through the tour) outnumber the
+# rows an administrator is actually looking for by orders of magnitude.
+# The trail therefore opens on "important" rows (high + normal) and can
+# be switched to "everything"; nothing is ever deleted or hidden for
+# good, only filtered.
+#
+#   high    security and administration: failed sign-ins, access changes,
+#           archives, settings, uploads, exports, permanent deletions
+#   normal  what users did to their own data: plans, profile, sign-in
+#   low     routine and personal: viewing, theme, tour, preferences
+CATEGORIES = (
+    ("security", "Security & sign-in"),
+    ("accounts", "Account administration"),
+    ("plans", "Business plans"),
+    ("data", "Datasets & uploads"),
+    ("settings", "System settings"),
+    ("profile", "Profile & preferences"),
+    ("other", "Other activity"),
+)
+_CATEGORY_OF = {
+    "login": "security", "login_failed": "security", "logout": "security",
+    "password_reset_requested": "security", "password_reset_abandoned": "security",
+    "password_reset_completed": "security", "change_password": "security", "register": "security",
+    "admin_create_user": "accounts", "admin_toggle_active": "accounts", "admin_delete_user": "accounts",
+    "admin_archive_user": "accounts", "admin_restore_user": "accounts", "admin_suspend_user": "accounts",
+    "admin_reactivate_user": "accounts", "suspension_expired": "accounts",
+    "create_plan": "plans", "run_forecast": "plans", "update_plan": "plans", "trash_plan": "plans",
+    "restore_plan": "plans", "delete_plan": "plans", "purge_plan": "plans", "select_plan": "plans",
+    "save_recommended_location": "plans",
+    "dataset_upload": "data", "admin_delete_lgu_data": "data", "admin_delete_market_data": "data",
+    "admin_archive_lgu_data": "data", "admin_restore_lgu_data": "data", "admin_archive_market_data": "data",
+    "admin_restore_market_data": "data", "export_barangay_seed_csv": "data",
+    "view_diversification_plan": "data", "export_diversification_plan": "data",
+    "admin_update_settings": "settings", "admin_llm_probe": "settings", "admin_email_probe": "settings",
+    "export_audit_log": "settings",
+    "update_profile": "profile", "update_profile_picture": "profile", "remove_profile_picture": "profile",
+    "update_theme": "profile", "update_notification_prefs": "profile", "clear_notifications": "profile",
+    "onboarding_started": "profile", "onboarding_completed": "profile", "onboarding_skipped": "profile",
+}
+_HIGH = frozenset({
+    "login_failed", "password_reset_abandoned", "password_reset_completed", "change_password",
+    "admin_create_user", "admin_toggle_active", "admin_delete_user", "admin_archive_user",
+    "admin_restore_user", "admin_suspend_user", "admin_reactivate_user", "suspension_expired",
+    "dataset_upload", "admin_delete_lgu_data", "admin_delete_market_data", "admin_archive_lgu_data",
+    "admin_restore_lgu_data", "admin_archive_market_data", "admin_restore_market_data",
+    "admin_update_settings", "export_audit_log", "export_barangay_seed_csv", "purge_plan", "delete_plan",
+    "export_diversification_plan",
+})
+_LOW = frozenset({
+    "select_plan", "update_theme", "update_notification_prefs", "clear_notifications",
+    "onboarding_started", "onboarding_completed", "onboarding_skipped", "view_diversification_plan",
+    "admin_llm_probe", "admin_email_probe", "logout",
+})
+IMPORTANCE_LEVELS = (("important", "Important only"), ("high", "High importance only"), ("all", "Everything"))
+
+
+def category_for(action):
+    return _CATEGORY_OF.get(action, "other")
+
+
+def importance_for(action):
+    if action in _HIGH:
+        return "high"
+    if action in _LOW:
+        return "low"
+    return "normal"
+
+
+def actions_in_category(category):
+    return [a for a, c in _CATEGORY_OF.items() if c == category]
+
+
+def low_importance_actions():
+    return sorted(_LOW)
+
+
+def high_importance_actions():
+    return sorted(_HIGH)
 
 
 def label_for(action):

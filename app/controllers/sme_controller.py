@@ -17,21 +17,27 @@ SUGGESTED options (a <select> and a <datalist>), not a hard constraint;
 the AI engine (app/ml/constants.py) has an "other" bucket for anything
 typed outside them.
 
-PLANS ARE MANAGED ON HOME, AND NEVER DELETED
-Adding, editing, moving to Trash and restoring a plan all happen on the
-Home page (they used to be split between Home and Settings > Business
-Preferences). "Remove" moves a plan to Trash -- an archive, see
-app/models/sme_profile.py -- and the Trash dialog restores it with all
-its forecasts. There is deliberately no route that hard-deletes a plan;
-the old /delete URL survives only as an alias that trashes.
+HOME SUMMARISES, PLANNING IS WHERE THE WORK HAPPENS
+Home (/home) is an overview of every section -- your plans' scores, the
+market around your chosen plan, alerts, and a way into each page. The
+planning itself -- adding, editing, comparing and forecasting plans --
+lives on the Planning page (/planning).
 
-Every plan route answers two kinds of caller: a fetch() from the Home
-page's script (asks for JSON with `Accept: application/json`) and a
-plain form POST with scripting off (gets a flash and a redirect back to
-Home). See _wants_json().
+PLANS ARE MANAGED ON PLANNING, AND TRASH KEEPS THEM FOR 30 DAYS
+"Remove" moves a plan to Trash -- an archive, see
+app/models/sme_profile.py -- and the Trash dialog restores it with all
+its forecasts. A plan left in Trash for TRASH_RETENTION_DAYS (30) is then
+deleted for good by purge_expired_trash(), and that purge is audit-
+logged. No button deletes a plan outright; the old /delete URL survives
+only as an alias that trashes.
+
+Every plan route answers two kinds of caller: a fetch() from the
+Planning page's script (asks for JSON with `Accept: application/json`)
+and a plain form POST with scripting off (gets a flash and a redirect
+back to Planning). See _wants_json().
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from flask import (
     Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify, session, make_response,
@@ -50,7 +56,7 @@ from app.ml.constants import (
 )
 from app.ml.seed_data import BARANGAY_NAMES, get_real_population
 from app.utils.decorators import role_required
-from app.utils.audit import log_action
+from app.utils.audit import diff_fields, log_action
 from app.services.forecasting_service import compute_scores_batch, generate_forecast_for_profile
 from app.services.trend_analytics_service import (
     project_quarterly_outlook,
@@ -243,9 +249,34 @@ def _trashed_plans_for(user_id):
             # the stored row actually holds -- see _score_summary().
             **_score_summary(latest.get(profile.sme_id)),
             "archived_local": profile.archived_at + DISPLAY_UTC_OFFSET if profile.archived_at else None,
+            # Whole days before purge_expired_trash() deletes it for good
+            # (at least 0; a plan due today still shows as "today").
+            "days_left": (
+                max(0, TRASH_RETENTION_DAYS - (datetime.utcnow() - profile.archived_at).days)
+                if profile.archived_at else TRASH_RETENTION_DAYS
+            ),
         }
         for profile in profiles
     ]
+
+
+def _plan_snapshot(profile):
+    """Every business parameter of a plan as plain values -- what the
+    audit trail's Details shows for a created plan, and what an edit is
+    diffed against."""
+    return {
+        "business_name": profile.business_name,
+        "industry_type": profile.industry_type,
+        "subcategory": profile.subcategory_label or profile.subcategory,
+        "location": profile.location,
+        "business_stage": profile.business_stage,
+        "registration_date": profile.registration_date.isoformat() if profile.registration_date else None,
+        "capital": float(profile.startup_capital) if profile.startup_capital is not None else None,
+        "employee_count": profile.employee_count,
+        "product_offering": profile.product_offering,
+        "innovation_idea": profile.innovation_idea,
+        "price_list": [f"{i.get('item')}: {i.get('price')}" for i in profile.offering_items] or None,
+    }
 
 
 def _wants_json():
@@ -330,9 +361,133 @@ def _industry_card_band(score):
     return "good" if value >= 6.5 else ("fair" if value >= 4 else "low")
 
 
+# ---------------------------------------------------------------------
+# TRASH RETENTION
+# ---------------------------------------------------------------------
+# A plan moved to Trash is archived, not deleted -- and it stays
+# restorable for TRASH_RETENTION_DAYS. After that it is deleted for good,
+# with its forecasts and bookmarks (ORM cascade on SmeProfile and
+# ForecastResult; a notification that pointed at one of those forecasts
+# keeps its text and loses only the link, ondelete=SET NULL).
+#
+# Purged LAZILY, when the owner opens Planning or Home, rather than by a
+# scheduler: this deployment has no cron, and the only person who could
+# notice a plan lingering a day past its 30 is the owner, who triggers
+# the purge simply by looking. The purge itself is audit-logged, so the
+# trail records what was removed and why even though nobody clicked.
+TRASH_RETENTION_DAYS = 30
+
+
+def purge_expired_trash(user_id):
+    """Delete this user's plans that have sat in Trash longer than
+    TRASH_RETENTION_DAYS. Returns how many were removed."""
+    cutoff = datetime.utcnow() - timedelta(days=TRASH_RETENTION_DAYS)
+    expired = (
+        SmeProfile.query.execution_options(include_archived=True)
+        .filter(
+            SmeProfile.user_id == user_id,
+            SmeProfile.archived_at.isnot(None),
+            SmeProfile.archived_at < cutoff,
+        )
+        .all()
+    )
+    for profile in expired:
+        details = (f"{profile.business_name}: {profile.industry_type} @ {profile.location} "
+                   f"(in Trash since {profile.archived_at:%Y-%m-%d}, over {TRASH_RETENTION_DAYS} days)")
+        log_action("purge_plan", details=details, target=profile)
+        db.session.delete(profile)
+    if expired:
+        db.session.commit()
+    return len(expired)
+
+
 @sme_bp.route("/home")
 @role_required("SME")
 def home():
+    """THE OVERVIEW. Home is a summary of every section, not a workspace:
+    each card states the one thing worth knowing about its section and
+    links to it, and the actual planning -- adding, editing, comparing
+    and forecasting plans -- happens on the Planning page.
+
+    Built from what is already stored (the newest forecast per plan, the
+    notifications) plus ONE batched market sweep for the chosen plan's
+    barangay, so it stays the fast landing page it has to be. It never
+    generates a forecast; a plan that has none yet says so and points to
+    Planning, where opening it runs one."""
+    from app.models import Notification
+    from app.services.data_import_service import active_lgu_dataset_summary, has_active_lgu_data
+
+    purge_expired_trash(current_user.user_id)
+
+    profiles = current_user.sme_profiles.order_by(SmeProfile.sme_id.desc()).all()
+    selected_plan = _selected_home_plan(profiles)
+    latest_by_plan = _latest_forecasts_by_plan(profiles)
+
+    plan_rows = []
+    for profile in profiles:
+        latest = latest_by_plan.get(profile.sme_id)
+        plan_rows.append({
+            "profile": profile,
+            "forecast": latest,
+            **_score_summary(latest),
+            "selected": selected_plan is not None and profile.sme_id == selected_plan.sme_id,
+        })
+    scored = [row for row in plan_rows if row["viability_score"] is not None]
+    best_plan = max(scored, key=lambda row: float(row["viability_score"])) if scored else None
+
+    featured = latest_by_plan.get(selected_plan.sme_id) if selected_plan else None
+    featured_rec = parse_recommendation(featured.recommendation) if featured else None
+
+    # The market around the chosen plan: every industry scored in its
+    # barangay in ONE batch (the same sweep Planning's slider shows), so
+    # Home can name the strongest and the most crowded sections there.
+    location = selected_plan.location if selected_plan else None
+    top_industries, crowded_industries = [], []
+    if location:
+        scores = compute_scores_batch([(industry, location) for industry in BUSINESS_TYPES])
+        ranked = sorted(
+            ({"name": industry, "short": short_industry_label(industry), "score": s.get("viability_score"),
+              "saturation": s.get("saturation_index") or 0, "competitors": s.get("competitor_count")}
+             for industry, s in zip(BUSINESS_TYPES, scores)),
+            key=lambda row: -float(row["score"] or 0),
+        )
+        top_industries, crowded_industries = ranked[:3], ranked[-3:][::-1]
+
+    unread = (
+        Notification.query.filter_by(user_id=current_user.user_id, is_read=False)
+        .order_by(Notification.created_at.desc()).limit(3).all()
+    )
+    unread_count = Notification.query.filter_by(user_id=current_user.user_id, is_read=False).count()
+    has_lgu_data = has_active_lgu_data()
+
+    return render_template(
+        "sme/home.html",
+        profiles=profiles,
+        plan_rows=plan_rows,
+        best_plan=best_plan,
+        selected_plan=selected_plan,
+        featured=featured,
+        featured_rec=featured_rec,
+        top_industries=top_industries,
+        crowded_industries=crowded_industries,
+        trash_count=len(_trashed_plans_for(current_user.user_id)),
+        unread=unread,
+        unread_count=unread_count,
+        has_lgu_data=has_lgu_data,
+        lgu_dataset=active_lgu_dataset_summary() if has_lgu_data else None,
+        retention_days=TRASH_RETENTION_DAYS,
+    )
+
+
+@sme_bp.route("/planning")
+@role_required("SME")
+def planning():
+    """THE PLANNING PAGE -- the main workspace: every plan with its score,
+    add / edit / move to Trash / restore, the industry slider for the
+    chosen plan's barangay, the map focused on it, the full forecast with
+    its transcript, the direct-competition insight and the quarterly
+    outlook. Home only summarises this page and links here."""
+    purge_expired_trash(current_user.user_id)
     profiles = current_user.sme_profiles.order_by(SmeProfile.sme_id.desc()).all()
     locations = BARANGAY_NAMES
     selected_plan = _selected_home_plan(profiles)
@@ -463,7 +618,7 @@ def home():
         })
 
     return render_template(
-        "sme/home.html",
+        "sme/planning.html",
         profiles=profiles,
         selected_plan=selected_plan,
         plan_choices=plan_choices,
@@ -482,6 +637,7 @@ def home():
         demand_summary=get_demand_summary(),
         has_lgu_data=has_lgu_data,
         lgu_dataset=active_lgu_dataset_summary() if has_lgu_data else None,
+        retention_days=TRASH_RETENTION_DAYS,
     )
 
 
@@ -502,20 +658,23 @@ def analyze():
     if errors:
         for message in errors:
             flash(message, "danger")
-        return redirect(url_for("sme.home"))
+        return redirect(url_for("sme.planning"))
 
     profile = apply_plan_data(SmeProfile(user_id=current_user.user_id), data)
     db.session.add(profile)
     db.session.commit()
 
     generate_forecast_for_profile(profile)
-    log_action("run_forecast", details=f"{profile.industry_type} @ {profile.location}", target=profile)
+    # The trail keeps EVERY field the plan was created with (Details
+    # button), not just the one-line summary.
+    log_action("create_plan", details=f"{profile.business_name}: {profile.industry_type} @ {profile.location}",
+               target=profile, changes=_plan_snapshot(profile))
     # Select it now, so landing on it is not also logged as a switch.
     session[HOME_PLAN_SESSION_KEY] = profile.sme_id
-    flash("Forecast generated -- see your results below.", "success")
+    flash(f"“{profile.business_name}” added to your plans — its forecast is ready below.", "success")
     # Land on the plan just made, so the choice bar, the map and the
     # forecast panel all show it rather than whichever plan was selected.
-    return redirect(url_for("sme.home", plan=profile.sme_id))
+    return redirect(url_for("sme.planning", plan=profile.sme_id))
 
 
 @sme_bp.route("/home/plans/<int:sme_id>/update", methods=["POST"])
@@ -553,20 +712,25 @@ def update_plan(sme_id):
             return jsonify({"success": False, "error": " ".join(errors), "errors": errors}), 400
         for message in errors:
             flash(message, "danger")
-        return redirect(url_for("sme.home", plan=profile.sme_id))
+        return redirect(url_for("sme.planning", plan=profile.sme_id))
 
     # Keep a registration date the form did not send, rather than
     # re-dating an existing business to today on every edit.
     if not form.get("registration_date") and profile.registration_date and data["business_stage"] == "existing":
         data["registration_date"] = profile.registration_date.isoformat()
 
+    before = _plan_snapshot(profile)
     apply_plan_data(profile, data)
     db.session.commit()
     # Re-run the AI engine so the Home page's featured forecast reflects
     # the edited plan -- every input feeds the plan viability model, so
     # changing the capital or the staff count changes the forecast too.
     generate_forecast_for_profile(profile)
-    log_action("update_plan", details=f"-> {profile.industry_type} @ {profile.location}", target=profile)
+    changed = diff_fields(before, _plan_snapshot(profile))
+    log_action("update_plan",
+               details=(f"{profile.business_name}: changed " + ", ".join(changed)) if changed
+               else f"{profile.business_name}: saved with no changes",
+               target=profile, changes=changed)
     # Land on the edited plan without that landing being logged as a
     # separate "switched plan" -- same as a newly added plan.
     session[HOME_PLAN_SESSION_KEY] = profile.sme_id
@@ -578,9 +742,9 @@ def update_plan(sme_id):
         return jsonify({
             "success": True,
             "plan": profile.to_dict(),
-            "redirect": url_for("sme.home", plan=profile.sme_id),
+            "redirect": url_for("sme.planning", plan=profile.sme_id),
         })
-    return redirect(url_for("sme.home", plan=profile.sme_id))
+    return redirect(url_for("sme.planning", plan=profile.sme_id))
 
 
 def _move_plan_to_trash(sme_id):
@@ -602,7 +766,9 @@ def _move_plan_to_trash(sme_id):
     if not profile.is_archived:
         profile.archive(current_user.user_id, "Moved to Trash from the Home page")
         db.session.commit()
-        log_action("trash_plan", details=f"{profile.industry_type} @ {profile.location}", target=profile)
+        log_action("trash_plan", details=f"{profile.business_name}: {profile.industry_type} @ {profile.location}",
+                   target=profile, changes={"status": ["active", "in Trash"],
+                                            "deleted_permanently_after_days": TRASH_RETENTION_DAYS})
 
     # The Home page remembers the plan being viewed; if that is the one
     # just trashed, forget it, so Home falls back to the newest live
@@ -613,9 +779,9 @@ def _move_plan_to_trash(sme_id):
     message = f"\u201c{name}\u201d moved to Trash."
     if _wants_json():
         return jsonify({"success": True, "message": message, "plan": profile.to_dict(),
-                        "redirect": url_for("sme.home")})
+                        "redirect": url_for("sme.planning")})
     flash(message, "success")
-    return redirect(url_for("sme.home"))
+    return redirect(url_for("sme.planning"))
 
 
 @sme_bp.route("/home/plans/<int:sme_id>/trash", methods=["POST"])
@@ -649,15 +815,16 @@ def restore_plan(sme_id):
     if profile.is_archived:
         profile.restore()
         db.session.commit()
-        log_action("restore_plan", details=f"{profile.industry_type} @ {profile.location}", target=profile)
+        log_action("restore_plan", details=f"{profile.business_name}: {profile.industry_type} @ {profile.location}",
+                   target=profile, changes={"status": ["in Trash", "active"]})
 
     session[HOME_PLAN_SESSION_KEY] = profile.sme_id
     message = f"\u201c{name}\u201d restored."
     if _wants_json():
         return jsonify({"success": True, "message": message, "plan": profile.to_dict(),
-                        "redirect": url_for("sme.home", plan=profile.sme_id)})
+                        "redirect": url_for("sme.planning", plan=profile.sme_id)})
     flash(message, "success")
-    return redirect(url_for("sme.home", plan=profile.sme_id))
+    return redirect(url_for("sme.planning", plan=profile.sme_id))
 
 
 @sme_bp.route("/saturation-map")

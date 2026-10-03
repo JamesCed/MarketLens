@@ -1,7 +1,7 @@
 // app/static/js/location_picker.js
 // ---------------------------------------------------------------------
 // Choose a barangay by pointing at it on a map, instead of scrolling a
-// 76-name dropdown (revision MINOR 2). Two places use it on the Home page:
+// 76-name dropdown (revision MINOR 2). Two places use it on the Planning page:
 //
 //   * the search bar's "Pick on map" dialog (#locationPickerModal): click
 //     a barangay, press "Use this barangay", and the search runs for it;
@@ -13,7 +13,7 @@
 // a "where", not a score -- with the city's real outline for orientation.
 // The GeoJSON is fetched once and shared by every picker on the page.
 //
-// Needs Leaflet (the Home page already loads it for the mini map).
+// Needs Leaflet (the Planning page already loads it for the mini map).
 (function () {
   "use strict";
 

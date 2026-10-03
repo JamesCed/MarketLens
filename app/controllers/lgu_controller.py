@@ -4,14 +4,17 @@ app/controllers/lgu_controller.py
 LGU-only pages: the LGU dashboard and, most importantly, the Gov't
 Data Upload page.
 
-*** This is the page that must be LGU-only per your instructions. ***
-Enforced two ways:
-  1. @role_required("LGU", "Admin") on every route below -- an SME
+LGU-ONLY -- the dashboard, the Diversification Plan and the Gov't Data
+Upload. Enforced two ways:
+  1. @role_required("LGU") on every route below -- an SME or an Admin
      account hitting these URLs directly gets HTTP 403, not just a
-     hidden link.
+     hidden link. Admin used to share these pages; it no longer does.
+     The Admin module's purpose is to run the SYSTEM (accounts, audit
+     trail, datasets, settings, activity), not to plan the city or to
+     upload the city's records -- an administrator reviews, archives
+     and restores uploaded rows from Admin > Datasets instead.
   2. The sidebar nav (app/templates/shared/_sidebar.html) only renders
-     the "Gov't Data Upload" link when current_user.is_lgu() or
-     current_user.is_admin() is true.
+     these links for an LGU account.
 
 The uploaded file itself is NOT tracked anywhere (the real lgu_data
 table has no filename/size/status columns -- see
@@ -31,6 +34,7 @@ from app.ml.constants import CLUSTER_THRESHOLDS
 from app.utils.decorators import role_required
 from app.utils.helpers import allowed_file, unique_upload_path
 from app.utils.audit import log_action
+from app.services.diversification_service import build_diversification_plan
 from app.services.data_import_service import (
     active_lgu_dataset_summary,
     has_active_lgu_data,
@@ -44,7 +48,7 @@ MARKET_SOURCES = ["PSA", "DTI", "Manual"]
 
 
 @lgu_bp.route("/lgu/dashboard")
-@role_required("LGU", "Admin")
+@role_required("LGU")
 def dashboard():
     """The LGU's city-wide counterpart to the SME Home page.
 
@@ -109,27 +113,37 @@ def dashboard():
     # trips through the forest to fill eight cards on the page an LGU
     # officer lands on. Same fix as SME Home and Recommendations.
     pairs = [(industry_type, barangay)
-             for industry_type in FEATURED_BUSINESS_TYPES
+             for industry_type in BUSINESS_TYPES
              for barangay in sample_barangays]
     scores_by_industry = {}
     for (industry_type, _barangay), score in zip(pairs, compute_scores_batch(pairs)):
         scores_by_industry.setdefault(industry_type, []).append(score)
 
+    # The same industry slider the SME Planning page shows (shared
+    # partial, same icons and bands), scored city-wide for ALL twenty
+    # sections -- the LGU dashboard used to keep the old eight emoji
+    # cards after the SME side moved on.
     industry_cards = []
-    for industry_type in FEATURED_BUSINESS_TYPES:
+    for industry_type in BUSINESS_TYPES:
         scores = scores_by_industry.get(industry_type, [])
         avg_viability = round(sum(s["viability_score"] for s in scores) / len(scores), 1) if scores else 0.0
         avg_saturation = round(sum(s["saturation_index"] for s in scores) / len(scores), 1) if scores else 0.0
         display = INDUSTRY_DISPLAY.get(industry_type, DEFAULT_INDUSTRY_DISPLAY)
+        band = "good" if avg_viability >= 6.5 else ("fair" if avg_viability >= 4 else "low")
         industry_cards.append(
             {
                 "name": industry_type,
                 "score": avg_viability,
                 "saturation": avg_saturation,
                 "businesses": businesses_by_industry.get(industry_type, 0),
-                "trend": "up" if avg_viability >= 6.5 else ("down" if avg_viability < 5 else "neutral"),
+                "band": band,
+                "trend": {"good": "up", "fair": "neutral", "low": "down"}[band],
                 "icon": display["icon"],
+                "bi": display.get("bi", "bi-briefcase"),
+                "hue": display.get("hue", "neutral"),
+                "short": display.get("short") or industry_type,
                 "subtitle": display["subtitle"],
+                "is_current": False,
             }
         )
 
@@ -163,7 +177,49 @@ def dashboard():
         # the "Upload Dataset" way out belongs.
         has_lgu_data=has_active_lgu_data(),
         lgu_dataset=active_lgu_dataset_summary(),
+        # The headline of the Diversification Plan, so the dashboard can
+        # summarise it and link to the full page.
+        plan=build_diversification_plan(),
+        default_industry=FEATURED_BUSINESS_TYPES[0],
     )
+
+
+@lgu_bp.route("/lgu/diversification")
+@role_required("LGU")
+def diversification():
+    """The Diversification Plan: how concentrated each barangay's economy
+    is, which industries to encourage or regulate city-wide, and a
+    prioritised, per-barangay action list -- see
+    app/services/diversification_service.py for every measure."""
+    log_action("view_diversification_plan")
+    return render_template("lgu/diversification.html", plan=build_diversification_plan())
+
+
+@lgu_bp.route("/lgu/diversification.csv")
+@role_required("LGU")
+def diversification_csv():
+    """The per-barangay plan as a spreadsheet, for council briefings."""
+    import csv
+    import io
+
+    from flask import Response
+
+    plan = build_diversification_plan()
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["barangay", "population", "businesses", "businesses_per_1000", "industries_present",
+                     "diversity_score", "dominant_industry", "dominant_share_percent", "need_score",
+                     "why_priority", "encourage", "review_permits", "actions"])
+    for b in plan["barangays"]:
+        writer.writerow([
+            b["location"], b["population"], b["businesses"], b["per_thousand"], b["industries_present"],
+            b["diversity"], b["dominant_full"], b["dominant_share"], b["need_score"],
+            "; ".join(b["reasons"]), "; ".join(x["industry"] for x in b["promote"]),
+            "; ".join(x["industry"] for x in b["limit"]), "; ".join(b["actions"]),
+        ])
+    log_action("export_diversification_plan")
+    return Response(out.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=diversification_plan.csv"})
 
 
 # The column reference shown on the upload page AND used to build the
@@ -217,7 +273,7 @@ UPLOAD_COLUMNS = {
 
 
 @lgu_bp.route("/lgu/dataset-template/<dataset_type>")
-@role_required("LGU", "Admin")
+@role_required("LGU")
 def dataset_template(dataset_type):
     """A ready-made CSV with the right headers and one example row.
 
@@ -251,7 +307,7 @@ def dataset_template(dataset_type):
 
 
 @lgu_bp.route("/lgu/government-data-upload", methods=["GET", "POST"])
-@role_required("LGU", "Admin")
+@role_required("LGU")
 def government_upload():
     if request.method == "POST":
         dataset_type = request.form.get("dataset_type", "LGU_DATA")

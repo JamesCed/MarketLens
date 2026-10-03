@@ -56,3 +56,33 @@
     <span class="text-break {{ '' if e.why_is_stated else 'dss-why-default' }}">{{ e.why }}</span>
   {% else %}<span class="dss-meta">&mdash;</span>{% endif %}
 {%- endmacro %}
+
+
+{#
+  changes_table(e) -- the full record behind an entry's Details button:
+  for an edit, each field that changed with its old and new value; for
+  something created, each field with its value. Long values wrap.
+#}
+{% macro changes_table(e) -%}
+  {% if e.changes %}
+  <table class="table table-sm mb-0 dss-changes-table">
+    <thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead>
+    <tbody>
+      {% for field, value in e.changes.items() %}
+        {% set pair = value is sequence and value is not string and value|length == 2 %}
+        <tr>
+          <td class="text-nowrap">{{ field|replace('_', ' ')|capitalize }}</td>
+          {% if pair %}
+            <td class="text-break">{{ value[0] if value[0] is not none else '—' }}</td>
+            <td class="text-break">{{ value[1] if value[1] is not none else '—' }}</td>
+          {% else %}
+            <td class="dss-meta">&mdash;</td>
+            <td class="text-break">{% if value is sequence and value is not string %}{{ value|join('; ') }}{% else %}{{ value if value is not none else '—' }}{% endif %}</td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if e.user_agent %}<div class="dss-meta mt-1">Device: {{ e.user_agent }}</div>{% endif %}
+  {% endif %}
+{%- endmacro %}

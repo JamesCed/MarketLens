@@ -84,6 +84,9 @@ _USER_COLUMNS = {
     "notify_newsletter": ("BOOLEAN NOT NULL DEFAULT 0", "TINYINT(1) NOT NULL DEFAULT 0"),
     # First-time walkthrough state -- see User.onboarding_state.
     "onboarding_state": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
+    # Admin monitoring -- see User.last_seen_at / suspended_until.
+    "last_seen_at": ("DATETIME NULL", "DATETIME NULL"),
+    "suspended_until": ("DATETIME NULL", "DATETIME NULL"),
     # Archive instead of delete -- see app/models/archive.py.
     **_ARCHIVE_COLUMNS,
 }
@@ -115,6 +118,8 @@ _ADDITIVE_COLUMNS = {
         "route": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
         "user_agent": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
         "reason": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
+        # The full before/after record behind an entry's "Details" button.
+        "changes": ("TEXT NULL", "TEXT NULL"),
     },
 }
 

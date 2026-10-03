@@ -277,7 +277,7 @@ def test_section_plans_redirects_an_sme_to_home(app, query):
     user = _user(role="SME", state="completed")
     response = _login(app, user.email).get("/settings", query_string={"section": query})
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/home")
+    assert response.headers["Location"].endswith("/planning")
 
 
 @pytest.mark.parametrize("role", ["LGU", "Admin"])

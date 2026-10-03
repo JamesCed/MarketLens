@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Recommendations{% endblock %}
-{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, explanation_paragraph %}
+{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, explanation_paragraph, competitor_insight_panel %}
 
 {% block content %}
 <div class="mb-4">
@@ -12,7 +12,7 @@
   <div class="dss-card text-center py-5">
     <i class="bi bi-lightbulb display-4 text-muted"></i>
     <p class="mt-2 text-muted">You haven't created a business plan yet.</p>
-    <a href="{{ url_for('sme.home') }}" class="btn btn-primary">Create your first plan on Home</a>
+    <a href="{{ url_for('sme.planning') }}?new_plan=1" class="btn btn-primary">Create your first plan in Planning</a>
   </div>
 {% else %}
   <!-- Summary cards. High/Moderate are the two tiers the AI actually
@@ -70,7 +70,7 @@
   {% set profile = item.profile %}
   {% set f = item.forecast %}
   {% set rec = item.rec %}
-  <div class="dss-card mb-4 p-0 overflow-hidden">
+  <div class="dss-card mb-4 p-0 overflow-hidden" id="plan-{{ profile.sme_id }}">
     <div class="p-4">
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
         <div>
@@ -107,9 +107,9 @@
           {% else %}
             <div class="text-muted small">Market Score</div>
             <div class="fs-2 text-success">{{ f.viability_score }}<span class="fs-6 text-muted">/10</span></div>
-            <a class="small" href="{{ url_for('sme.home', plan=profile.sme_id) }}"
+            <a class="small" href="{{ url_for('sme.planning', plan=profile.sme_id) }}"
                title="Scored before the plan viability model: the market alone, not your capital, staff or prices">
-              Open on Home to update
+              Open in Planning to update
             </a>
           {% endif %}
         </div>
@@ -123,6 +123,9 @@
          page then upgrades to Gemini's transcript when it can (forecast=f
          gives the macro the row to ask about). The badge says which. #}
       {{ explanation_paragraph(rec, forecast=f) }}
+      {# The full competitor insight -- the Planning page shows its short
+         form and links here. #}
+      {{ competitor_insight_panel(rec, full=True) }}
       {{ subcategory_compare(rec) }}
 
       <!-- Key Metrics -- real, derived figures (no fabricated ranges):

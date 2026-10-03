@@ -49,8 +49,11 @@ from app.models import User, AuditLog, LguData, MarketData, SystemSetting, Forec
 from app.models.archive import INCLUDE_ARCHIVED, get_including_archived
 from app.ml.constants import CLUSTER_THRESHOLDS
 from app.utils.decorators import role_required
-from app.utils.audit import log_action
-from app.utils.audit_labels import actions_matching, describe_device, label_for, purpose_for, target_type_label
+from app.utils.audit import diff_fields, log_action
+from app.utils.audit_labels import (
+    CATEGORIES, IMPORTANCE_LEVELS, actions_in_category, actions_matching, category_for, describe_device,
+    high_importance_actions, importance_for, label_for, low_importance_actions, purpose_for, target_type_label,
+)
 from app.services.forecasting_service import SYSTEM_USER_EMAIL
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -135,49 +138,240 @@ def _refresh_figures():
 @admin_bp.route("/dashboard")
 @role_required("Admin")
 def dashboard():
-    # "Users" counts accounts in circulation. Archived accounts are the
-    # replacement for deleted ones, so counting them as users would make
-    # the number go up every time an administrator removed someone.
-    live_users = User.query.filter(User.archived_at.is_(None))
+    """THE SYSTEM MONITOR. An administrator's job is the system itself --
+    its accounts, its activity, its data and its health -- not the city's
+    market, which is the LGU dashboard's. So this page answers: who is
+    using the system, is anything suspicious happening, is the data
+    flowing, and is every part of the engine working. Every card links to
+    the Admin page that acts on it."""
+    now = datetime.utcnow()
+    day_ago = now - timedelta(days=1)
+    week_ago = now - timedelta(days=7)
+
+    live = User.query.filter(User.archived_at.is_(None))
+    users = live.all()
+    states = {}
+    for user in users:
+        states[user.activity_state] = states.get(user.activity_state, 0) + 1
     stats = {
-        "total_users": live_users.count(),
+        "total_users": len(users),
         "archived_users": User.query.filter(User.archived_at.isnot(None)).count(),
-        "sme_users": live_users.filter(User.role == "SME").count(),
-        "lgu_users": live_users.filter(User.role == "LGU").count(),
+        "by_role": {role: sum(1 for u in users if u.role == role) for role in ("SME", "LGU", "Admin")},
+        "online": states.get("online", 0),
+        "active": states.get("active", 0) + states.get("online", 0),
+        "inactive": states.get("inactive", 0),
+        "suspended": states.get("suspended", 0),
+        "new_this_week": live.filter(User.created_at >= week_ago).count(),
         "total_forecasts": ForecastResult.query.count(),
-        # Archived data rows are already excluded by the global filter
-        # (app/models/archive.py), so these are live rows only.
         "total_lgu_data": LguData.query.count(),
         "total_market_data": MarketData.query.count(),
-        "total_notifications": Notification.query.count(),
+        "archived_records": (
+            LguData.query.execution_options(**{INCLUDE_ARCHIVED: True}).filter(LguData.archived_at.isnot(None)).count()
+            + MarketData.query.execution_options(**{INCLUDE_ARCHIVED: True})
+            .filter(MarketData.archived_at.isnot(None)).count()
+        ),
+        "events_24h": AuditLog.query.filter(AuditLog.created_at >= day_ago).count(),
+        "important_24h": AuditLog.query.filter(
+            AuditLog.created_at >= day_ago, AuditLog.action.in_(high_importance_actions())
+        ).count(),
     }
+
+    # SECURITY: failed sign-ins in the last 24 hours, and any address or
+    # account with a burst of them -- the pattern of someone guessing
+    # passwords. A burst is SUSPICIOUS_FAILURES or more.
+    failures = AuditLog.query.filter(AuditLog.action == "login_failed", AuditLog.created_at >= day_ago).all()
+    by_ip, by_email = {}, {}
+    for entry in failures:
+        if entry.ip_address:
+            by_ip[entry.ip_address] = by_ip.get(entry.ip_address, 0) + 1
+        email = (entry.details or "").replace("email=", "").strip()
+        if email:
+            by_email[email] = by_email.get(email, 0) + 1
+    alerts = (
+        [{"kind": "IP address", "value": ip, "count": n} for ip, n in by_ip.items() if n >= SUSPICIOUS_FAILURES]
+        + [{"kind": "Account", "value": email, "count": n} for email, n in by_email.items() if n >= SUSPICIOUS_FAILURES]
+    )
+    alerts.sort(key=lambda a: -a["count"])
+
+    # ACTIVITY: audit events per day for the last 14 days, split into
+    # important and routine, for the chart.
+    start_day = (_to_local(now).date() - timedelta(days=13))
+    since = datetime.combine(start_day, time.min) - DISPLAY_UTC_OFFSET
+    rows = db.session.query(AuditLog.created_at, AuditLog.action).filter(AuditLog.created_at >= since).all()
+    days = [start_day + timedelta(days=i) for i in range(14)]
+    important = {d: 0 for d in days}
+    routine = {d: 0 for d in days}
+    for created_at, action in rows:
+        d = _to_local(created_at).date()
+        if d in important:
+            if importance_for(action) == "low":
+                routine[d] += 1
+            else:
+                important[d] += 1
+    activity = {
+        "labels": [d.strftime("%b %d") for d in days],
+        "important": [important[d] for d in days],
+        "routine": [routine[d] for d in days],
+    }
+
     recent = (
         AuditLog.query.outerjoin(AuditLog.user)
         .options(contains_eager(AuditLog.user))
+        .filter(AuditLog.action.notin_(low_importance_actions()))
         .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
         .limit(10)
         .all()
     )
+    recent_uploads = (
+        AuditLog.query.filter(AuditLog.action == "dataset_upload")
+        .order_by(AuditLog.created_at.desc()).limit(5).all()
+    )
     return render_template(
         "admin/dashboard.html",
         stats=stats,
+        failed_logins=len(failures),
+        alerts=alerts,
+        activity=activity,
+        health=_system_health(),
         recent_activity=[_present_entry(entry) for entry in recent],
+        recent_uploads=[_present_entry(entry) for entry in recent_uploads],
+        suspicious_failures=SUSPICIOUS_FAILURES,
     )
 
 
+# Failed sign-ins from one address or for one account within 24 hours
+# at which the dashboard raises an alert.
+SUSPICIOUS_FAILURES = 5
+
+
+def _system_health():
+    """Each part of the engine and whether it is working, for the
+    dashboard -- read-only checks, nothing is called over the network."""
+    checks = []
+    try:
+        from app.services.forecasting_service import models_are_trained
+
+        checks.append(("Market model (stage 1)", models_are_trained(),
+                       "trained Random Forest loaded" if models_are_trained() else "not trained -- formula fallback in use"))
+    except Exception:  # noqa: BLE001
+        checks.append(("Market model (stage 1)", False, "could not be checked"))
+    try:
+        from app.services import plan_forecast_service as pfs
+
+        model = pfs._load_plan_model() if hasattr(pfs, "_load_plan_model") else None
+        checks.append(("Plan model (stage 2)", model is not None,
+                       "trained plan viability model loaded" if model is not None else "not trained -- scorecard formula in use"))
+    except Exception:  # noqa: BLE001
+        checks.append(("Plan model (stage 2)", False, "could not be checked"))
+    try:
+        from app.services.llm_service import gemini_transcription_available
+
+        ok = bool(gemini_transcription_available())
+        checks.append(("Gemini (AI transcript)", ok,
+                       "configured and switched on" if ok else "no Gemini key, or the AI switch is off"))
+    except Exception:  # noqa: BLE001
+        checks.append(("Gemini (AI transcript)", False, "could not be checked"))
+    try:
+        from app.services import email_service
+
+        ok = bool(email_service.is_configured())
+        checks.append(("Email delivery", ok, "configured" if ok else "not configured -- alerts stay in-app"))
+    except Exception:  # noqa: BLE001
+        checks.append(("Email delivery", False, "could not be checked"))
+    try:
+        from app.services.forecasting_service import places_calls_today
+
+        used, budget = places_calls_today()
+        checks.append(("Google Places budget", not budget or used < budget,
+                       f"{used} of {budget or 'unlimited'} lookups used today"))
+    except Exception:  # noqa: BLE001
+        checks.append(("Google Places budget", False, "could not be checked"))
+    return [{"name": n, "ok": ok, "note": note} for n, ok, note in checks]
+
+
 # ------------------------------------------------------------------ users
+USERS_PER_PAGE = 25
+USER_STATUS_CHOICES = (
+    ("", "All accounts"),
+    ("online", "Online now"),
+    ("active", "Active (seen in the last 30 days)"),
+    ("inactive", "Inactive (not seen in 30 days)"),
+    ("suspended", "Suspended"),
+)
+# How long a suspension can last, in days. None = until an administrator
+# lifts it.
+SUSPENSION_CHOICES = ((1, "1 day"), (3, "3 days"), (7, "7 days"), (30, "30 days"), (None, "Until I lift it"))
+
+
+def _lift_expired_suspensions():
+    """Timed suspensions whose end has passed are lifted -- and each one
+    is written to the audit trail by the system, so the trail shows the
+    account came back and why."""
+    now = datetime.utcnow()
+    expired = User.query.filter(User.status == "inactive", User.suspended_until.isnot(None),
+                                User.suspended_until <= now).all()
+    for user in expired:
+        until = user.suspended_until
+        user.lift_expired_suspension(now)
+        db.session.commit()
+        log_action("admin_toggle_active", details="Reactivated: timed suspension ended", target=user,
+                   reason=f"Suspension ended on {_to_local(until):%b %d, %Y %I:%M %p} {DISPLAY_TZ_LABEL}",
+                   changes={"status": ["suspended", "active"]}, user_id=None)
+
+
 @admin_bp.route("/users")
 @role_required("Admin")
 def users():
-    current_accounts = User.query.filter(User.archived_at.is_(None)).order_by(User.created_at.desc()).all()
+    """Manage User Accounts: search by name, email or account ID (UID),
+    filter by status -- online, active, inactive (dormant), suspended --
+    see when each account was last seen, and jump to any account's own
+    audit trail. Paged, so a large user base stays one quick page."""
+    _lift_expired_suspensions()
+    q = " ".join((request.args.get("q") or "").split())[:100]
+    status = request.args.get("status", "")
+    if status not in {value for value, _label in USER_STATUS_CHOICES}:
+        status = ""
+    page = request.args.get("page", 1, type=int)
+
+    query = User.query.filter(User.archived_at.is_(None))
+    if q:
+        uid = q[1:] if q.startswith("#") else q
+        conditions = [User.name.ilike(_like(q), escape=_LIKE_ESCAPE), User.email.ilike(_like(q), escape=_LIKE_ESCAPE)]
+        if uid.isdigit():
+            conditions.append(User.user_id == int(uid))
+        query = query.filter(or_(*conditions))
+    now = datetime.utcnow()
+    if status == "suspended":
+        query = query.filter(User.status == "inactive")
+    elif status == "online":
+        query = query.filter(User.status == "active", User.last_seen_at >= now - timedelta(minutes=15))
+    elif status == "active":
+        query = query.filter(User.status == "active", User.last_seen_at >= now - User.INACTIVE_AFTER)
+    elif status == "inactive":
+        query = query.filter(User.status == "active", or_(User.last_seen_at.is_(None),
+                                                           User.last_seen_at < now - User.INACTIVE_AFTER))
+    pagination = query.order_by(User.created_at.desc(), User.user_id.desc()).paginate(
+        page=page, per_page=USERS_PER_PAGE, error_out=False)
+
     archived_accounts = User.query.filter(User.archived_at.isnot(None)).order_by(User.archived_at.desc()).all()
+    filters = {key: value for key, value in (("q", q), ("status", status)) if value}
     return render_template(
         "admin/users.html",
-        users=current_accounts,
+        users=pagination.items,
+        pagination=pagination,
         archived_users=archived_accounts,
         archivers=_people_by_id(u.archived_by for u in archived_accounts),
         active_tab="archived" if request.args.get("tab") == "archived" else "current",
         system_email=SYSTEM_USER_EMAIL,
+        filters=filters,
+        q=q,
+        status=status,
+        status_choices=USER_STATUS_CHOICES,
+        suspension_choices=SUSPENSION_CHOICES,
+        counts={
+            "all": User.query.filter(User.archived_at.is_(None)).count(),
+            "suspended": User.query.filter(User.archived_at.is_(None), User.status == "inactive").count(),
+        },
     )
 
 
@@ -233,15 +427,32 @@ def toggle_active(user_id):
     if reason is None:
         return redirect(url_for("admin.users"))
 
-    user.status = "inactive" if suspending else "active"
-    db.session.commit()
-    log_action(
-        "admin_toggle_active",
-        details="Suspended" if suspending else "Reactivated",
-        target=user,
-        reason=reason,
-    )
-    flash(f"{user.email} is now {'suspended' if suspending else 'active'}.", "success")
+    if suspending:
+        # How long: 1, 3, 7 or 30 days, or until an administrator lifts
+        # it. Anything else (a hand-edited form) means "until lifted" --
+        # the safer reading of an unclear suspension.
+        raw = (request.form.get("duration") or "").strip()
+        days = int(raw) if raw.isdigit() and int(raw) in {d for d, _l in SUSPENSION_CHOICES if d} else None
+        until = datetime.utcnow() + timedelta(days=days) if days else None
+        user.status = "inactive"
+        user.suspended_until = until
+        db.session.commit()
+        length = (f"for {days} day{'s' if days != 1 else ''} (until "
+                  f"{_to_local(until):%b %d, %Y %I:%M %p} {DISPLAY_TZ_LABEL})") if days else "until lifted by an administrator"
+        log_action("admin_toggle_active", details=f"Suspended {length}", target=user, reason=reason,
+                   changes={"status": ["active", "suspended"],
+                            "suspended_until": [None, until.isoformat(timespec="minutes") if until else "until lifted"]})
+        flash(f"{user.email} is suspended {length}.", "success")
+    else:
+        before_until = user.suspended_until
+        user.status = "active"
+        user.suspended_until = None
+        db.session.commit()
+        log_action("admin_toggle_active", details="Reactivated", target=user, reason=reason,
+                   changes={"status": ["suspended", "active"],
+                            "suspended_until": [before_until.isoformat(timespec="minutes") if before_until else
+                                                "until lifted", None]})
+        flash(f"{user.email} is now active.", "success")
     return redirect(url_for("admin.users"))
 
 
@@ -331,7 +542,22 @@ def _present_entry(entry):
             name = "No account recorded"
 
     reason = entry.reason
+    changes = None
+    if getattr(entry, "changes", None):
+        import json
+
+        try:
+            parsed = json.loads(entry.changes)
+            changes = parsed if isinstance(parsed, dict) else None
+        except (TypeError, ValueError):
+            changes = None
     return SimpleNamespace(
+        # DETAILS -- the full before/after record behind the row (see
+        # AuditLog.changes); None when there is nothing more to show.
+        changes=changes,
+        category=category_for(entry.action),
+        importance=importance_for(entry.action),
+        user_id=entry.user_id,
         id=entry.id,
         # WHO
         who_name=name,
@@ -377,12 +603,20 @@ def _audit_filters():
     day_to = _parse_day(args.get("date_to", "").strip())
     if day_from and day_to and day_from > day_to:
         day_from, day_to = day_to, day_from
+    category = args.get("category", "").strip()
+    importance = args.get("importance", "").strip()
+    user = args.get("user", "").strip()
     return {
         "q": " ".join(args.get("q", "").split())[:100],
         "role": role if role in {value for value, _label in AUDIT_ROLE_CHOICES} else "",
         "action": args.get("action", "").strip()[:100],
         "date_from": day_from.isoformat() if day_from else "",
         "date_to": day_to.isoformat() if day_to else "",
+        "category": category if category in {value for value, _label in CATEGORIES} else "",
+        # "" = the default, important rows only (see audit_labels);
+        # "all" shows routine rows too.
+        "importance": importance if importance in {"high", "all"} else "",
+        "user": user if user.isdigit() else "",
     }
 
 
@@ -432,6 +666,33 @@ def _audit_query(filters):
 
     if filters["action"]:
         query = query.filter(AuditLog.action == filters["action"])
+    elif filters["importance"] == "high":
+        query = query.filter(AuditLog.action.in_(high_importance_actions()))
+    elif filters["importance"] != "all":
+        # THE FLOOD GUARD: by default routine rows (theme changes, plan
+        # switching, the tour...) are left out. They are still there --
+        # "Everything" shows them -- but they no longer bury the rows an
+        # administrator is looking for. An explicit action filter always
+        # wins, so asking for a routine action by name still finds it.
+        query = query.filter(AuditLog.action.notin_(low_importance_actions()))
+
+    if filters["category"]:
+        known = actions_in_category(filters["category"])
+        if filters["category"] == "other":
+            from app.utils.audit_labels import _CATEGORY_OF
+
+            query = query.filter(AuditLog.action.notin_(list(_CATEGORY_OF)))
+        else:
+            query = query.filter(AuditLog.action.in_(known))
+
+    if filters["user"]:
+        # One account's trail: what it DID, and what was done TO it (an
+        # administrator suspending or archiving it) -- both are its story.
+        uid = int(filters["user"])
+        query = query.filter(or_(
+            AuditLog.user_id == uid,
+            and_(AuditLog.target_type == "User", AuditLog.target_id == str(uid)),
+        ))
 
     # The dates the admin picks are Philippine dates; created_at is UTC.
     # "From Oct 1" therefore starts at Oct 1 00:00 PHT = Sep 30 16:00 UTC.
@@ -458,15 +719,45 @@ def audit_log():
     action_choices = sorted(((a, label_for(a)) for a in present_actions), key=lambda pair: pair[1].lower())
 
     active_filters = {key: value for key, value in filters.items() if value}
+    entries = [_present_entry(entry) for entry in pagination.items]
+    subject = db.session.get(User, int(filters["user"])) if filters["user"] else None
     return render_template(
         "admin/audit_log.html",
         pagination=pagination,
-        entries=[_present_entry(entry) for entry in pagination.items],
+        entries=entries,
+        groups=_group_repeats(entries),
+        subject=subject,
+        category_choices=CATEGORIES,
+        importance_choices=IMPORTANCE_LEVELS,
         filters=filters,
         active_filters=active_filters,
         role_choices=AUDIT_ROLE_CHOICES,
         action_choices=action_choices,
     )
+
+
+# Repeats of the same action by the same person on the same record within
+# this window are folded into one row ("x 12") -- the other half of the
+# flood guard. Folded rows are still listed, one click away.
+REPEAT_WINDOW = timedelta(minutes=10)
+
+
+def _group_repeats(entries):
+    """[{"entry": first, "repeats": [the rest]}] -- consecutive rows (the
+    list is newest first) with the same who, action and target, each
+    within REPEAT_WINDOW of the previous one, become one group."""
+    groups = []
+    for entry in entries:
+        last = groups[-1] if groups else None
+        if last is not None:
+            head = last["repeats"][-1] if last["repeats"] else last["entry"]
+            same = (head.who_name, head.action, head.target_label) == (entry.who_name, entry.action, entry.target_label)
+            close = head.when_utc and entry.when_utc and head.when_utc - entry.when_utc <= REPEAT_WINDOW
+            if same and close and not entry.changes:
+                last["repeats"].append(entry)
+                continue
+        groups.append({"entry": entry, "repeats": []})
+    return groups
 
 
 def _csv_cell(value):
@@ -490,7 +781,7 @@ AUDIT_CSV_HEADER = (
     "Who", "Email", "Role",
     "What", "Action code", "Target type", "Target ID", "Target", "Details",
     "IP address", "Method", "Page", "Device", "User agent",
-    "Why",
+    "Why", "Category", "Importance", "Full changes",
 )
 
 
@@ -515,7 +806,8 @@ def export_audit_log():
             e.who_name, e.who_email, e.who_role,
             e.what, e.action, e.target_type, e.target_id, e.target_label, e.details,
             e.ip, e.method, e.route, e.device, e.user_agent,
-            e.why,
+            e.why, e.category, e.importance,
+            "; ".join(f"{k}: {v}" for k, v in (e.changes or {}).items()) or None,
         )])
 
     # The filters ARE the WHAT of an export -- which slice of the trail
@@ -761,6 +1053,9 @@ def _save_plan_assumptions(form):
 @role_required("Admin")
 def settings():
     if request.method == "POST":
+        # Every setting's value before the save, so the trail records
+        # exactly what changed from what to what (the Details button).
+        before = {row.setting_key: row.setting_value for row in SystemSetting.query.all()}
         for key in (
             "kmeans_n_clusters",
             "msi_weight_competitor_density",
@@ -793,7 +1088,13 @@ def settings():
         if invite and not invite_rejected:
             SystemSetting.set(SETTING_KEY, invite)
 
-        log_action("admin_update_settings")
+        after = {row.setting_key: row.setting_value for row in SystemSetting.query.all()}
+        changed = diff_fields(before, after)
+        changed.pop("places_calls_today", None)
+        changed.pop("places_calls_day", None)
+        log_action("admin_update_settings",
+                   details=("changed " + ", ".join(changed)) if changed else "saved with no changes",
+                   changes=changed)
         if invite_rejected:
             flash("Settings saved, except the community link: it must be a Discord invite "
                   "such as https://discord.gg/yourcode.", "warning")
