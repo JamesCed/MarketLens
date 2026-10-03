@@ -646,15 +646,24 @@ def test_a_grounded_llm_explanation_is_kept(app, monkeypatch):
 
 
 def test_an_llm_explanation_that_invents_a_number_is_replaced(app, monkeypatch):
+    """The one call's transcript invents a figure, and the dedicated
+    transcription call (asked next) cannot do better either: the
+    rule-based model summary stands."""
     monkeypatch.setenv("USE_LLM_RECOMMENDATIONS", "true")
+    asked = []
     with app.app_context():
         monkeypatch.setattr(llm_service, "generate_recommendation_json", lambda c: {
             **llm_service._coerce_llm_payload(_llm_reply(explanation=INVENTED)),
             "generated_by": "llm:gemini", "model": "gemini-3.8-flash",
         })
+        monkeypatch.setattr(llm_service, "transcribe_forecast", lambda c: asked.append(c) or None)
         recommendation = rec_service.build_recommendation(_context())
 
-    assert recommendation["explanation"] == rec_service._rule_based_explanation(_context())
+    assert len(asked) == 1, "the dedicated transcript was asked for before settling for the summary"
+    explanation = dict(recommendation["explanation"])
+    # The failed Gemini attempt is stamped, so the page does not retry at once.
+    assert explanation.pop("transcript_failed_at")
+    assert explanation == rec_service._rule_based_explanation(_context())
     assert recommendation["explanation"]["generated_by"] == "rule-based"
     assert "2,400,000" not in json.dumps(recommendation, ensure_ascii=False)
     # Only the explanation is swapped: the LLM's other wording stays.
@@ -663,11 +672,13 @@ def test_an_llm_explanation_that_invents_a_number_is_replaced(app, monkeypatch):
 
 
 def test_an_llm_reply_without_an_explanation_keeps_the_rule_based_one(app, monkeypatch):
+    """...when the dedicated transcription call fails too."""
     monkeypatch.setenv("USE_LLM_RECOMMENDATIONS", "true")
     with app.app_context():
         monkeypatch.setattr(llm_service, "generate_recommendation_json", lambda c: {
             **llm_service._coerce_llm_payload(_llm_reply(explanation=None)), "generated_by": "llm:openai",
         })
+        monkeypatch.setattr(llm_service, "transcribe_forecast", lambda c: None)
         recommendation = rec_service.build_recommendation(_context())
 
     assert recommendation["explanation"]["generated_by"] == "rule-based"
@@ -890,28 +901,40 @@ def test_an_anthropic_only_deployment_is_not_told_about_a_gemini_key(app, monkey
     assert "could not be built" in failure["detail"]
 
 
-def test_an_sk_key_under_provider_gemini_is_that_providers_own_failure(app, monkeypatch):
-    """When Gemini IS the configured provider, an sk- key in its slot is
-    the operator's misconfiguration of the provider they chose: recorded
-    as no_client, first-failure-wins, so a fallback's later error does
-    not replace it."""
+def test_an_sk_key_under_provider_gemini_sends_the_call_to_openai(app, monkeypatch):
+    """Gemini is now the DEFAULT provider, so LLM_PROVIDER=gemini no longer
+    means the operator chose it: an OpenRouter-only deployment that never
+    set the variable lands here, with its sk- key inherited into the
+    Gemini slot. Google can only refuse that key, so it is never sent:
+    OpenAI is treated as the configured provider, Gemini's skip is the
+    low "skipped" record, and OpenAI's own error is the one reported."""
+    attempted = []
+
+    def gemini(_prompt):
+        attempted.append("gemini")
+        return None
+
     with app.app_context():
         app.config["LLM_PROVIDER"] = "gemini"
         app.config["GEMINI_API_KEY"] = "sk-or-v1-0000000000000000"
 
         def openai_404(_prompt):
+            attempted.append("openai")
             llm_service._record_failure("openai", "api_call", "model=gpt-4o-mini: Error code: 404")
             return None
 
+        monkeypatch.setitem(llm_service._GENERATORS, "gemini", gemini)
         monkeypatch.setitem(llm_service._GENERATORS, "openai", openai_404)
         monkeypatch.setitem(llm_service._GENERATORS, "anthropic", lambda _p: None)
 
+        assert llm_service._provider_order()[0] == "openai"
         assert llm_service.generate_recommendation_json(_context()) is None
         failure = llm_service.last_failure()
 
-    assert failure["provider"] == "gemini"
-    assert failure["stage"] == "no_client"
-    assert "sk-" in failure["detail"]
+    assert attempted == ["openai"], "the sk- key never reached Google"
+    assert failure["provider"] == "openai"
+    assert failure["stage"] == "api_call"
+    assert "404" in failure["detail"]
 
 
 def test_end_to_end_gemini_narrates_over_its_native_endpoint(app, monkeypatch):

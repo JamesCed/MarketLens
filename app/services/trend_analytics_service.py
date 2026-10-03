@@ -430,10 +430,29 @@ def _market_viability_of(forecast):
     return round(max(0.0, min(10.0, (100.0 - float(forecast.saturation_index or 0)) / 10.0)), 1)
 
 
+def live_plan_forecasts():
+    """ForecastResult query limited to plans that are NOT in Trash.
+
+    A plan moved to Trash keeps its forecasts (restore brings them back),
+    and forecast_result has no archive stamp of its own, so the global
+    archive filter (app/models/archive.py) can only drop them where
+    SmeProfile is part of the query. Joining it here is what makes every
+    count and average built on this a count of LIVE plans' forecasts:
+    without it, a trashed plan went on feeding the LGU dashboard's
+    tallies and the trend averages. sme_id is NOT NULL with a foreign
+    key, so when nothing is in Trash the join drops no row and every
+    figure is exactly what it was.
+
+    Filter it with filter(ForecastResult.<column> == ...), not
+    filter_by(): after a join, filter_by() reads its keywords off the
+    JOINED entity (SmeProfile), which has no forecast columns."""
+    return ForecastResult.query.join(SmeProfile, ForecastResult.sme_id == SmeProfile.sme_id)
+
+
 def _real_forecasts(industry_type=None):
-    query = ForecastResult.query
+    query = live_plan_forecasts()
     if industry_type:
-        query = query.filter_by(input_industry_type=industry_type)
+        query = query.filter(ForecastResult.input_industry_type == industry_type)
     return query.order_by(ForecastResult.forecast_date.asc()).all()
 
 
@@ -776,11 +795,12 @@ def _forecast_averages_in_month(anchor, industry_type=None):
     and says so, rather than drawing a line through empty months."""
     start = anchor.replace(day=1)
     end = month_end(anchor)
-    query = ForecastResult.query.filter(
+    # Live plans only -- see live_plan_forecasts().
+    query = live_plan_forecasts().filter(
         ForecastResult.forecast_date >= start, ForecastResult.forecast_date <= end
     )
     if industry_type:
-        query = query.filter_by(input_industry_type=industry_type)
+        query = query.filter(ForecastResult.input_industry_type == industry_type)
     rows = query.all()
     if not rows:
         return 0.0, 0.0, 0
@@ -1273,9 +1293,10 @@ def get_market_quarterly_performance(industry_type=None, quarters=_QUARTERS_BACK
     labels_and_ends = _quarter_end_dates(quarters, as_of=as_of)
     rows = _snapshot_rows(industry_type)
 
-    forecast_query = ForecastResult.query
+    # Live plans only -- see live_plan_forecasts().
+    forecast_query = live_plan_forecasts()
     if industry_type:
-        forecast_query = forecast_query.filter_by(input_industry_type=industry_type)
+        forecast_query = forecast_query.filter(ForecastResult.input_industry_type == industry_type)
     forecasts = forecast_query.all()
 
     businesses = []

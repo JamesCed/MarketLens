@@ -97,50 +97,63 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
 
-      # ---- AI-WRITTEN RECOMMENDATION TEXT (optional) ----
-      # Off by default: leave it and the built-in rule-based generator
-      # writes the "Why This Works" / "Considerations" text. Nothing
-      # breaks either way, and the rule-based version is reproducible,
-      # which is worth something in a defence.
+      # ---- AI FORECAST TRANSCRIPT (GEMINI) AND RECOMMENDATION TEXT ----
+      # GEMINI WRITES THE FORECAST TRANSCRIPT. For every plan the trained
+      # models compute the forecast -- the numbers -- and Gemini is handed
+      # that whole computation (the owner's inputs, the market saturation,
+      # costs and capital runway, the scorecard, the plan model's driver
+      # points, confidence, break-even window) and transcribes it into
+      # plain sentences. It also rewrites the "Why This Works" /
+      # "Considerations" wording.
       #
-      # WHAT THE LLM DOES AND DOES NOT DO. It rewrites the WORDING
-      # only. Every number on a card -- saturation index, viability
-      # score, competitor count, population, the ranking, the ROI
-      # window -- is computed by the Random Forest and the real
-      # PSA/Places data BEFORE the model is called, and the parser
-      # discards any figure the model sends back (except an ROI window
-      # that validates as a sane month range). Turning this on does not
-      # make the analysis AI-generated; it makes the prose AI-written.
+      # WHAT THE LLM DOES AND DOES NOT DO. It writes WORDS only. Every
+      # number -- saturation index, viability score, competitor count,
+      # population, runway, break-even window -- is computed by the
+      # trained models and the real PSA/Places data BEFORE Gemini is
+      # called, and every figure in a transcript is checked against that
+      # computation: a draft quoting anything else is sent back once,
+      # then the offending sentences are dropped, and if too little is
+      # left the page shows the rule-based "model summary", labelled as
+      # such. Turning this on does not make the analysis AI-generated;
+      # it makes the prose AI-written.
       #
-      # ALL OF THESE MUST BE RIGHT or you silently get rule-based text.
-      # Signed in as an admin, /admin/llm-status says which one is
-      # wrong and /admin/llm-status/probe makes a real test call.
-      # Neither ever prints the key.
+      # On, here: with no usable key it falls back to the rule-based text
+      # with no error, so "true" costs nothing until GEMINI_API_KEY is
+      # set. (A value here wins over the Admin > System Settings switch.)
       #
-      # With Google's free Gemini tier (no credit card; key from
+      # What to set in the dashboard (free tier, no credit card; key from
       # https://aistudio.google.com/apikey):
       #
-      #   USE_LLM_RECOMMENDATIONS = true
-      #   LLM_PROVIDER            = openai
-      #        Yes, "openai": Gemini exposes an OpenAI-compatible
-      #        endpoint, so the same client library reaches it with no
-      #        code change.
-      #   OPENAI_API_KEY          = <the AI Studio key>
-      #        If yours starts "AQ." or "ya29." it is an OAuth access
-      #        token, NOT an API key, and every call will 401.
-      #   OPENAI_BASE_URL         = https://generativelanguage.googleapis.com/v1beta/openai/
-      #   OPENAI_MODEL            = gemini-3-flash
-      #        REQUIRED. Without it the code uses its default,
-      #        gpt-4o-mini, which Google's endpoint has never heard of
-      #        -- a 404 on every call.
+      #   GEMINI_API_KEY = <the AI Studio key, current format "AQ.Ab...">
+      #        Sent to Gemini's NATIVE endpoint as an x-goog-api-key
+      #        header. Do NOT route it through OPENAI_BASE_URL: Gemini's
+      #        OpenAI-compatible endpoint refuses AQ. keys.
+      #   GEMINI_MODEL   = an exact model id, e.g. gemini-3.8-flash
+      #        Optional -- blank means gemini-3.8-flash. A wrong id is a
+      #        404 that looks exactly like a bad key.
       #
-      # The free tier is roughly 10 requests/minute, so the write-up is
-      # cached per (industry, barangay set, state of market_data): a
-      # reload costs nothing and only a real data change regenerates.
+      # GEMINI_API_KEY blank falls back to OPENAI_API_KEY; an sk-... key
+      # there (OpenAI/OpenRouter) is never sent to Google -- Gemini is
+      # skipped and OpenAI asked instead, and transcripts are labelled
+      # "Transcribed by AI (openai)" rather than Gemini.
+      #
+      # IF THE TRANSCRIPT STILL SAYS "Model summary". Signed in as an
+      # admin, /admin/llm-status says which setting is wrong (and whether
+      # Gemini transcription is available) and /admin/llm-status/probe
+      # makes a real test call. Neither ever prints the key.
+      #
+      # The free tier is roughly 10 requests/minute. A forecast costs one
+      # call (two or three if its transcript has to be sent back), and a
+      # stored forecast's transcript is upgraded at most once per page
+      # view, one forecast at a time, waiting 15 minutes after a failure.
       - key: USE_LLM_RECOMMENDATIONS
-        value: "false"
+        value: "true"
       - key: LLM_PROVIDER
-        value: "openai"
+        value: "gemini"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_BASE_URL

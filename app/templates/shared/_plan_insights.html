@@ -15,15 +15,30 @@
                                  trained plan model's baseline, how many
                                  points each group of inputs added or
                                  took away, the fixed-cost arithmetic,
-                                 and the plain-language explanation.
-    explanation_paragraph(rec)-- just that explanation, with its badge.
-    explanation_badge(ex)     -- who wrote the explanation: Gemini,
-                                 another AI, or the rule-based writer.
+                                 and the forecast transcript.
+    explanation_paragraph(rec)-- just the FORECAST TRANSCRIPT, with its
+                                 badge. (Stored under the key
+                                 "explanation" -- its name before it was a
+                                 transcript -- so older rows still read.)
+    explanation_badge(ex)     -- who wrote the transcript: Gemini, another
+                                 AI, or -- when no AI transcript could be
+                                 had yet -- the rule-based model summary.
 
   All take the parsed recommendation (recommendation_service
   .parse_recommendation) and render nothing for forecasts written before
   these existed -- those carry None for the keys they read. They only
   DISPLAY the stored payload; no figure is computed in a template.
+
+  forecast_breakdown and explanation_paragraph also take the stored
+  ForecastResult row as `forecast=`. With it, a forecast whose transcript
+  is still the model summary is upgraded in place when Gemini can be
+  asked (the template global forecast_transcript_due, see
+  recommendation_service.transcript_upgrade_due): the transcript block
+  carries data-transcript-url / data-forecast-id and an empty live region
+  for the "Gemini is transcribing the forecast..." status, and static/js/forecast_transcript.js
+  (included here, idempotent) posts for the transcript after the page has
+  rendered. Without `forecast=`, or without JavaScript, the model summary
+  simply stays.
 #}
 
 {% macro subcategory_compare(rec, compact=False) -%}
@@ -103,44 +118,70 @@
 
 {% macro explanation_badge(ex) -%}
   {#
-    Provenance, always shown, because "the AI said so" and "a fixed rule
-    said so" are different claims. The explanation's numbers are the
-    trained model's either way -- an AI explanation that quoted a figure
-    not in the model's output is discarded for the rule-based one before
-    it is ever stored (see recommendation_service).
+    Provenance, always shown, because "the AI transcribed the model" and
+    "a fixed rule summarised it" are different claims. The figures are
+    the trained models' either way -- an AI transcript that quoted a
+    figure not in the model's computation is sent back once, then pruned,
+    and only then given up for the summary (see recommendation_service).
+    generated_by is "llm:<provider>:<model id>" for an AI transcript, so
+    the tooltip names the exact model that wrote it. The model summary's
+    badge is deliberately the quiet one: it is the stand-in, and says so.
   #}
   {% set by = ((ex.generated_by if ex else None) or '') %}
+  {% set parts = by.split(':', 2) %}
   {% if by.startswith('llm:gemini') %}
-    <span class="dss-explain-badge is-ai" title="Written by {{ by[4:] }} from the trained model's output">
-      <i class="bi bi-stars" aria-hidden="true"></i> Explained by Gemini
+    <span class="dss-explain-badge is-ai" data-transcript-badge
+          title="Transcribed by {{ parts[2] if parts|length > 2 and parts[2] else 'Gemini' }} from the trained models' computation">
+      <i class="bi bi-stars" aria-hidden="true"></i> Transcribed by Gemini
     </span>
   {% elif by.startswith('llm:') %}
-    <span class="dss-explain-badge is-ai" title="Written by {{ by[4:] }} from the trained model's output">
-      <i class="bi bi-stars" aria-hidden="true"></i> AI-written
+    <span class="dss-explain-badge is-ai" data-transcript-badge
+          title="Transcribed by {{ parts[2] if parts|length > 2 and parts[2] else parts[1] }} from the trained models' computation (Gemini was not available)">
+      <i class="bi bi-stars" aria-hidden="true"></i> Transcribed by AI ({{ parts[1] }})
     </span>
   {% else %}
-    <span class="dss-explain-badge" title="Written by a fixed template from the trained model's output">
-      <i class="bi bi-list-check" aria-hidden="true"></i> Rule-based explanation
+    <span class="dss-explain-badge fw-normal" data-transcript-badge
+          title="Written by a fixed template from the trained models' output. A Gemini transcript replaces it when the AI is switched on and a Gemini key is configured.">
+      <i class="bi bi-list-check" aria-hidden="true"></i> Model summary &mdash; Gemini transcript not available yet
     </span>
   {% endif %}
 {%- endmacro %}
 
 
-{% macro explanation_paragraph(rec, compact=False) -%}
+{% macro explanation_paragraph(rec, compact=False, forecast=None) -%}
   {% set ex = rec.explanation if rec else None %}
   {% if ex and ex.text %}
-    <div class="dss-explanation {{ 'mb-2' if compact else 'mb-3' }}">
+    {% set upgrade = forecast is not none and forecast.forecast_id
+                     and forecast_transcript_due is defined and forecast_transcript_due(rec) %}
+    <div class="dss-explanation {{ 'mb-2' if compact else 'mb-3' }}"
+         {% if upgrade %}data-forecast-transcript
+         data-transcript-url="{{ url_for('api.forecast_transcript', forecast_id=forecast.forecast_id) }}"
+         data-forecast-id="{{ forecast.forecast_id }}"{% endif %}>
       <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
-        <span class="small fw-semibold"><i class="bi bi-chat-square-text" aria-hidden="true"></i> What the model forecast, and why</span>
+        <span class="small fw-semibold"><i class="bi bi-chat-square-text" aria-hidden="true"></i> Forecast transcript</span>
         {{ explanation_badge(ex) }}
       </div>
-      <p class="small mb-0">{{ ex.text }}</p>
+      <div data-transcript-text>
+        {% for paragraph in ex.text.split('\n\n') %}
+          <p class="small {{ 'mb-0' if loop.last else 'mb-2' }}">{{ paragraph }}</p>
+        {% endfor %}
+      </div>
+      {% if upgrade %}
+        {# An EMPTY live region, present (not [hidden]) from the first
+           paint: screen readers only announce changes inside a region
+           they already track, and a page without JavaScript shows no
+           "transcribing" note that nothing will finish. The script
+           fills it with data-working-text. #}
+        <div class="small text-body-secondary" data-transcript-status role="status" aria-live="polite"
+             data-working-text="Gemini is transcribing the forecast&hellip;"></div>
+        <script src="{{ url_for('static', filename='js/forecast_transcript.js') }}" defer></script>
+      {% endif %}
     </div>
   {% endif %}
 {%- endmacro %}
 
 
-{% macro forecast_breakdown(rec, compact=False) -%}
+{% macro forecast_breakdown(rec, compact=False, forecast=None) -%}
   {#
     The trained plan model's output, explained. The drivers are an EXACT
     decomposition of the forest's prediction (each tree's decision path
@@ -161,7 +202,7 @@
     <details class="dss-forecast-how {{ 'mb-2' if compact else 'mb-3' }}">
       <summary><i class="bi bi-calculator" aria-hidden="true"></i> How this forecast was computed</summary>
       <div class="pt-2">
-        {{ explanation_paragraph(rec, compact=True) }}
+        {{ explanation_paragraph(rec, compact=True, forecast=forecast) }}
 
         {% if drivers %}
           <p class="small text-muted mb-1">
@@ -227,7 +268,7 @@
     </details>
   {% else %}
     {# A forecast from before the plan model: nothing to break down,
-       but its explanation (if any) is still worth showing. #}
-    {{ explanation_paragraph(rec, compact=compact) }}
+       but its transcript (if any) is still worth showing. #}
+    {{ explanation_paragraph(rec, compact=compact, forecast=forecast) }}
   {% endif %}
 {%- endmacro %}

@@ -88,22 +88,27 @@
   </div>
 
   <div class="dss-card mb-4">
-    <h6 class="mb-3">AI-Generated Recommendation Text</h6>
+    <h6 class="mb-3">AI Forecast Transcript &amp; Recommendation Text</h6>
     <div class="form-check form-switch">
       <input class="form-check-input" type="checkbox" name="use_llm_recommendations" id="llmToggle"
              {{ 'checked' if settings.get('use_llm_recommendations') and settings['use_llm_recommendations'].setting_value == 'true' }}>
-      <label class="form-check-label" for="llmToggle">Use an LLM to write recommendation text and explain the forecast</label>
+      <label class="form-check-label" for="llmToggle">Let Gemini write the forecast transcript (and the recommendation text)</label>
     </div>
     <div class="form-text">
-      When off, the built-in rule-based text generator is used — no API key needed. When on, the forecast
-      narration (the recommendation and the plain-language explanation of the trained model's output) tries
-      <strong>Gemini</strong> first (<code>GEMINI_API_KEY</code>, which falls back to <code>OPENAI_API_KEY</code>;
-      an <code>sk-</code> key there is skipped, since Google would refuse it), then the provider set by
-      <code>LLM_PROVIDER</code>, then the remaining one (<code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code>).
-      Other AI text (alerts, location cards) tries the <code>LLM_PROVIDER</code> provider first. Keys are set in the
-      .env file, not here (see README). With no usable key it falls back to the rule-based text with no error.
-      Either way, every figure comes from the trained models &mdash; an AI explanation that quotes a number the
-      model did not produce is discarded for the rule-based one.
+      When on, <strong>Gemini writes the forecast transcript</strong>: it is handed the trained models' whole
+      computation for a plan &mdash; the owner's inputs, the market saturation, the costs and capital runway, the
+      scorecard, the plan model's baseline and driver points, the confidence and the break-even window &mdash; and
+      transcribes it into plain sentences. Gemini is always asked first for this (<code>GEMINI_API_KEY</code>, which
+      falls back to <code>OPENAI_API_KEY</code>; an <code>sk-</code> key there is skipped, since Google would refuse
+      it), then the provider set by <code>LLM_PROVIDER</code> (default <code>gemini</code>), then the remaining one
+      (<code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code>). Other AI text (alerts, location cards) tries the
+      <code>LLM_PROVIDER</code> provider first. Keys are set in the .env file or the host's environment, not here (see
+      README); <code>USE_LLM_RECOMMENDATIONS</code>, when set there, overrides this switch.
+      Every figure comes from the trained models: a transcript that quotes a number the models did not produce is
+      sent back to Gemini once, then the sentences carrying such numbers are dropped, and if too little is left the
+      page shows the rule-based <em>model summary</em> instead, labelled as such. Forecasts that only have the model
+      summary are upgraded to Gemini's transcript in the background the next time their page is opened.
+      When off, or with no usable key, the built-in rule-based text is used &mdash; no error, no API key needed.
     </div>
   </div>
 

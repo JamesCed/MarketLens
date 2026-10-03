@@ -18,22 +18,23 @@ bug.
 
 A NOTE ON "UP OR EQUAL" FOR THE FOREST. A random forest is a step
 function fitted to noisy labels (N(0, 3) noise on the scorecard), and
-it recovers the noise-free scorecard to within ~1.9 points on average
+it recovers the noise-free scorecard to within ~1.8 points on average
 (training_report.json, plan_model.mae_vs_noise_free_scorecard_points).
 So a single change of input can move it the wrong way by about that
 much -- occasionally more. Measured, not assumed (100,000 random
-realistic plans -- five seeds of 20,000 -- capital doubled on each):
-the forest's PVI went DOWN for about one plan in six, almost always by
-under half a point; by more than 1 point for 0.43%, by more than 2
-points for 0.03% (3 plans in 10,000), worst seen 3.6 points (0.36 on
-the 0-10 score the owner sees). Most of the over-a-point drops are
-plans whose capital already covers the ramp-up, where the formula is
-flat and the forest has only label noise to fit (where the formula
-rises, the forest fell by over a point for under 0.1%); the very
-largest were thin-capital plans the forest had over-scored to begin
-with, by 5-8 points, so the drop was its own error unwinding. Averaged
-over plans, the forest's gain from doubling capital matches the
-formula's to within a tenth of a point. Reference/FORECAST_MODEL.md
+realistic plans -- five seeds of 20,000 -- capital doubled on each,
+against the model retrained with the wage and margin sampled): the
+forest's PVI went DOWN for about one plan in eight, almost always by
+under half a point; by more than 1 point for 0.35%, by more than 2
+points for 0.11% (about 1 plan in 1,000), worst seen 4.2 points (0.42
+on the 0-10 score the owner sees). The over-a-point drops are mostly
+thin-capital plans (capital adequacy under 0.2), where the formula
+rises steeply but the forest has to read capital, rent, staff and --
+now that it varies in training -- the wage together to place the plan;
+the very largest were plans the forest had over-scored to begin with,
+by 5-8 points, so the drop was its own error unwinding. Averaged over
+plans, the forest's gain from doubling capital matches the formula's
+to within a tenth of a point (2.26 vs 2.34). Reference/FORECAST_MODEL.md
 states the same figures.
 
 So the fixed-plan series below are checked within FOREST_WOBBLE (1
@@ -82,9 +83,9 @@ PLAN_PKL = os.path.join(MODEL_STORE, pm.PLAN_MODEL_FILENAME)
 # See the module docstring.
 FOREST_WOBBLE = 1.0
 # Largest wrong-way move doubling capital may cause in a RANDOM plan
-# (worst seen over 100,000: 3.6 points), and the share of plans allowed
-# to move the wrong way by more than a point (seen: 0.43%).
-CAPITAL_WRONG_WAY_POINTS = 4.0
+# (worst seen over 100,000: 4.2 points), and the share of plans allowed
+# to move the wrong way by more than a point (seen: 0.35%).
+CAPITAL_WRONG_WAY_POINTS = 4.5
 CAPITAL_WRONG_WAY_SHARE_OVER_1_POINT = 0.02
 
 
@@ -951,3 +952,203 @@ def test_two_plans_in_one_market_now_differ_by_their_parameters(app):
 
     assert float(thin_forecast.saturation_index) == pytest.approx(float(solid_forecast.saturation_index))
     assert float(solid_forecast.viability_score) > float(thin_forecast.viability_score)
+
+
+# ---------------------------------------------------------------------
+# 8. The Admin's wage and margin are learnt; a stale model is retrained
+# ---------------------------------------------------------------------
+# The wage and gross margin used to be held at P590 / 40% for every
+# training plan, so the forest never saw them vary: an Admin who halved
+# the margin moved the scorecard by -1.2 points on an average priced
+# plan and the forest by -0.1. Training now draws both per plan
+# (train_model._PLAN_DAILY_WAGE_RANGE). And because plan_model.pkl is
+# gitignored and a host's build cache can keep an old one, the bundle
+# records a fingerprint of its training recipe that seed.py checks.
+
+def test_training_draws_the_wage_and_margin_per_plan():
+    """The forest can only learn an input that varies in its training
+    data: every synthetic plan carries its own wage (P450-P800) and
+    margin (15%-70%), and its features are built from them."""
+    from app.ml import train_model as tm
+
+    assert tm._PLAN_DAILY_WAGE_RANGE == (450.0, 800.0)
+    assert tm._PLAN_GROSS_MARGIN_RANGE == (0.15, 0.70)
+
+    inputs, X, _scorecard, _labels = tm._make_plan_dataset(
+        tm._StandInMarketModel(), np.random.default_rng(3), n_samples=300)
+    wages = np.array([p["daily_wage"] for p in inputs])
+    margins = np.array([p["gross_margin"] for p in inputs])
+    assert ((wages >= 450.0) & (wages <= 800.0)).all() and wages.std() > 50
+    assert ((margins >= 0.15) & (margins <= 0.70)).all() and margins.std() > 0.1
+
+    fixed_cost = PLAN_FEATURE_NAMES.index("monthly_fixed_cost")
+    required = PLAN_FEATURE_NAMES.index("required_daily_sales")
+    for row, plan in zip(X, inputs):
+        assert row[fixed_cost] == pytest.approx(
+            max(1000.0, plan["monthly_rent"] + plan["employee_count"] * plan["daily_wage"] * OPERATING_DAYS_PER_MONTH))
+        if plan["priced_item_count"]:
+            assert row[required] == pytest.approx(
+                row[fixed_cost] / (plan["average_price"] * plan["gross_margin"] * OPERATING_DAYS_PER_MONTH))
+
+
+def _assumption_plans(rng, n, priced):
+    """`n` random realistic plans: all with a price list (priced=True,
+    for the margin) or all with staff (priced=False, for the wage)."""
+    plans = []
+    while len(plans) < n:
+        plan = _random_plan_inputs(rng)
+        if priced:
+            plan["priced_item_count"] = max(1, plan["priced_item_count"])
+            plan["average_price"] = float(np.exp(rng.uniform(np.log(20), np.log(2000))))
+        elif plan["employee_count"] == 0:
+            continue
+        plans.append(plan)
+    return plans
+
+
+@pytest.mark.skipif(not os.path.exists(PLAN_PKL), reason="no trained plan_model.pkl")
+def test_the_forest_follows_the_admin_wage_and_margin_the_scorecard_way(app):
+    """Over 2,000 random plans each: a wage of P800 instead of P590
+    (plans with staff) and a margin of 20% instead of 40% (plans with a
+    price list) lower the forest's PVI on average, as they lower the
+    scorecard.
+
+    HOW MUCH, honestly (Reference/FORECAST_MODEL.md has the figures).
+    The wage gets through at about 60% of the scorecard's effect, as it
+    did before the retrain: it moves capital runway, which the forest
+    leans on most. The margin gets through at about 15% -- up from about
+    9% when the margin was not sampled, and still small, because the
+    margin reaches only required daily sales, and the forest learnt
+    price coverage mostly from AVERAGE PRICE: price varies over three
+    decades in training against the margin's factor of five, so a split
+    on price was nearly as good as one on required daily sales. (Halving
+    the PRICE, which changes required daily sales exactly as halving the
+    margin does, gets through at about 70%.) The thresholds pin the
+    direction always, and about two-thirds of each measured share, so a
+    retrain that lost either effect would fail here."""
+    model = pfs._load_plan_model()
+
+    def mean_effects(plans, **change):
+        changed = [dict(p, **change) for p in plans]
+        forest = model.predict(np.array([pm.plan_feature_vector(p) for p in changed])) - \
+            model.predict(np.array([pm.plan_feature_vector(p) for p in plans]))
+        formula = np.array([pm.scorecard_index(c) - pm.scorecard_index(p) for p, c in zip(plans, changed)])
+        return float(forest.mean()), float(formula.mean())
+
+    forest, formula = mean_effects(_assumption_plans(np.random.default_rng(590), 2000, priced=False),
+                                   daily_wage=800.0)
+    assert formula < -0.5
+    assert forest <= 0.4 * formula, (forest, formula)
+
+    forest, formula = mean_effects(_assumption_plans(np.random.default_rng(40), 2000, priced=True),
+                                   gross_margin=0.20)
+    assert formula < -0.5
+    assert forest <= 0.1 * formula, (forest, formula)
+
+
+@pytest.mark.skipif(not os.path.exists(PLAN_PKL), reason="no trained plan_model.pkl")
+def test_the_model_on_disk_was_trained_by_the_current_recipe():
+    """The fingerprint seed.py checks. If this fails, plan_model.pkl is
+    stale: run `python -m app.ml.train_model --plan-only` (seed.py would
+    do it on its own)."""
+    from app.ml import train_model as tm
+
+    assert tm.plan_model_staleness() is None
+    bundle = joblib.load(PLAN_PKL)
+    sampling = bundle["training_config"]["sampling"]
+    assert sampling["daily_wage_php_uniform"] == [450.0, 800.0]
+    assert sampling["gross_margin_uniform"] == [0.15, 0.70]
+    with open(os.path.join(MODEL_STORE, "training_report.json")) as f:
+        report = json.load(f)["plan_model"]
+    assert report["training_config_hash"] == bundle["training_config_hash"]
+    assert report["sampling"]["daily_wage_php_uniform"] == [450.0, 800.0]
+
+
+def _tiny_market_forest(seed=0):
+    from sklearn.ensemble import RandomForestRegressor
+
+    rng = np.random.default_rng(seed)
+    return RandomForestRegressor(n_estimators=2, random_state=seed).fit(
+        rng.uniform(0, 50, (40, len(FEATURE_NAMES))), rng.uniform(0, 100, 40))
+
+
+def test_the_fingerprint_changes_with_the_recipe_and_only_with_it(monkeypatch):
+    """Same code, same market model: the same fingerprint, every time.
+    A changed named setting changes it; so does a changed FORMULA that no
+    setting names (the recipe probe runs the real sampler and scorecard);
+    so does a different market model."""
+    from app.ml import train_model as tm
+
+    market = _tiny_market_forest()
+
+    def fingerprint(market_model=market):
+        return tm.plan_training_config_hash(tm.plan_training_config(market_model))
+
+    base = fingerprint()
+    assert fingerprint() == base and len(base) == 64
+
+    monkeypatch.setattr(tm, "_PLAN_GROSS_MARGIN_RANGE", (0.40, 0.40))
+    assert fingerprint() != base
+    monkeypatch.undo()
+    assert fingerprint() == base
+
+    monkeypatch.setattr(pm, "STAFF_FULL_CAPACITY", 4)       # a scorecard formula change
+    assert fingerprint() != base
+    monkeypatch.undo()
+
+    assert fingerprint(_tiny_market_forest(seed=1)) != base
+
+
+def test_plan_model_staleness_reads_the_fingerprint(tmp_path):
+    from app.ml import train_model as tm
+
+    market = _tiny_market_forest()
+    joblib.dump(market, tmp_path / tm.RF_MODEL_FILE)
+    plan_file = tmp_path / pm.PLAN_MODEL_FILENAME
+    current = tm.plan_training_config_hash(tm.plan_training_config(market))
+
+    def staleness_of(**extra):
+        joblib.dump(dict({"model": None, "feature_names": list(PLAN_FEATURE_NAMES)}, **extra), plan_file)
+        return tm.plan_model_staleness(str(tmp_path))
+
+    assert tm.plan_model_staleness(str(tmp_path)) == "no plan viability model on disk"
+    assert staleness_of(training_config_hash=current) is None
+    # Every model trained before the fingerprint existed -- what an old
+    # build cache would hold.
+    assert "predates" in staleness_of()
+    assert "different recipe" in staleness_of(training_config_hash="0" * 64)
+    plan_file.write_bytes(b"not a pickle")
+    assert "could not be read" in tm.plan_model_staleness(str(tmp_path))
+
+    # The right recipe on a different market model is still stale.
+    staleness_of(training_config_hash=current)
+    joblib.dump(_tiny_market_forest(seed=1), tmp_path / tm.RF_MODEL_FILE)
+    assert "different recipe" in tm.plan_model_staleness(str(tmp_path))
+
+
+def test_seed_retrains_a_stale_plan_model_and_leaves_stage_one_alone(tmp_path):
+    """seed.py's decision, on a scratch model directory: a stale or
+    pre-fingerprint plan model retrains stage 2 ONLY (plan_only=True);
+    a current one retrains nothing."""
+    import seed
+    from app.ml import train_model as tm
+
+    rf_file, plan_file = tmp_path / tm.RF_MODEL_FILE, tmp_path / pm.PLAN_MODEL_FILENAME
+
+    def decide(force=False):
+        return seed.training_decision(force=force, model_file=str(rf_file), plan_model_file=str(plan_file))
+
+    assert decide() == ("no model on disk", False)
+    market = _tiny_market_forest()
+    joblib.dump(market, rf_file)
+    assert decide() == ("no plan viability model on disk", True)
+
+    joblib.dump({"model": None, "feature_names": list(PLAN_FEATURE_NAMES)}, plan_file)
+    reason, plan_only = decide()
+    assert "predates" in reason and plan_only is True
+
+    current = tm.plan_training_config_hash(tm.plan_training_config(market))
+    joblib.dump({"model": None, "feature_names": list(PLAN_FEATURE_NAMES), "training_config_hash": current},
+                plan_file)
+    assert decide() == (None, False)
+    assert decide(force=True) == ("forced", False)

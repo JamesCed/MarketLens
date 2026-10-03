@@ -28,8 +28,9 @@ WHAT IT DOES
   4. Creates login accounts -- SEE THE NEXT SECTION, this is the step
      that behaves differently on a public host.
   5. Trains the AI models -- the market Random Forest and the Plan
-     Viability Model built on it -- unless both are already on disk.
-     See "Retraining" below.
+     Viability Model built on it -- unless both are already on disk and
+     the plan model was trained by the current code. See "Retraining"
+     below.
 
 =====================================================================
 DEMO ACCOUNTS AND WHY THEY TURN THEMSELVES OFF IN PRODUCTION
@@ -78,9 +79,23 @@ Viability Model existed), only that model is trained, on top of the
 market model already on disk (`python -m app.ml.train_model
 --plan-only`) -- the market model is left exactly as it was.
 
+The same happens when plan_model.pkl is STALE -- trained by an older
+version of the training code. The file is gitignored, so it is never
+deployed; but a host can keep one from an earlier build (Render's build
+cache can), and "the file exists" said nothing about which recipe made
+it. So the plan model's bundle records a fingerprint of everything that
+decides what it learns -- sampling ranges, seeds, hyperparameters, the
+scorecard and feature formulas (by their RESULTS on a fixed probe, so
+editing a comment changes nothing), and the market model it was trained
+on -- and every run of this script compares it with what the current
+code would produce (train_model.plan_model_staleness). A missing,
+unreadable or different fingerprint retrains stage 2; the check itself
+takes well under a second.
+
 Force a full retrain with `python seed.py --retrain` (or
-FORCE_RETRAIN=true) after changing app/ml/seed_data.py, app/ml/plan_model.py
-or anything in app/ml/train_model.py.
+FORCE_RETRAIN=true) after changing app/ml/seed_data.py or the market
+model's code in app/ml/train_model.py -- stage 1 has no fingerprint, so
+those changes are not detected on their own.
 """
 
 import argparse
@@ -123,6 +138,34 @@ def _create_account_if_missing(name, email, password, role, show_password=True):
     shown = password if show_password else "(the password you set in the environment)"
     print(f"  created account: {email} / {shown} ({role})")
     return True
+
+
+def training_decision(force=False, model_file=MODEL_FILE, plan_model_file=PLAN_MODEL_FILE):
+    """(reason, plan_only): why the models need training -- None when
+    they do not -- and whether stage 2 alone is enough.
+
+    Both when forced or when the market model is missing. Stage 2 alone
+    when only it is missing OR STALE: retraining stage 1 is not needed
+    for it, and leaving stage 1 alone keeps every market score on the
+    site exactly where it was.
+
+    "Stale" is decided by train_model.plan_model_staleness(): the plan
+    model records a fingerprint of the recipe it was trained on, and a
+    file that lacks one, cannot be read, or differs from what the
+    current code would train is retrained. Checking only that the file
+    EXISTS let a host whose build cache kept an old plan_model.pkl go on
+    serving it after the training code changed."""
+    if force:
+        return "forced", False
+    if not os.path.exists(model_file):
+        return "no model on disk", False
+    if not os.path.exists(plan_model_file):
+        return "no plan viability model on disk", True
+
+    from app.ml.train_model import plan_model_staleness
+
+    stale = plan_model_staleness(os.path.dirname(plan_model_file))
+    return (stale, True) if stale else (None, False)
 
 
 def _parse_args(argv):
@@ -200,20 +243,9 @@ def run(argv=None):
 
         db.session.commit()
 
-        # Train when EITHER model is missing. Stage 2 alone when only it
-        # is missing: retraining stage 1 is not needed for it, and
-        # leaving stage 1 alone keeps every market score on the site
-        # exactly where it was.
-        plan_only = False
-        if args.retrain or _bool(os.environ.get("FORCE_RETRAIN")):
-            reason = "forced"
-        elif not os.path.exists(MODEL_FILE):
-            reason = "no model on disk"
-        elif not os.path.exists(PLAN_MODEL_FILE):
-            reason = "no plan viability model on disk"
-            plan_only = True
-        else:
-            reason = None
+        reason, plan_only = training_decision(
+            force=args.retrain or _bool(os.environ.get("FORCE_RETRAIN"))
+        )
 
         if reason and plan_only:
             print(f"Training the Plan Viability Model (stage 2) on the existing market model -- {reason}...")
@@ -227,8 +259,8 @@ def run(argv=None):
 
             train_and_save()
         else:
-            print("AI models already on disk, skipping training.")
-            print("  Use --retrain after changing app/ml/seed_data.py, plan_model.py or train_model.py.")
+            print("AI models already on disk (plan model fingerprint current), skipping training.")
+            print("  Use --retrain after changing app/ml/seed_data.py or the market model in train_model.py.")
 
         print("\nDone. Start the app with:  python app.py")
         print(

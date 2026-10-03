@@ -96,89 +96,130 @@ FEATURED_BUSINESS_TYPES = [
 # is still what's stored in the database and shown wherever there's room;
 # `short` is only for tight UI (industry cards, chart legends, pills).
 # See short_industry_label() below.
+#
+# `bi` + `hue`: the SME Home industry slider's icon -- a Bootstrap Icon
+# in a tinted rounded-square tile, one distinct glyph and colour per
+# section. They replaced the emoji there because an emoji is drawn by
+# the visitor's OPERATING SYSTEM font: the same "🗂️" is a different
+# picture on Windows, Android and an iPhone, a few render as a blank box
+# on older systems, and none of them can be recoloured -- so every card
+# sat in the same blue circle and twenty of them were hard to tell
+# apart. bootstrap-icons is already loaded on every page (base.html), is
+# drawn identically everywhere, and takes the tile's colour, which is
+# what lets one icon work in both the light and the dark theme.
+#   * Every `bi` name was checked against bootstrap-icons 1.11.3 -- the
+#     version base.html loads -- by looking for `.bi-<name>::before` in
+#     that release's CSS. Re-check them if that version is ever changed
+#     (tests/test_industry_slider.py pins the version for that reason).
+#   * `hue` names a colour pair defined in static/css/style.css as
+#     --dss-hue-<hue>-bg / --dss-hue-<hue>-fg, with dark-theme values.
+#     The icons are decorative (aria-hidden) -- the section name is
+#     always written next to them -- so neither glyph nor colour carries
+#     meaning on its own.
+# `icon` (the emoji) stays: the LGU dashboard's cards still use it.
 INDUSTRY_DISPLAY = {
     "Agriculture, Forestry, and Fishing": {
         "icon": "🌾", "short": "Agriculture & Fishing",
         "subtitle": "farms, agri-processing, fisheries",
+        "bi": "bi-tree-fill", "hue": "green",
     },
     "Mining and Quarrying": {
         "icon": "⛏️", "short": "Mining & Quarrying",
         "subtitle": "quarries, aggregates, sand & gravel",
+        "bi": "bi-minecart-loaded", "hue": "stone",
     },
     "Manufacturing": {
         "icon": "🏭", "short": "Manufacturing",
         "subtitle": "food processing, furniture, garments, printing",
+        "bi": "bi-gear-wide-connected", "hue": "slate",
     },
     "Electricity, Gas, Steam, and Air Conditioning Supply": {
         "icon": "⚡", "short": "Electricity & Gas",
         "subtitle": "power distribution, LPG/gas supply",
+        "bi": "bi-lightning-charge-fill", "hue": "yellow",
     },
     "Water Supply; Sewerage, Waste Management, and Remediation Activities": {
         "icon": "💧", "short": "Water & Waste",
         "subtitle": "water supply, waste collection, septic services",
+        "bi": "bi-droplet-fill", "hue": "sky",
     },
     "Construction": {
         "icon": "🏗️", "short": "Construction",
         "subtitle": "contractors, builders, specialty trades",
+        "bi": "bi-cone-striped", "hue": "orange",
     },
     "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles": {
         "icon": "🛒", "short": "Wholesale & Retail Trade",
         "subtitle": "groceries, hardware, agri-supply, auto repair",
+        "bi": "bi-shop", "hue": "blue",
     },
     "Transportation and Storage": {
         "icon": "🚚", "short": "Transport & Storage",
         "subtitle": "trucking, courier, warehousing, terminals",
+        "bi": "bi-truck", "hue": "indigo",
     },
     "Accommodation and Food Service Activities": {
         "icon": "🏨", "short": "Accommodation & Food Service",
         "subtitle": "hotels, inns, restaurants, catering",
+        "bi": "bi-building", "hue": "violet",
     },
     "Food and Beverage": {
         "icon": "🍽️", "short": "Food & Beverage",
         "subtitle": "bakeshops, cafes, beverage production",
+        "bi": "bi-cup-hot-fill", "hue": "rose",
     },
     "Information and Communication": {
         "icon": "💻", "short": "Information & Communication",
         "subtitle": "IT services, telecoms, publishing, media",
+        "bi": "bi-pc-display", "hue": "cyan",
     },
     "Financial and Insurance Activities": {
         "icon": "💰", "short": "Financial & Insurance",
         "subtitle": "lending, insurance, pawnshops, remittance",
+        "bi": "bi-bank", "hue": "emerald",
     },
     "Real Estate Activities": {
         "icon": "🏠", "short": "Real Estate",
         "subtitle": "brokerage, leasing, property management",
+        "bi": "bi-house-door-fill", "hue": "teal",
     },
     "Professional, Scientific, and Technical Activities": {
         "icon": "💼", "short": "Professional & Technical",
         "subtitle": "legal, accounting, engineering, consulting",
+        "bi": "bi-briefcase-fill", "hue": "brown",
     },
     "Administrative and Support Service Activities": {
         "icon": "🗂️", "short": "Administrative & Support",
         "subtitle": "manpower, security, travel agencies, cleaning",
+        "bi": "bi-clipboard-check-fill", "hue": "lime",
     },
     "Education": {
         "icon": "🎓", "short": "Education",
         "subtitle": "schools, review & tutorial centers, training",
+        "bi": "bi-mortarboard-fill", "hue": "purple",
     },
     "Human Health and Social Work Activities": {
         "icon": "🏥", "short": "Health & Social Work",
         "subtitle": "clinics, pharmacies, diagnostic labs, care homes",
+        "bi": "bi-heart-pulse-fill", "hue": "red",
     },
     "Arts, Entertainment, and Recreation": {
         "icon": "🎭", "short": "Arts & Recreation",
         "subtitle": "gyms, event venues, sports & amusement",
+        "bi": "bi-palette-fill", "hue": "fuchsia",
     },
     "Other Service Activities": {
         "icon": "⚙️", "short": "Other Services",
         "subtitle": "salons, laundry, repair shops, personal services",
+        "bi": "bi-scissors", "hue": "pink",
     },
     "Activities of Households as Employers": {
         "icon": "🏡", "short": "Household Employers",
         "subtitle": "household staffing and domestic services",
+        "bi": "bi-house-heart-fill", "hue": "amber",
     },
 }
-DEFAULT_INDUSTRY_DISPLAY = {"icon": "📊", "short": "", "subtitle": ""}
+DEFAULT_INDUSTRY_DISPLAY = {"icon": "📊", "short": "", "subtitle": "", "bi": "bi-bar-chart-fill", "hue": "neutral"}
 
 
 # The three sections broken out by name on the Saturation Map's detail
@@ -275,8 +316,11 @@ OPERATING_DAYS_PER_MONTH = 26
 # An Admin can change it (System Settings > Plan forecast assumptions,
 # SystemSetting `plan_daily_wage_php`) when the next wage order lands,
 # without retraining -- the model reads wage only through monthly fixed
-# cost and capital runway, so a new wage moves the forecast through
-# those features exactly as a rent change would.
+# cost, capital runway and required daily sales, and training draws each
+# synthetic plan's wage from P450-P800 rather than holding it at this
+# default (train_model._PLAN_DAILY_WAGE_RANGE says why), so the forest
+# has seen wages move those features. This default is what a forecast
+# uses until an Admin sets another.
 DEFAULT_DAILY_WAGE_PHP = 590.0
 
 # The range an Admin's daily wage is accepted in, both when it is saved
@@ -294,7 +338,8 @@ DAILY_WAGE_RANGE = (1.0, 100_000.0)
 # -- not a measurement of any plan: the app does not collect a cost of
 # goods. It is used only to turn the owner's own prices into "sales a
 # day needed to cover fixed costs". Admin-overridable (SystemSetting
-# `plan_gross_margin`, accepted range 0.05-0.95).
+# `plan_gross_margin`, accepted range 0.05-0.95). Like the wage, it is
+# sampled in training (15%-70% per synthetic plan), not held at 40%.
 DEFAULT_GROSS_MARGIN = 0.40
 GROSS_MARGIN_RANGE = (0.05, 0.95)
 

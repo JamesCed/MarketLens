@@ -588,6 +588,104 @@ def barangay_detail():
     )
 
 
+@api_bp.route("/forecasts/<int:forecast_id>/transcript", methods=["POST"])
+@login_required
+def forecast_transcript(forecast_id):
+    """Upgrade ONE stored forecast's transcript from the rule-based model
+    summary to Gemini's transcript of the forecast -- called by
+    static/js/forecast_transcript.js after the Home or Recommendations
+    page has rendered, so the page never waits on an LLM.
+
+    NOTHING IS RE-SCORED. The context is rebuilt from the forecast's
+    stored payload and its plan (recommendation_service.
+    transcript_context), Gemini is asked for the transcript
+    (llm_service.transcribe_forecast -- the whole computation, Gemini
+    first, one corrective retry, sentence pruning), and only the stored
+    "explanation" changes: every other key of forecast_result.
+    recommendation is written back as it was read.
+
+    Only the owner of the forecast's plan may ask: anyone else -- another
+    SME, an LGU or Admin account, a plan in Trash -- gets the same 404 as
+    a forecast that does not exist, so the endpoint does not reveal which
+    ids exist. CSRF: a POST, so Flask-WTF checks the X-CSRFToken header
+    the script sends, like every other fetch POST in this app.
+
+    Responses (all 200 unless the forecast is not the caller's):
+      {"ok": true, "text", "generated_by", "badge_html"}  -- the new
+          transcript (or the AI one already stored); the script inserts
+          the text with textContent and swaps in the badge;
+      {"ok": false, "reason"}  -- "no_payload" (a forecast from before
+          the plan model), "unavailable" (LLM off or no usable Gemini
+          key), "retry_later" (an upgrade failed under
+          TRANSCRIPT_RETRY_AFTER ago), or "failed" (this attempt failed;
+          explanation["transcript_failed_at"] is stamped so the page
+          leaves it alone for 15 minutes)."""
+    from datetime import datetime, timezone
+
+    from flask import abort, get_template_attribute
+
+    from app.models import ForecastResult
+    from app.services import llm_service
+    from app.services import recommendation_service as rec_service
+
+    forecast = db.session.get(ForecastResult, forecast_id)
+    if forecast is None or not current_user.is_sme():
+        abort(404)
+    # The ordinary query applies the Trash filter, so a trashed plan's
+    # forecast is treated as not there -- the same rule every plan route
+    # follows (restore first).
+    plan = SmeProfile.query.filter_by(sme_id=forecast.sme_id, user_id=current_user.user_id).first()
+    if plan is None:
+        abort(404)
+
+    badge = get_template_attribute("shared/_plan_insights.html", "explanation_badge")
+    stored = rec_service.stored_recommendation(forecast.recommendation)
+    rec = rec_service.parse_recommendation(forecast.recommendation)
+    explanation = rec.get("explanation")
+    if stored is None or rec.get("forecast") is None or explanation is None:
+        return jsonify({"ok": False, "reason": "no_payload"})
+    if explanation["generated_by"].startswith("llm:"):
+        # Already transcribed -- by an earlier request, another tab, or
+        # the forecast run itself. Nothing to spend a call on.
+        return jsonify({"ok": True, "text": explanation["text"], "generated_by": explanation["generated_by"],
+                        "badge_html": str(badge(explanation))})
+    if rec_service.transcript_failed_recently(explanation):
+        return jsonify({"ok": False, "reason": "retry_later"})
+    if not llm_service.gemini_transcription_available():
+        return jsonify({"ok": False, "reason": "unavailable"})
+
+    context = rec_service.transcript_context(forecast, plan)
+    transcript = llm_service.transcribe_forecast(context) if context else None
+    if not transcript:
+        forecast.recommendation = rec_service.mark_transcript_failed(
+            forecast.recommendation, now=datetime.now(timezone.utc)
+        )
+        db.session.commit()
+        return jsonify({"ok": False, "reason": "failed"})
+
+    forecast.recommendation = rec_service.store_transcript(forecast.recommendation, transcript)
+    db.session.commit()
+    return jsonify({"ok": True, "text": transcript["text"], "generated_by": transcript["generated_by"],
+                    "badge_html": str(badge(transcript))})
+
+
+# The Home and Recommendations templates ask this (through
+# shared/_plan_insights.html) whether to render the transcript upgrade
+# hook for a forecast. Registered from here because this blueprint owns
+# the endpoint the hook calls; see
+# recommendation_service.transcript_upgrade_due.
+def _forecast_transcript_due(rec):
+    from app.services.recommendation_service import transcript_upgrade_due
+
+    try:
+        return transcript_upgrade_due(rec)
+    except Exception:  # noqa: BLE001 -- a page render must never fail on this
+        return False
+
+
+api_bp.add_app_template_global(_forecast_transcript_due, "forecast_transcript_due")
+
+
 @api_bp.route("/notifications")
 @login_required
 def notifications():

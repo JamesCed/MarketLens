@@ -175,18 +175,28 @@ class Config:
     # with a single key.
     GOOGLE_GEOCODING_API_KEY = os.environ.get("GOOGLE_GEOCODING_API_KEY", "")
 
-    # ---------------- Optional LLM-generated recommendation text ----------------
+    # ---------------- AI-written forecast transcript and recommendation text ----------------
     # Per the paper's 1.2 Purpose and Description (SME Module: "AI-driven
     # business recommendations and alternative industry suggestions"),
-    # this turns the forecasting engine's numbers into a natural-language
-    # paragraph. LLM_PROVIDER picks which API writes it -- "openai" (GPT)
-    # or "anthropic" (Claude). If the chosen provider has no API key set,
-    # app/services/llm_service.py automatically tries the other provider,
-    # and if NEITHER has a key, it silently falls back to the built-in
-    # rule-based text (see recommendation_service.py) -- the page never
-    # breaks because of this.
+    # this turns the forecasting engine's numbers into natural language.
+    # Its main job is the FORECAST TRANSCRIPT: Gemini is handed the
+    # trained models' whole computation for a plan and transcribes it --
+    # what they forecast, how the numbers led there, what it means for
+    # the owner -- quoting only the models' own figures (checked number
+    # by number; see llm_service.transcribe_forecast).
+    #
+    # LLM_PROVIDER picks which API is asked first for everything else
+    # (alerts, location cards) -- "gemini" (the default, and the AI this
+    # system names for the transcript), "openai" (GPT, or OpenRouter via
+    # OPENAI_BASE_URL) or "anthropic" (Claude). The transcript itself
+    # always asks Gemini first. If a provider has no usable key the others
+    # are tried, and if none answers the built-in rule-based text is used
+    # (see recommendation_service.py) -- the page never breaks because of
+    # this. With LLM_PROVIDER=gemini and only an sk- key (OpenAI /
+    # OpenRouter) configured, Gemini is skipped -- Google would refuse
+    # that key -- and OpenAI is asked first instead.
     USE_LLM_RECOMMENDATIONS = _bool(os.environ.get("USE_LLM_RECOMMENDATIONS"), False)
-    LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+    LLM_PROVIDER = (os.environ.get("LLM_PROVIDER") or "gemini").strip().lower()
 
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
     OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -248,7 +258,11 @@ class Config:
     # infrequent -- a few hundred tokens per recommendation or alert --
     # so the quality of the writing is worth more than the difference in
     # price. Set GEMINI_MODEL=gemini-3.5-flash-lite for the cheaper one.
-    GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
+    #
+    # `or`, not a .get() default: render.yaml declares GEMINI_MODEL, and a
+    # variable declared but left empty on a host is "" -- which a .get()
+    # default does not replace, and an empty model id is a 404.
+    GEMINI_MODEL = (os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash").strip()
     GEMINI_BASE_URL = os.environ.get(
         "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
     ).strip().rstrip("/")

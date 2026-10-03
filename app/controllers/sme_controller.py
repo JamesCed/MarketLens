@@ -298,6 +298,38 @@ def _owned_plan(sme_id, *, allow_trashed=False):
     return profile
 
 
+def _industry_card_order(current_industry=None):
+    """The order of Home's industry slider: the chosen plan's industry
+    first, then FEATURED_BUSINESS_TYPES (the sections Tarlac City SMEs
+    register under most), then every other section in BUSINESS_TYPES
+    order. Each section appears exactly once.
+
+    The plan's own industry leads because it is the card the owner came
+    to compare against; the featured ones follow so the first screenful
+    still looks like the Home page they know.
+
+    An industry outside BUSINESS_TYPES (a legacy name a plan kept, see
+    plan_params) gets no card: the slider is the twenty PSIC sections,
+    and a twenty-first card scored in the engine's generic "other"
+    bucket would be a number about no section in particular.
+    """
+    order = []
+    lead = [current_industry] if current_industry in BUSINESS_TYPES else []
+    for industry_type in lead + list(FEATURED_BUSINESS_TYPES) + list(BUSINESS_TYPES):
+        if industry_type not in order:
+            order.append(industry_type)
+    return order
+
+
+def _industry_card_band(score):
+    """good / fair / low for an industry card's Market Score -- the same
+    cuts as the plan chips and the forecast panel's viability word
+    (>= 6.5, >= 4), so one number never wears two different colours on
+    the same page."""
+    value = float(score or 0)
+    return "good" if value >= 6.5 else ("fair" if value >= 4 else "low")
+
+
 @sme_bp.route("/home")
 @role_required("SME")
 def home():
@@ -308,29 +340,50 @@ def home():
 
     # One quick, EPHEMERAL score per industry type (no forecast_result
     # write -- see compute_scores docstring) for the SME's own/default
-    # location, so the "Industry Cards" on the Home page have live
-    # numbers, matching the storyboard's card layout. Only a curated
-    # FEATURED_BUSINESS_TYPES subset is scored here (not the full
-    # expanded BUSINESS_TYPES list) so this page stays fast -- every
-    # industry is still fully selectable in the "+ New Business Plan"
-    # modal and the search bar below.
-    # Scored in ONE batch, not one call per card. Same reasoning as the
-    # Recommendations page: a loop of compute_scores() is two SELECTs
-    # and a separate forest dispatch per industry, and this is the first
-    # page an SME lands on after signing in.
-    industry_cards = []
+    # location, so the industry slider on the Home page has live
+    # numbers.
+    #
+    # ALL TWENTY sections, not the eight featured ones the old card grid
+    # showed. The slider shows four at a time and scrolls to the rest, so
+    # an owner can see how every section fares in their barangay without
+    # retyping it in the search box -- which used to be the only way to
+    # see the other twelve.
+    #
+    # Still ONE batch, not one call per card, which is what makes twenty
+    # affordable: a loop of compute_scores() is two SELECTs and a separate
+    # forest dispatch per industry, while compute_scores_batch resolves
+    # every pair's rows in two queries and predicts them in one pass --
+    # more rows in the same matrix, not more round trips. This is the
+    # first page an SME lands on after signing in.
+    current_industry = selected_plan.industry_type if selected_plan else None
+    card_order = _industry_card_order(current_industry)
     card_scores = compute_scores_batch(
-        [(industry_type, default_location) for industry_type in FEATURED_BUSINESS_TYPES]
+        [(industry_type, default_location) for industry_type in card_order]
     )
-    for industry_type, scores in zip(FEATURED_BUSINESS_TYPES, card_scores):
-        trend = "up" if scores["viability_score"] >= 6.5 else ("down" if scores["viability_score"] < 5 else "neutral")
+    industry_cards = []
+    for industry_type, scores in zip(card_order, card_scores):
+        score = scores["viability_score"]
+        band = _industry_card_band(score)
+        # The arrow is the score's LEVEL drawn as a direction (green up =
+        # a good chance, red down = hard to compete) -- not a change over
+        # time, so the page's screen-reader text says what it means; see
+        # sme/home.html. It is read off the SAME band as the pill beside
+        # it: the old cut (down below 5) put a red down arrow next to a
+        # yellow "fair" pill for any score from 4 to 4.9, a score the
+        # forecast panel further down calls MODERATE.
+        trend = {"good": "up", "fair": "neutral", "low": "down"}[band]
         display = INDUSTRY_DISPLAY.get(industry_type, DEFAULT_INDUSTRY_DISPLAY)
         industry_cards.append({
             "name": industry_type,
-            "score": scores["viability_score"],
+            "score": score,
             "trend": trend,
+            "band": band,
             "icon": display["icon"],
+            "bi": display["bi"],
+            "hue": display["hue"],
+            "short": display.get("short") or industry_type,
             "subtitle": display["subtitle"],
+            "is_current": industry_type == current_industry,
         })
 
     # Featured forecast (the SELECTED plan) for the "Forecast &

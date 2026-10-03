@@ -117,10 +117,12 @@
 
       {% if rec.headline %}<p class="fw-semibold mb-2">{{ rec.headline }}</p>{% endif %}
       {% if rec.summary %}<p class="text-muted small mb-3">{{ rec.summary }}</p>{% endif %}
-      {# The trained model's output, put into words -- by Gemini when the
-         AI is on and its wording passed the number check, by the
-         rule-based writer otherwise. The badge says which. #}
-      {{ explanation_paragraph(rec) }}
+      {# The forecast transcript: the trained models' computation put
+         into words -- by Gemini when the AI is on and its wording passed
+         the number check, else the rule-based model summary, which the
+         page then upgrades to Gemini's transcript when it can (forecast=f
+         gives the macro the row to ask about). The badge says which. #}
+      {{ explanation_paragraph(rec, forecast=f) }}
       {{ subcategory_compare(rec) }}
 
       <!-- Key Metrics -- real, derived figures (no fabricated ranges):

@@ -190,7 +190,7 @@ changes as plain MySQL, for the ERD, are in `sql/2026-09_revisions.sql`.
 |---|---|
 | **Plan choice bar** on Home: every saved plan with its own market score, one click to switch (`/home?plan=<id>`, remembered per session, audited as `select_plan`) | `sme_controller.home`, `sme/home.html` |
 | **Mini map follows the chosen plan** (its industry, centred on its barangay), bigger and filling its card; popups stay inside the map | `sme/home.html`, `static/js/map.js` |
-| **Broader business parameters**: industry → sub-category, what you sell, "what makes you different" (read by the AI), optional menu / price list. One parser for sign-up, Add New Plan and Settings | `app/ml/subcategories.py`, `app/services/plan_params.py`, `shared/_plan_fields.html`, `static/js/plan_form.js` |
+| **Broader business parameters**: industry → sub-category, what you sell, "what makes you different" (read by the AI), optional menu / price list. One parser for sign-up, Add New Plan and Home's Edit plan dialog | `app/ml/subcategories.py`, `app/services/plan_params.py`, `shared/_plan_fields.html`, `static/js/plan_form.js` |
 | **Direct competition**: the score is adjusted by how dense the plan's sub-category is (measured by Places or the LGU permit register); with no measurement it is left exactly as the industry score and labelled "estimated" | `app/services/subcategory_service.py`, table `subcategory_market_data` |
 | **Monthly revenue removed** from every form; the ROI window is now built from the model alone (column kept, no longer read) | `location_opportunity_service.estimate_roi_timeframe` |
 | **First-time walkthrough** (asks once; interactive, plain-language steps per role; replay any time from Settings › Tutorial) | `onboarding_controller.py`, `static/js/tour.js`, `tour_steps.js` |
@@ -1122,13 +1122,19 @@ row). Pipeline:
    when that snapshot isn't a simulated fallback) and this barangay's real
    PSA population, into a structured headline / opportunity type / summary
    / "Why This Works" reasons / "Considerations" risks dict, plus the plan
-   model's forecast payload and a plain-language **explanation** of it —
-   written by an LLM when `use_llm_recommendations` is on (Gemini first for
-   this call, then the provider in `LLM_PROVIDER`), otherwise a
-   deterministic rule-based version of the same shape. An LLM explanation
-   that quotes any number the model did not produce is discarded for the
-   rule-based one. All of it is JSON-serialized into the single
-   `recommendation` TEXT column (see section 0.5).
+   model's forecast payload and a plain-language **forecast transcript** of
+   it — transcribed by Gemini from the models' whole computation when
+   `use_llm_recommendations` is on and a key is configured (Gemini first,
+   then the provider in `LLM_PROVIDER`), otherwise a deterministic
+   rule-based model summary of the same shape, labelled as such. A
+   transcript that quotes a figure the models did not produce is sent back
+   once with the offending figures listed; if the retry still does, the
+   sentences carrying them are dropped, and only if too little survives is
+   the rule-based summary used. A forecast stored with the summary (made
+   while no key was set, say) is upgraded to a Gemini transcript in the
+   background the next time its page is opened
+   (`POST /api/forecasts/<id>/transcript`). All of it is JSON-serialized
+   into the single `recommendation` TEXT column (see section 0.5).
 9. **Early warning** — only for `generate_forecast_for_profile()`: if
    `saturation_index` crosses the alert threshold (default 75 on the 0–100
    scale, tunable in Admin > System Settings), a `Notification` row is
@@ -1145,14 +1151,16 @@ A plan's forecast chains two trained Random Forests:
    parameter on the plan as 14 features. The parameters are capital,
    employees, business stage, the price list, the offering and the
    innovation idea. Derived money figures are included too: monthly
-   fixed cost (rent + employees × ₱590/day × 26 days), capital runway,
-   ramp-up and required daily sales. The output is the **Plan Viability
+   fixed cost (rent + employees × the daily wage × 26 days; ₱590 under
+   DOLE RBIII-26 unless an Admin sets another), capital runway, ramp-up
+   and required daily sales (which uses the Admin's gross margin, 40% by
+   default). The output is the **Plan Viability
    Score** (0–10) shown on Home, a confidence figure, an exact breakdown
    of which inputs moved the score, and a break-even window.
 
 The business name is not an input. Every formula, the assumptions and
 where an Admin changes them, the training procedure and its metrics, how
-Gemini's narration is checked against the numbers, and a fully worked
+Gemini's transcript is checked against the numbers, and a fully worked
 example are in
 **[`Reference/FORECAST_MODEL.md`](Reference/FORECAST_MODEL.md)**.
 
@@ -1161,11 +1169,21 @@ example are in
 python -m app.ml.train_model              # both stages
 python -m app.ml.train_model --plan-only  # stage 2 only, on the rf_model.pkl already on disk
 ```
-`seed.py` runs this automatically whenever either model file is missing.
+`seed.py` runs this automatically whenever either model file is missing,
+and retrains stage 2 alone whenever `plan_model.pkl` is **stale**: the
+bundle records a fingerprint of the recipe it was trained on (sampling
+ranges, seeds, hyperparameters, the scorecard's results on a fixed probe,
+and the market model underneath), and a missing, unreadable or different
+fingerprint means retrain — so a model kept in a host's build cache cannot
+outlive a change to the training code. Stage 1 has no such check; use
+`python seed.py --retrain` after changing `app/ml/seed_data.py`.
 The Plan Viability Model reports its own metrics under `"plan_model"` in
-the same `training_report.json`: MAE 3.05 points on its synthetic test
-split, and 1.90 against the noise-free formula it is trained on. Its
-labels are synthetic too; see the honesty note in `FORECAST_MODEL.md`.
+the same `training_report.json`: MAE 3.14 points on its synthetic test
+split, and 1.84 against the noise-free formula it is trained on. Each
+synthetic plan draws its own daily wage (₱450–₱800) and gross margin
+(15%–70%), so the model responds to the Admin's values rather than
+having seen only ₱590 and 40%. Its labels are synthetic too; see the
+honesty note in `FORECAST_MODEL.md`.
 The rest of this section is about stage 1. It trains on a
 **synthetic dataset** derived from the paper's own MSI formula (see the
 big comment at the top of `app/ml/train_model.py` for exactly why and how)

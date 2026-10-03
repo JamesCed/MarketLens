@@ -352,8 +352,15 @@ def test_q1_still_matches_the_stored_forecast_after_the_admin_changes_the_assump
     with app.app_context():
         _food_history(BARANGAY_NAMES[0], [6, 8, 11, 14], user_id=user)
         # Payroll-heavy and priced, so both assumptions actually move it.
+        # The price matters: at P600 the plan needs fewer sales a day than
+        # the barangay can supply at the default 40% margin and more than
+        # it can at 15%, so the margin moves price coverage. (It used to
+        # be one P40 item, which needed three times the ceiling at ANY
+        # margin -- coverage was 0 either way, only the wage moved the
+        # scorecard, by 0.6 points, and whether the 1-dp score changed
+        # was down to where the forest's steps happened to fall.)
         profile = _sme_plan(startup_capital=150000, employee_count=6,
-                            offering_details=json.dumps([{"item": "Bread", "price": 40}]))
+                            offering_details=json.dumps([{"item": "Celebration cake", "price": 600}]))
         forecast = generate_forecast_for_profile(profile)
         before = _plan_outlook(forecast, profile)
 
@@ -362,15 +369,18 @@ def test_q1_still_matches_the_stored_forecast_after_the_admin_changes_the_assump
         after = _plan_outlook(forecast, profile)
 
         stored = float(forecast.viability_score)
+        stored_payload = json.loads(forecast.recommendation)["forecast"]
         # The new settings DO change a forecast made now -- so the test
         # would catch the chart reading them.
-        fresh = float(generate_forecast_for_profile(profile).viability_score)
+        fresh = json.loads(generate_forecast_for_profile(profile).recommendation)["forecast"]
 
     stored_bar = round(min(60.0, stored * 6.0), 1)
     assert before["viability"][0] == pytest.approx(stored_bar)
     assert after["viability"][0] == pytest.approx(stored_bar)
     assert after["viability"] == before["viability"]
-    assert fresh != stored
+    assert fresh["financials"]["daily_wage"] == 900.0 and fresh["financials"]["gross_margin"] == 0.15
+    assert fresh["plan"]["scorecard_index"] < stored_payload["plan"]["scorecard_index"] - 3.0
+    assert fresh["plan"]["viability_index"] < stored_payload["plan"]["viability_index"]
 
 
 def test_q1_matches_the_stored_forecast_with_a_sub_category_adjustment_too(app, user, monkeypatch):

@@ -1843,6 +1843,13 @@ body.dss-skin .dss-nav-link.active i { opacity: 1; }
 body.dss-skin .dss-nav-section { color: rgba(226,236,246,.45); font-weight: 700; }
 body.dss-skin .dss-sidebar-footer { border-top-color: rgba(255,255,255,.08); color: rgba(219,231,243,.55); }
 body.dss-skin .dss-sidebar-footer .dss-nav-link { color: rgba(226,236,246,.72); }
+/* The footer's dimmer text above is one class MORE specific than the
+   nav's own .active and :hover rules and comes after them, so it won:
+   Settings stayed grey while it was the page you were on, and neither
+   footer item brightened under the pointer. These restore the white of
+   every other active / hovered link; the sidebar is navy in both themes. */
+body.dss-skin .dss-sidebar-footer .dss-nav-link:hover,
+body.dss-skin .dss-sidebar-footer .dss-nav-link.active { color: #fff; }
 
 /* ---- Top bar: light glass, like the sign-in nav once it sticks ---- */
 body.dss-skin .dss-topbar {
@@ -1989,4 +1996,172 @@ body.dss-skin .dss-main .table > thead th {
    out-ranked that and put the name in twice; this restores it. */
 @media (min-width: 901px) {
   html[data-bs-theme="dark"] .dss-topbar-brand .ml-brand-word { display: none; }
+}
+
+/* =====================================================================
+   HOME: THE INDUSTRY SLIDER (sme/home.html, static/js/industry_slider.js)
+   ---------------------------------------------------------------------
+   All twenty industry cards in one row that scrolls sideways: four
+   showing from 1200px, three from 992px, two from 576px, and on a phone
+   one and a bit -- the sliver of the next card is the hint that the row
+   goes on. It is a CSS scroll-snap track, so it swipes and snaps with
+   scripting off; the script only adds the buttons, keys and the count.
+   The track scrolls, never the page: at 375px nothing here is wider
+   than the screen.
+
+   The industry icon sits in a tinted rounded-square tile, one colour
+   per section (INDUSTRY_DISPLAY "hue" in app/ml/constants.py). Each hue
+   is a background / foreground pair: a pale tint with a dark glyph in
+   the light theme, a translucent tint with a light glyph in the dark
+   one -- the same recipe as the tier pills' dark-mode values.
+   ===================================================================== */
+:root {
+  --dss-hue-green-bg: #dcfce7;   --dss-hue-green-fg: #15803d;
+  --dss-hue-stone-bg: #e7e5e4;   --dss-hue-stone-fg: #44403c;
+  --dss-hue-slate-bg: #e2e8f0;   --dss-hue-slate-fg: #334155;
+  --dss-hue-yellow-bg: #fef9c3;  --dss-hue-yellow-fg: #a16207;
+  --dss-hue-sky-bg: #e0f2fe;     --dss-hue-sky-fg: #0369a1;
+  --dss-hue-orange-bg: #ffedd5;  --dss-hue-orange-fg: #c2410c;
+  --dss-hue-blue-bg: #dbeafe;    --dss-hue-blue-fg: #1d4ed8;
+  --dss-hue-indigo-bg: #e0e7ff;  --dss-hue-indigo-fg: #4338ca;
+  --dss-hue-violet-bg: #ede9fe;  --dss-hue-violet-fg: #6d28d9;
+  --dss-hue-rose-bg: #ffe4e6;    --dss-hue-rose-fg: #be123c;
+  --dss-hue-cyan-bg: #cffafe;    --dss-hue-cyan-fg: #0e7490;
+  --dss-hue-emerald-bg: #d1fae5; --dss-hue-emerald-fg: #047857;
+  --dss-hue-teal-bg: #ccfbf1;    --dss-hue-teal-fg: #0f766e;
+  --dss-hue-brown-bg: #f3e8dc;   --dss-hue-brown-fg: #7c4a1e;
+  --dss-hue-lime-bg: #ecfccb;    --dss-hue-lime-fg: #4d7c0f;
+  --dss-hue-purple-bg: #f3e8ff;  --dss-hue-purple-fg: #7e22ce;
+  --dss-hue-red-bg: #fee2e2;     --dss-hue-red-fg: #b91c1c;
+  --dss-hue-fuchsia-bg: #fae8ff; --dss-hue-fuchsia-fg: #a21caf;
+  --dss-hue-pink-bg: #fce7f3;    --dss-hue-pink-fg: #be185d;
+  --dss-hue-amber-bg: #fef3c7;   --dss-hue-amber-fg: #b45309;
+  --dss-hue-neutral-bg: #e5e7eb; --dss-hue-neutral-fg: #4b5563;
+}
+[data-bs-theme="dark"] {
+  --dss-hue-green-bg: rgba(74,222,128,.16);   --dss-hue-green-fg: #86efac;
+  --dss-hue-stone-bg: rgba(168,162,158,.18);  --dss-hue-stone-fg: #d6d3d1;
+  --dss-hue-slate-bg: rgba(148,163,184,.18);  --dss-hue-slate-fg: #cbd5e1;
+  --dss-hue-yellow-bg: rgba(250,204,21,.16);  --dss-hue-yellow-fg: #fde047;
+  --dss-hue-sky-bg: rgba(56,189,248,.16);     --dss-hue-sky-fg: #7dd3fc;
+  --dss-hue-orange-bg: rgba(251,146,60,.16);  --dss-hue-orange-fg: #fdba74;
+  --dss-hue-blue-bg: rgba(96,165,250,.16);    --dss-hue-blue-fg: #93c5fd;
+  --dss-hue-indigo-bg: rgba(129,140,248,.18); --dss-hue-indigo-fg: #a5b4fc;
+  --dss-hue-violet-bg: rgba(167,139,250,.18); --dss-hue-violet-fg: #c4b5fd;
+  --dss-hue-rose-bg: rgba(251,113,133,.16);   --dss-hue-rose-fg: #fda4af;
+  --dss-hue-cyan-bg: rgba(34,211,238,.16);    --dss-hue-cyan-fg: #67e8f9;
+  --dss-hue-emerald-bg: rgba(52,211,153,.16); --dss-hue-emerald-fg: #6ee7b7;
+  --dss-hue-teal-bg: rgba(45,212,191,.16);    --dss-hue-teal-fg: #5eead4;
+  --dss-hue-brown-bg: rgba(196,140,90,.18);   --dss-hue-brown-fg: #e0b48a;
+  --dss-hue-lime-bg: rgba(163,230,53,.16);    --dss-hue-lime-fg: #bef264;
+  --dss-hue-purple-bg: rgba(192,132,252,.18); --dss-hue-purple-fg: #d8b4fe;
+  --dss-hue-red-bg: rgba(248,113,113,.16);    --dss-hue-red-fg: #fca5a5;
+  --dss-hue-fuchsia-bg: rgba(232,121,249,.16); --dss-hue-fuchsia-fg: #f0abfc;
+  --dss-hue-pink-bg: rgba(244,114,182,.16);   --dss-hue-pink-fg: #f9a8d4;
+  --dss-hue-amber-bg: rgba(251,191,36,.16);   --dss-hue-amber-fg: #fcd34d;
+  --dss-hue-neutral-bg: rgba(156,163,175,.18); --dss-hue-neutral-fg: #d1d5db;
+}
+.dss-hue-green   { --dss-tile-bg: var(--dss-hue-green-bg);   --dss-tile-fg: var(--dss-hue-green-fg); }
+.dss-hue-stone   { --dss-tile-bg: var(--dss-hue-stone-bg);   --dss-tile-fg: var(--dss-hue-stone-fg); }
+.dss-hue-slate   { --dss-tile-bg: var(--dss-hue-slate-bg);   --dss-tile-fg: var(--dss-hue-slate-fg); }
+.dss-hue-yellow  { --dss-tile-bg: var(--dss-hue-yellow-bg);  --dss-tile-fg: var(--dss-hue-yellow-fg); }
+.dss-hue-sky     { --dss-tile-bg: var(--dss-hue-sky-bg);     --dss-tile-fg: var(--dss-hue-sky-fg); }
+.dss-hue-orange  { --dss-tile-bg: var(--dss-hue-orange-bg);  --dss-tile-fg: var(--dss-hue-orange-fg); }
+.dss-hue-blue    { --dss-tile-bg: var(--dss-hue-blue-bg);    --dss-tile-fg: var(--dss-hue-blue-fg); }
+.dss-hue-indigo  { --dss-tile-bg: var(--dss-hue-indigo-bg);  --dss-tile-fg: var(--dss-hue-indigo-fg); }
+.dss-hue-violet  { --dss-tile-bg: var(--dss-hue-violet-bg);  --dss-tile-fg: var(--dss-hue-violet-fg); }
+.dss-hue-rose    { --dss-tile-bg: var(--dss-hue-rose-bg);    --dss-tile-fg: var(--dss-hue-rose-fg); }
+.dss-hue-cyan    { --dss-tile-bg: var(--dss-hue-cyan-bg);    --dss-tile-fg: var(--dss-hue-cyan-fg); }
+.dss-hue-emerald { --dss-tile-bg: var(--dss-hue-emerald-bg); --dss-tile-fg: var(--dss-hue-emerald-fg); }
+.dss-hue-teal    { --dss-tile-bg: var(--dss-hue-teal-bg);    --dss-tile-fg: var(--dss-hue-teal-fg); }
+.dss-hue-brown   { --dss-tile-bg: var(--dss-hue-brown-bg);   --dss-tile-fg: var(--dss-hue-brown-fg); }
+.dss-hue-lime    { --dss-tile-bg: var(--dss-hue-lime-bg);    --dss-tile-fg: var(--dss-hue-lime-fg); }
+.dss-hue-purple  { --dss-tile-bg: var(--dss-hue-purple-bg);  --dss-tile-fg: var(--dss-hue-purple-fg); }
+.dss-hue-red     { --dss-tile-bg: var(--dss-hue-red-bg);     --dss-tile-fg: var(--dss-hue-red-fg); }
+.dss-hue-fuchsia { --dss-tile-bg: var(--dss-hue-fuchsia-bg); --dss-tile-fg: var(--dss-hue-fuchsia-fg); }
+.dss-hue-pink    { --dss-tile-bg: var(--dss-hue-pink-bg);    --dss-tile-fg: var(--dss-hue-pink-fg); }
+.dss-hue-amber   { --dss-tile-bg: var(--dss-hue-amber-bg);   --dss-tile-fg: var(--dss-hue-amber-fg); }
+.dss-hue-neutral { --dss-tile-bg: var(--dss-hue-neutral-bg); --dss-tile-fg: var(--dss-hue-neutral-fg); }
+
+.dss-industry-slider-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: .75rem; margin-bottom: .5rem;
+}
+.dss-industry-slider-title { min-width: 0; }
+.dss-industry-slider-nav { display: flex; gap: .4rem; flex: 0 0 auto; }
+.dss-industry-slider-nav[hidden] { display: none; }
+/* 36px: a comfortable target for a thumb, a size up from the 32px icon
+   buttons on the plan chips, which sit inside a chip rather than alone. */
+.dss-slider-btn {
+  width: 36px; height: 36px; min-width: 36px; border-radius: 999px;
+  border-color: #cbd5e1; background: var(--ml-surface); font-size: 1rem;
+}
+.dss-slider-btn:disabled { opacity: .4; cursor: default; }
+.dss-slider-btn:disabled:hover { background: var(--ml-surface); color: #475569; border-color: #cbd5e1; }
+
+.dss-industry-track {
+  position: relative;
+  overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;          /* a fast swipe never turns into "back" */
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  /* Room inside the scroll box for the cards' hover lift and shadow,
+     which overflow clipping would otherwise cut off; the negative
+     margin keeps the cards lined up with the page. */
+  padding: 4px 2px 14px; margin: -4px -2px 0;
+  scroll-padding-inline: 2px;
+  border-radius: 14px;
+}
+.dss-industry-track:focus-visible { outline: 3px solid var(--dss-blue); outline-offset: 2px; }
+.dss-industry-list { display: flex; gap: 1rem; margin: 0; padding: 0; list-style: none; }
+.dss-industry-item {
+  display: flex; min-width: 0; scroll-snap-align: start;
+  flex: 0 0 calc((100% - 1rem) / 1.2);
+}
+@media (min-width: 576px)  { .dss-industry-item { flex-basis: calc((100% - 1rem) / 2); } }
+@media (min-width: 992px)  { .dss-industry-item { flex-basis: calc((100% - 2rem) / 3); } }
+@media (min-width: 1200px) { .dss-industry-item { flex-basis: calc((100% - 3rem) / 4); } }
+
+.dss-industry-card {
+  position: relative; flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: .25rem;
+  text-align: center; color: inherit; text-decoration: none;
+}
+.dss-industry-card:hover { color: inherit; }
+/* Inset, so the scroll box cannot clip it. */
+.dss-industry-card:focus-visible { outline: 3px solid var(--dss-blue); outline-offset: -3px; }
+/* The chosen plan's industry. A ring of its own (::after) rather than
+   .dss-card-current's box-shadow, which the interior skin's card shadow
+   out-ranks. */
+.dss-industry-card.dss-card-current::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--dss-blue);
+}
+.dss-industry-current {
+  font-size: .66rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  padding: .1rem .45rem; border-radius: 999px;
+  background: var(--dss-blue-light); color: var(--dss-blue-dark);
+}
+.dss-industry-tile {
+  width: 52px; height: 52px; border-radius: 14px; flex: 0 0 auto; margin-bottom: .4rem;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 1.45rem;
+  background: var(--dss-tile-bg, var(--dss-hue-neutral-bg));
+  color: var(--dss-tile-fg, var(--dss-hue-neutral-fg));
+}
+.dss-industry-name { font-weight: 700; font-size: .95rem; line-height: 1.25; color: var(--ml-ink); overflow-wrap: anywhere; }
+.dss-industry-sub { font-size: .76rem; line-height: 1.35; color: #64748b; }
+.dss-industry-score {
+  margin-top: auto; padding-top: .45rem;
+  display: inline-flex; align-items: center; gap: .4rem; font-size: .8rem;
+}
+.dss-industry-score .dss-stat-pill { font-weight: 700; font-size: .85rem; font-variant-numeric: tabular-nums; }
+
+[data-bs-theme="dark"] .dss-slider-btn { border-color: #33475c; background: var(--ml-surface); }
+[data-bs-theme="dark"] .dss-slider-btn:disabled:hover { background: var(--ml-surface); color: #b9c9db; border-color: #33475c; }
+[data-bs-theme="dark"] .dss-industry-name { color: #e6edf5; }
+[data-bs-theme="dark"] .dss-industry-sub { color: #93a4b8; }
+[data-bs-theme="dark"] .dss-industry-current { color: #9cc4ff; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dss-industry-track { scroll-behavior: auto; }
 }

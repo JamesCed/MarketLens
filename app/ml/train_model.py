@@ -65,6 +65,7 @@ Run it with:
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -321,7 +322,10 @@ def train_and_save(verbose=True):
 #   3. given business parameters drawn from deliberately wide ranges
 #      (capital P10k-P10M log-uniform, 0-20 staff skewed small, 30%
 #      existing businesses, a price list 60% of the time...);
-#   4. labelled with the scorecard S of app/ml/plan_model.py plus
+#   4. given a daily wage and a gross margin drawn per plan -- the two
+#      assumptions an Admin can change (see _PLAN_DAILY_WAGE_RANGE
+#      below for why they are sampled rather than held at 590 / 40%);
+#   5. labelled with the scorecard S of app/ml/plan_model.py plus
 #      N(0, 3) noise -- the same "documented formula + real-world
 #      unpredictability" construction as stage 1's labels.
 #
@@ -350,6 +354,46 @@ _PLAN_PROBABILITIES = {
     "has_innovation_idea": 0.5,
 }
 
+# The Admin's two assumptions, SAMPLED per plan (uniform) instead of held
+# at their defaults. WHY: the forest can only learn the effect of an
+# input that varies in its training data. While every training plan used
+# P590 and 40%, required daily sales was an exact function of average
+# price and fixed cost, so the forest learnt price coverage mostly from
+# average price and barely looked at required daily sales -- and an
+# Admin who halved the margin moved the scorecard by -1.2 points on an
+# average priced plan but the forest by -0.1. Drawing both per plan means
+# the labels can only be fitted fully through what the wage and margin
+# actually change: monthly fixed cost, capital runway and required daily
+# sales.
+#   * Wage P450-P800: a band around Tarlac's P590 wide enough for the
+#     next several wage orders, or an Admin who prices labour above the
+#     minimum, without leaving what the forest has seen.
+#   * Margin 15%-70%: from thin-margin trading and groceries to food
+#     service and services, around the 40% default.
+# WHAT IT ACHIEVED, measured over thousands of random plans (the numbers
+# are in Reference/FORECAST_MODEL.md and pinned by
+# tests/test_plan_forecast_model.py): a wage change gets through at about
+# 60% of the scorecard's effect -- as it did before, through capital
+# runway. Halving the margin now gets through at about 15%, up from 9%:
+# better, still weak. Average price still varies over three decades in
+# training against the margin's factor of five, so the trees keep
+# reading price coverage mostly from price; halving the PRICE, which
+# moves required daily sales exactly as halving the margin does, gets
+# through at about 70%. Closing that gap needs the coverage ratio itself
+# (required daily sales / daily sales ceiling) as a feature -- a change
+# to PLAN_FEATURE_NAMES, not to sampling.
+# An Admin may still type values outside these ranges (the form accepts
+# P1-P100,000 and 5%-95%); there the trees answer as for the nearest
+# value they were trained on, while the payload's financials and the
+# scorecard keep using the exact figure.
+_PLAN_DAILY_WAGE_RANGE = (450.0, 800.0)       # PHP/day, uniform
+_PLAN_GROSS_MARGIN_RANGE = (0.15, 0.70)       # share of each sale, uniform
+
+# RF2's hyperparameters and split, named once: the fit, the report and
+# the training-config fingerprint (plan_training_config) all read them.
+_PLAN_HYPERPARAMETERS = {"n_estimators": N_ESTIMATORS, "max_depth": 14, "min_samples_leaf": 3}
+_PLAN_TEST_SIZE = 0.2
+
 
 def _log_uniform(rng, low, high):
     return float(math.exp(rng.uniform(math.log(low), math.log(high))))
@@ -374,10 +418,13 @@ def _barangay_populations():
     return populations
 
 
-def _make_plan_dataset(rf_market_model, rng):
-    """N_PLAN_SAMPLES synthetic plans: (inputs dicts, feature matrix,
-    noise-free scorecard, noisy labels). See the block comment above."""
+def _make_plan_dataset(rf_market_model, rng, n_samples=None):
+    """N_PLAN_SAMPLES (or `n_samples`) synthetic plans: (inputs dicts,
+    feature matrix, noise-free scorecard, noisy labels). See the block
+    comment above."""
     from app.ml.plan_model import derive_quantities, plan_feature_vector, scorecard_index
+
+    n_samples = N_PLAN_SAMPLES if n_samples is None else int(n_samples)
 
     profiles = [
         {
@@ -395,7 +442,7 @@ def _make_plan_dataset(rf_market_model, rng):
     p = _PLAN_PROBABILITIES
 
     drafts, industry_vectors, direct_vectors = [], [], []
-    for _ in range(N_PLAN_SAMPLES):
+    for _ in range(n_samples):
         # ---- the market: drawn exactly as _make_synthetic_dataset does ----
         brgy = profiles[rng.integers(0, len(profiles))]
         industry_type = BUSINESS_TYPES[rng.integers(0, len(BUSINESS_TYPES))]
@@ -442,8 +489,6 @@ def _make_plan_dataset(rf_market_model, rng):
             "population": populations[brgy["name"]],
             "monthly_rent": average_rent,
             "employee_count": employees,
-            "daily_wage": DEFAULT_DAILY_WAGE_PHP,
-            "gross_margin": DEFAULT_GROSS_MARGIN,
             "capital": capital,
             "is_existing": is_existing,
             "years_in_operation": years_in_operation,
@@ -466,10 +511,21 @@ def _make_plan_dataset(rf_market_model, rng):
     finally:
         rf_market_model.n_jobs = original_jobs
 
+    # The Admin's two assumptions, one draw each per plan. Drawn HERE,
+    # after every market and business parameter, so each synthetic plan
+    # is the very plan the wage-and-margin-fixed model was trained on --
+    # only its wage, its margin and (drawn after them) its label noise
+    # are new -- which keeps the before/after comparison about these two
+    # inputs and nothing else.
+    wages = rng.uniform(*_PLAN_DAILY_WAGE_RANGE, size=len(drafts))
+    margins = rng.uniform(*_PLAN_GROSS_MARGIN_RANGE, size=len(drafts))
+
     inputs_list, features, scorecard = [], [], []
     for index, draft in enumerate(drafts):
         adjusted = draft.pop("adjusted")
         inputs = dict(draft)
+        inputs["daily_wage"] = float(wages[index])
+        inputs["gross_margin"] = float(margins[index])
         inputs["saturation_index"] = float(direct_msi[index] if adjusted else industry_msi[index])
         derived = derive_quantities(inputs)
         inputs_list.append(inputs)
@@ -479,6 +535,154 @@ def _make_plan_dataset(rf_market_model, rng):
     scorecard = np.array(scorecard)
     labels = np.clip(scorecard + rng.normal(0, _PLAN_LABEL_NOISE_SD, size=len(scorecard)), 0.0, 100.0)
     return inputs_list, np.array(features, dtype=float), scorecard, labels
+
+
+# ---------------------------------------------------------------------
+# The training-config fingerprint -- how seed.py knows a model is stale
+# ---------------------------------------------------------------------
+# plan_model.pkl is gitignored, so every install trains its own -- and
+# seed.py used to retrain only when the file was MISSING. A host whose
+# build cache kept the file (Render's can) would then go on serving a
+# model trained on an older recipe, silently: it loads, it predicts, it
+# is simply not the model this code describes. So the bundle now records
+# a fingerprint of everything that decides what RF2 learns, and
+# plan_model_staleness() -- which seed.py calls on every build --
+# compares it with the fingerprint the CURRENT code computes. Any
+# difference retrains stage 2 (stage 1 is left alone).
+#
+# The fingerprint covers:
+#   * every named setting: sample count, seed, split, hyperparameters,
+#     label noise, each sampling range and probability, the scorecard
+#     weights, the feature order, the model version;
+#   * a RECIPE PROBE: the sampler, the feature arithmetic and the
+#     scorecard run on 256 plans against a fixed stand-in for stage 1,
+#     with every resulting number hashed. That catches what a list of
+#     names cannot -- a changed formula in plan_model.py, a new draw in
+#     the sampler, an edited constant in constants.py or seed_data.py --
+#     while an edit to a comment changes nothing and retrains nothing;
+#   * stage 1's forest itself (its trees' split features, thresholds and
+#     leaf values), because stage 2 learns on stage 1's outputs.
+
+_RECIPE_PROBE_SAMPLES = 256
+_RECIPE_PROBE_SEED = 20261002
+# Numbers are hashed at this many decimals, so a last-bit difference in
+# floating-point arithmetic cannot by itself read as a new recipe.
+_RECIPE_PROBE_DECIMALS = 6
+
+
+class _StandInMarketModel:
+    """A fixed, deterministic replacement for the stage-1 forest, used
+    only by the recipe probe: a linear map of all eight stage-1 features
+    onto 0-100. It makes the probe independent of which forest is on
+    disk (that is fingerprinted separately) while still feeding every
+    stage-1 input the sampler builds into the result."""
+
+    n_jobs = 1
+    _WEIGHTS = np.array([1.7, 0.003, 0.4, 0.0005, -20.0, 2.0, 0.5, 0.8])
+
+    def predict(self, rows):
+        return np.clip(np.asarray(rows, dtype=float) @ self._WEIGHTS + 10.0, 0.0, 100.0)
+
+
+def _digest_arrays(*arrays):
+    digest = hashlib.sha256()
+    for array in arrays:
+        # + 0.0 turns -0.0 into 0.0, which round() can otherwise produce.
+        rounded = np.round(np.asarray(array, dtype=np.float64), _RECIPE_PROBE_DECIMALS) + 0.0
+        digest.update(np.ascontiguousarray(rounded).tobytes())
+    return digest.hexdigest()
+
+
+def _plan_recipe_digest():
+    """The recipe probe described above: a digest of 256 synthetic plans
+    -- features, noise-free scorecard and labels -- built by the real
+    sampler and formulas against the stand-in stage-1 model."""
+    _inputs, X, scorecard, labels = _make_plan_dataset(
+        _StandInMarketModel(), np.random.default_rng(_RECIPE_PROBE_SEED), n_samples=_RECIPE_PROBE_SAMPLES
+    )
+    return _digest_arrays(X, scorecard, labels)
+
+
+def market_model_digest(rf_market_model):
+    """A digest of a stage-1 forest's trees -- the numbers that decide
+    its predictions, not the pickle's bytes, so the same forest saved by
+    another joblib version still matches."""
+    digest = hashlib.sha256()
+    for estimator in rf_market_model.estimators_:
+        tree = estimator.tree_
+        for array in (tree.children_left, tree.children_right, tree.feature, tree.threshold, tree.value):
+            digest.update(np.ascontiguousarray(array).tobytes())
+    return digest.hexdigest()
+
+
+def plan_training_config(rf_market_model):
+    """Everything that decides what RF2 learns on top of
+    `rf_market_model`, as plain JSON. Stored in the bundle (and its hash
+    in training_report.json); see the block comment above."""
+    from app.ml.plan_model import PLAN_MODEL_VERSION
+
+    return {
+        "model_version": PLAN_MODEL_VERSION,
+        "feature_names": list(PLAN_FEATURE_NAMES),
+        "component_weights": dict(PLAN_COMPONENT_WEIGHTS),
+        "n_samples": N_PLAN_SAMPLES,
+        "data_seed": PLAN_RANDOM_STATE,
+        "split": {"test_size": _PLAN_TEST_SIZE, "random_state": RANDOM_STATE},
+        "hyperparameters": dict(_PLAN_HYPERPARAMETERS, random_state=RANDOM_STATE),
+        "label_noise_sd": _PLAN_LABEL_NOISE_SD,
+        "sampling": {
+            "capital_php_log_uniform": list(_PLAN_CAPITAL_RANGE),
+            "average_price_php_log_uniform": list(_PLAN_PRICE_RANGE),
+            "daily_wage_php_uniform": list(_PLAN_DAILY_WAGE_RANGE),
+            "gross_margin_uniform": list(_PLAN_GROSS_MARGIN_RANGE),
+            "employee_weights": [round(float(w), 12) for w in _PLAN_EMPLOYEE_WEIGHTS],
+            "item_weights": [round(float(w), 12) for w in _PLAN_ITEM_WEIGHTS],
+            "probabilities": dict(_PLAN_PROBABILITIES),
+        },
+        "recipe_digest": _plan_recipe_digest(),
+        "market_model_digest": market_model_digest(rf_market_model),
+    }
+
+
+def plan_training_config_hash(config):
+    """sha256 of the config as canonical JSON (sorted keys)."""
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def plan_model_staleness(model_dir=None):
+    """None when model_dir/plan_model.pkl was trained by THIS code's
+    recipe on the stage-1 forest now beside it; otherwise one line saying
+    why it is not, for seed.py's build log. Anything unexpected -- a
+    file that will not load, a bundle without a fingerprint (every model
+    trained before the fingerprint existed) -- counts as stale: the cost
+    of a needless retrain is a minute of build time, the cost of a
+    missed one is a site quietly running the wrong model."""
+    from app.ml.plan_model import PLAN_MODEL_FILENAME
+
+    model_dir = model_dir or MODEL_DIR
+    plan_path = os.path.join(model_dir, PLAN_MODEL_FILENAME)
+    rf_path = os.path.join(model_dir, RF_MODEL_FILE)
+    if not os.path.exists(plan_path):
+        return "no plan viability model on disk"
+    if not os.path.exists(rf_path):
+        return "no stage-1 model on disk to check the plan model against"
+    try:
+        bundle = joblib.load(plan_path)
+    except Exception:  # noqa: BLE001 -- unreadable means retrain, whatever the reason
+        return "plan_model.pkl could not be read"
+    recorded = bundle.get("training_config_hash") if isinstance(bundle, dict) else None
+    if not recorded:
+        return "plan_model.pkl predates the training-config fingerprint"
+    try:
+        rf_market_model = joblib.load(rf_path)
+    except Exception:  # noqa: BLE001
+        return "rf_model.pkl could not be read"
+    expected = plan_training_config_hash(plan_training_config(rf_market_model))
+    if recorded != expected:
+        return (f"plan_model.pkl was trained on a different recipe "
+                f"(fingerprint {recorded[:12]}, current code {expected[:12]})")
+    return None
 
 
 def train_plan_model(rf_market_model, rng=None, verbose=True):
@@ -491,7 +695,9 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
     plan_forecast_service refuses a bundle whose order differs from the
     code's (falling back to the documented formula, loudly) instead of
     feeding it a row in the wrong order -- which would not error, it
-    would just be wrong.
+    would just be wrong. It also records the training-config fingerprint
+    (plan_training_config, above), which is how seed.py tells this model
+    from one trained on an older recipe.
     """
     from app.ml.plan_model import PLAN_MODEL_FILENAME, PLAN_MODEL_VERSION
 
@@ -499,15 +705,16 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
     if rng is None:
         rng = np.random.default_rng(PLAN_RANDOM_STATE)
 
+    training_config = plan_training_config(rf_market_model)
+    training_config_hash = plan_training_config_hash(training_config)
+
     _inputs, X, scorecard, y = _make_plan_dataset(rf_market_model, rng)
 
     indices = np.arange(len(y))
-    train_idx, test_idx = train_test_split(indices, test_size=0.2, random_state=RANDOM_STATE)
+    train_idx, test_idx = train_test_split(indices, test_size=_PLAN_TEST_SIZE, random_state=RANDOM_STATE)
 
     plan_model = RandomForestRegressor(
-        n_estimators=N_ESTIMATORS,
-        max_depth=14,
-        min_samples_leaf=3,
+        **_PLAN_HYPERPARAMETERS,
         random_state=RANDOM_STATE,
         n_jobs=-1,
     )
@@ -536,6 +743,8 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
             "feature_names": list(PLAN_FEATURE_NAMES),
             "model_version": PLAN_MODEL_VERSION,
             "trained_on_samples": int(len(train_idx)),
+            "training_config": training_config,
+            "training_config_hash": training_config_hash,
         },
         os.path.join(MODEL_DIR, PLAN_MODEL_FILENAME),
     )
@@ -557,16 +766,18 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
         "feature_names": list(PLAN_FEATURE_NAMES),
         "feature_importances": dict(zip(PLAN_FEATURE_NAMES, [float(v) for v in plan_model.feature_importances_])),
         "component_weights": dict(PLAN_COMPONENT_WEIGHTS),
-        "hyperparameters": {
-            "n_estimators": N_ESTIMATORS, "max_depth": 14, "min_samples_leaf": 3,
-            "random_state": RANDOM_STATE, "data_seed": PLAN_RANDOM_STATE,
-        },
+        "hyperparameters": dict(_PLAN_HYPERPARAMETERS, random_state=RANDOM_STATE, data_seed=PLAN_RANDOM_STATE),
+        "training_config_hash": training_config_hash,
         "assumptions": {
             "operating_days_per_month": OPERATING_DAYS_PER_MONTH,
+            # The DEFAULTS a forecast uses until an Admin changes them.
+            # Training does not hold them fixed -- see sampling below.
             "daily_wage_php": DEFAULT_DAILY_WAGE_PHP,
             "daily_wage_source": "DOLE Wage Order No. RBIII-26 (2nd tranche, effective 16 Apr 2026): "
                                  "Tarlac retail & service establishments",
             "gross_margin": DEFAULT_GROSS_MARGIN,
+            "daily_wage_and_gross_margin_in_training": "sampled per plan (see sampling), so the forest "
+                                                       "responds to the Admin's values",
             "purchases_per_resident_per_day": round(PURCHASES_PER_RESIDENT_PER_DAY, 6),
             "experience_full_years": EXPERIENCE_FULL_YEARS,
             "staff_full_capacity": STAFF_FULL_CAPACITY,
@@ -578,6 +789,8 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
                       "saturation from the TRAINED stage-1 forest",
             "capital_php_log_uniform": list(_PLAN_CAPITAL_RANGE),
             "average_price_php_log_uniform": list(_PLAN_PRICE_RANGE),
+            "daily_wage_php_uniform": list(_PLAN_DAILY_WAGE_RANGE),
+            "gross_margin_uniform": list(_PLAN_GROSS_MARGIN_RANGE),
             "employees": "0-20, each count 20% less likely than the one below",
             "priced_items": "1-30 when a price list exists, each count 10% less likely than the one below",
             "subcategory_adjustment": "competitor count x U(0.3, 1.6), re-scored by the stage-1 forest",
@@ -600,6 +813,7 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
         print(f"  RMSE (points)      : {section['rmse_points']}")
         print(f"  R^2                : {section['r2']}")
         print(f"  Accuracy (100-MAE) : {section['accuracy_percent']}%")
+        print(f"  Training config    : {training_config_hash[:12]} (fingerprint seed.py checks)")
         print(f"  Model saved to     : {os.path.join(MODEL_DIR, PLAN_MODEL_FILENAME)}")
         print("-" * 70)
 
@@ -609,8 +823,8 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
 def train_plan_only(verbose=True):
     """Stage 2 alone, on the stage-1 forest already on disk -- what
     seed.py runs when rf_model.pkl exists but plan_model.pkl does not,
-    so adding stage 2 to an existing install does not retrain (and
-    possibly shift) stage 1. Updates only the "plan_model" key of
+    or was trained on an older recipe (plan_model_staleness), so a new
+    or changed stage 2 does not retrain (and possibly shift) stage 1. Updates only the "plan_model" key of
     training_report.json. Falls back to a full run when there is no
     stage-1 model to build on."""
     rf_path = os.path.join(MODEL_DIR, RF_MODEL_FILE)

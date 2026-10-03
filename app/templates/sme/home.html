@@ -215,31 +215,96 @@
 </div>
 {% endif %}
 
-<!-- Industry cards (live viability score per business type, for the chosen plan's barangay) -->
-<div class="row g-3 mb-2" data-tour="industry-cards">
-  {% for card in industry_cards %}
-  <div class="col-6 col-lg-3">
-    <div class="dss-card dss-card-hover text-center h-100{{ ' dss-card-current' if card.name == plan_industry }}">
-      <div class="dss-industry-icon">{{ card.icon }}</div>
-      <h6 class="mb-0">{{ card.name }}</h6>
-      {% if card.subtitle %}<p class="dss-text-muted-sm mb-2">({{ card.subtitle }})</p>{% else %}<p class="mb-2">&nbsp;</p>{% endif %}
-      <div class="d-flex align-items-center justify-content-center gap-2 small">
-        <span>Market Score</span>
-        <strong class="fs-5">{{ card.score }}</strong>
-        {% if card.trend == 'up' %}<i class="bi bi-arrow-up-circle-fill text-success"></i>
-        {% elif card.trend == 'down' %}<i class="bi bi-arrow-down-circle-fill text-danger"></i>
-        {% else %}<i class="bi bi-dash-circle text-secondary"></i>{% endif %}
+{#
+  THE INDUSTRY SLIDER. Every one of the twenty sections, each with its
+  live Market Score for the chosen plan's barangay -- the old grid showed
+  eight, and the other twelve could only be seen by typing them into the
+  search box. The chosen plan's own industry comes first (ringed, and
+  aria-current), then the featured sections, then the rest
+  (sme_controller._industry_card_order).
+
+  It is a plain scrolling row first: a scroll-snap track that swipes on
+  a phone and scrolls with a trackpad or Shift+wheel, so with scripting
+  off every card is still one gesture away. static/js/industry_slider.js
+  adds the rest -- the Previous/Next buttons (hidden until it runs,
+  rather than shown dead), Left/Right on the focused track, and the
+  "Showing 1-4 of 20" count.
+
+  Each card opens the Saturation Map on that industry, focused on the
+  same barangay its score is for.
+
+  The icon is a Bootstrap Icon in a tinted tile, one glyph and colour per
+  section (INDUSTRY_DISPLAY "bi"/"hue" in app/ml/constants.py) -- the
+  emoji it replaces looked different on every phone. It is decorative:
+  the name is written beside it.
+
+  THE ARROW is the score's level drawn as a direction -- green up from
+  6.5, red down below 4, level in between -- not a change over time, so
+  its screen-reader text says what it means ("good chance") rather than
+  "rising". The arrow and the score pill share the plan chips' bands
+  (>= 6.5, >= 4), so the arrow never disagrees with the pill's colour.
+#}
+{% set industry_pill = {'good': 'dss-pill-low', 'fair': 'dss-pill-moderate', 'low': 'dss-pill-saturated'} %}
+{% set industry_level = {'up': 'a good chance', 'down': 'hard to compete', 'neutral': 'a fair chance'} %}
+<div class="dss-industry-slider mb-2" data-tour="industry-cards" data-industry-slider>
+  <div class="dss-industry-slider-head">
+    <div class="dss-industry-slider-title">
+      <h6 class="mb-0" id="industrySliderTitle">
+        <i class="bi bi-grid-3x3-gap" aria-hidden="true"></i> Industries in {{ default_location }}
+      </h6>
+      <div class="small text-muted" id="industrySliderStatus" data-industry-slider-status aria-live="polite">
+        {{ industry_cards|length }} industries
       </div>
     </div>
+    {# Icon-only: each has an aria-label and a title, like the plan
+       chips' icon buttons. `hidden` until the script runs -- a button
+       that does nothing without it should not be on the page. #}
+    <div class="dss-industry-slider-nav" data-industry-slider-nav hidden>
+      <button type="button" class="dss-icon-btn dss-slider-btn" data-industry-slider-prev
+              aria-controls="industryTrack" aria-label="Previous industries" title="Previous industries">
+        <i class="bi bi-chevron-left" aria-hidden="true"></i>
+      </button>
+      <button type="button" class="dss-icon-btn dss-slider-btn" data-industry-slider-next
+              aria-controls="industryTrack" aria-label="Next industries" title="Next industries">
+        <i class="bi bi-chevron-right" aria-hidden="true"></i>
+      </button>
+    </div>
+  </div>
+  {% if industry_cards %}
+  <div class="dss-industry-track" id="industryTrack" tabindex="0" role="region" aria-label="Industries"
+       data-industry-track>
+    <ul class="dss-industry-list">
+      {% for card in industry_cards %}
+      <li class="dss-industry-item">
+        <a class="dss-card dss-card-hover dss-industry-card{{ ' dss-card-current' if card.is_current }}"
+           href="{{ url_for('sme.saturation_map') }}?industry_type={{ card.name|urlencode }}&amp;location={{ default_location|urlencode }}"
+           title="Open the Saturation Map for {{ card.name }} in {{ default_location }}"
+           data-industry="{{ card.name }}"{{ ' aria-current="true"'|safe if card.is_current }}>
+          <span class="dss-industry-tile dss-hue-{{ card.hue }}" aria-hidden="true"><i class="bi {{ card.bi }}"></i></span>
+          {% if card.is_current %}<span class="dss-industry-current">Your plan</span>{% endif %}
+          <span class="dss-industry-name">{{ card.short }}</span>
+          {% if card.subtitle %}<span class="dss-industry-sub">{{ card.subtitle }}</span>{% endif %}
+          <span class="dss-industry-score">
+            <span class="text-muted">Market Score</span>
+            <strong class="dss-stat-pill {{ industry_pill.get(card.band, 'dss-pill-moderate') }}">{{ '%.1f'|format(card.score|float) }}</strong>
+            {% if card.trend == 'up' %}<i class="bi bi-arrow-up-circle-fill text-success" aria-hidden="true"></i>
+            {% elif card.trend == 'down' %}<i class="bi bi-arrow-down-circle-fill text-danger" aria-hidden="true"></i>
+            {% else %}<i class="bi bi-dash-circle text-secondary" aria-hidden="true"></i>{% endif %}
+            <span class="visually-hidden">({{ industry_level.get(card.trend, 'a fair chance') }})</span>
+          </span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
   </div>
   {% else %}
-  <div class="col-12 text-muted">Add a business profile to see live industry scores.</div>
-  {% endfor %}
+  <p class="text-muted mb-0">Add a business profile to see live industry scores.</p>
+  {% endif %}
 </div>
 <p class="text-muted small mb-4">
   Scores above are for <strong>{{ default_location }}</strong>{% if selected_plan %}, the barangay of
-  <strong>{{ selected_plan.business_name }}</strong>{% endif %} &middot; the full list of {{ business_types|length }}
-  industries is in the Industry type box above.
+  <strong>{{ selected_plan.business_name }}</strong>{% endif %} &middot; all {{ industry_cards|length }}
+  industries &mdash; use the arrows (or scroll sideways) to see more, and open a card for its Saturation Map.
 </p>
 
 <!-- Main analysis section -->
@@ -426,7 +491,7 @@
 
         {{ subcategory_compare(rec, compact=True) }}
 
-        {{ forecast_breakdown(rec, compact=True) }}
+        {{ forecast_breakdown(rec, compact=True, forecast=f) }}
 
         <p class="dss-text-muted-sm mb-1">Current vs. Projected Demand &amp; Viability (6-12 month)</p>
         <canvas id="outlookBarChart" height="130"></canvas>
@@ -740,6 +805,9 @@
 <script src="{{ url_for('static', filename='js/plan_form.js') }}"></script>
 <script src="{{ url_for('static', filename='js/plan_manage.js') }}"></script>
 <script src="{{ url_for('static', filename='js/location_picker.js') }}"></script>
+{# The industry slider's buttons, keys and "Showing 1-4 of 20" count --
+   the row itself scrolls without it. #}
+<script src="{{ url_for('static', filename='js/industry_slider.js') }}"></script>
 
 {% if featured_forecast %}
 <script>

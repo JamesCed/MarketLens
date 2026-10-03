@@ -67,13 +67,18 @@ def dashboard():
     from app.services.trend_analytics_service import (
         get_barangay_business_table,
         latest_market_data_by_key,
+        live_plan_forecasts,
     )
 
-    total_forecasts = ForecastResult.query.count()
+    # Forecasts of LIVE plans only: a plan an SME moved to Trash keeps its
+    # forecast rows (so it can be restored), and without the join to
+    # sme_profile inside live_plan_forecasts() it went on counting here
+    # -- an SME's "removed" plan still tallied as a saturated zone.
+    total_forecasts = live_plan_forecasts().count()
     # No stored cluster_label column -- Low/Saturated cut points come
     # straight from app/ml/constants.py CLUSTER_THRESHOLDS ([25, 50, 75, 100]).
-    saturated_count = ForecastResult.query.filter(ForecastResult.saturation_index > CLUSTER_THRESHOLDS[2]).count()
-    opportunity_count = ForecastResult.query.filter(ForecastResult.saturation_index <= CLUSTER_THRESHOLDS[0]).count()
+    saturated_count = live_plan_forecasts().filter(ForecastResult.saturation_index > CLUSTER_THRESHOLDS[2]).count()
+    opportunity_count = live_plan_forecasts().filter(ForecastResult.saturation_index <= CLUSTER_THRESHOLDS[0]).count()
 
     barangays_on_file = [
         row[0] for row in db.session.query(LguData.barangay).distinct().order_by(LguData.barangay).all()

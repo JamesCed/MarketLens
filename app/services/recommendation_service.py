@@ -12,7 +12,7 @@ one-sentence summary, a "Why This Works" reasons list, and a
 "Considerations" risks list (see app/templates/sme/recommendations.html
 and Reference/Figma_Storyboard's recommendations page).
 
-THE FORECAST ITSELF, AND ITS EXPLANATION. Since the two-stage model
+THE FORECAST ITSELF, AND ITS TRANSCRIPT. Since the two-stage model
 (app/services/plan_forecast_service.py, documented in
 Reference/FORECAST_MODEL.md) every plan forecast carries a payload: the
 market model's saturation, the trained plan model's viability, the
@@ -20,13 +20,22 @@ driver decomposition that says which inputs moved the score and by how
 much, and the money figures (capital runway, ramp-up, fixed costs,
 required daily sales, break-even window). That payload is stored in the
 recommendation under "forecast" and is ALWAYS the model's -- an LLM
-never writes or edits it. Next to it sits "explanation": a few
-plain-language sentences that transcribe what the model forecast and
-why. A deterministic rule-based explanation is always built from the
-payload; when the LLM is on, Gemini is asked for its own wording, and
-that wording is kept only if every number in it can be found in the
-payload (see ungrounded_numbers below) -- otherwise the rule-based one
-stands. Either way the explanation records who wrote it.
+never writes or edits it. Next to it sits the FORECAST TRANSCRIPT,
+stored under the key "explanation" (the name it had before it was
+called a transcript; kept so every stored row still reads): a few
+plain-language sentences in which Gemini transcribes the model's
+computation -- what it forecast, how the numbers led there, what that
+means for the owner.
+
+A deterministic rule-based MODEL SUMMARY is always built from the
+payload too. It is what stands when no AI transcript can be had (the
+LLM switched off, no usable key, every attempt failed), and the page
+labels it as exactly that. When the LLM is on, Gemini's transcript is
+kept only if every number in it is one the model produced (see
+ungrounded_numbers and review_transcript below); a draft that quotes
+anything else is sent back once and then pruned rather than thrown
+away (llm_service.transcribe_forecast). Either way the stored
+"explanation" records who wrote it, in "generated_by".
 
 The real schema has only ONE text column for this
 (forecast_result.recommendation TEXT -- no separate reasons_json /
@@ -61,6 +70,7 @@ import json
 import numbers
 import re
 from collections import namedtuple
+from datetime import datetime, timedelta, timezone
 
 from app.models import SystemSetting
 
@@ -76,10 +86,24 @@ from app.models import SystemSetting
 _KEYS = ("headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
          "subcategory_analysis", "innovation", "forecast", "explanation")
 
-# The provenance stamp on an explanation nobody's LLM wrote. Hyphenated
-# (unlike the recommendation's own "rule_based") because it is shown
-# to the user as a label and matched by the templates as such.
+# The provenance stamp on a transcript nobody's LLM wrote -- the
+# rule-based model summary. Hyphenated (unlike the recommendation's own
+# "rule_based") because it is matched by the templates as a label.
 RULE_BASED_EXPLANATION = "rule-based"
+
+# How long an AI transcript may run. The prompt asks for 5-8 sentences
+# (two short paragraphs at most); this is the ceiling past which a reply
+# is something other than that.
+TRANSCRIPT_MAX_CHARS = 2000
+# The least that still counts as a transcript once sentences quoting
+# unverifiable figures have been dropped: fewer than this and what is
+# left is a fragment, and the model summary is the better thing to show.
+TRANSCRIPT_MIN_SENTENCES = 3
+# After a failed upgrade of a stored forecast's transcript, how long the
+# page waits before asking again. A quota or an outage does not clear in
+# seconds, and every page view retrying it would spend whatever is left
+# of the free tier on requests that fail.
+TRANSCRIPT_RETRY_AFTER = timedelta(minutes=15)
 
 
 # ---------------------------------------------------------------------
@@ -1017,18 +1041,141 @@ def _choose_explanation(llm_text, llm_generated_by, rule_explanation, context):
     if not text:
         return rule_explanation
     invented = ungrounded_numbers(text, context)
-    if invented or len(text) > 1500:
+    if invented or len(text) > TRANSCRIPT_MAX_CHARS:
         try:
             from flask import current_app
 
             current_app.logger.info(
-                "LLM forecast explanation discarded (%s); using the rule-based explanation instead",
+                "LLM forecast transcript discarded (%s); asking for a dedicated transcript, else the "
+                "rule-based model summary stands",
                 f"numbers not in the model output: {', '.join(invented)}" if invented else "too long",
             )
         except Exception:  # pragma: no cover - no app context
             pass
         return rule_explanation
     return {"text": text, "generated_by": llm_generated_by}
+
+
+# ---------------------------------------------------------------------
+# 2c. Checking a DEDICATED transcript (llm_service.transcribe_forecast)
+# ---------------------------------------------------------------------
+# The dedicated call shows Gemini more than the one-call prompt does --
+# the seven scorecard parts, the capital adequacy, the residents per
+# business -- so its transcript is checked against a different pool: the
+# figures in the very block it was shown, read with the same _numbers_in
+# and matched with the same _matches as above. Nothing it was not shown
+# can ground it; everything it was shown can.
+
+def transcript_allowed_figures(lines, forecast):
+    """(plain, scaled, percents) for _matches, from the FORECAST
+    COMPUTATION block's lines -- [(text, percent_only), ...]. A figure
+    on a percent_only line (the gross margin, shown only as "40%")
+    grounds only a number written as a percentage, exactly as the margin
+    does in _grounding_numbers; every other figure grounds it written
+    either way. `scaled` is the viability in its other scale."""
+    plain, percents = set(), set()
+    for text, percent_only in lines:
+        for figure in _numbers_in(text):
+            (percents if percent_only else plain).add(abs(figure.value))
+    plan = (forecast or {}).get("plan") or {}
+    scaled = set()
+    if _number(plan.get("viability_score")) is not None:
+        scaled.add(abs(_number(plan.get("viability_score"))) * 10)
+    if _number(plan.get("viability_index")) is not None:
+        scaled.add(abs(_number(plan.get("viability_index"))) / 10)
+    return plain, scaled, percents
+
+
+def _sentences(paragraph):
+    """A paragraph's sentences: split after . ! or ? where the next one
+    starts with a capital (or ₱), so "vs. running costs", "6.1/10" and
+    "₱61,020" stay whole."""
+    parts = re.split(r"(?<=[.!?])\s+(?=[\"'“(]?[A-Z₱])", str(paragraph or "").strip())
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _paragraphs(text):
+    return [p for p in re.split(r"\n\s*\n", str(text or "")) if p.strip()]
+
+
+def states_viability(text, forecast):
+    """True when some sentence that talks about viability ("viability",
+    "viable") quotes the plan's own figure -- the score (6.1, or 6 out of
+    10) or the index (61.3, or 61 out of 100). A transcript that has lost
+    the verdict is not a transcript of this forecast."""
+    plan = (forecast or {}).get("plan") or {}
+    score, index = _number(plan.get("viability_score")), _number(plan.get("viability_index"))
+    for paragraph in _paragraphs(text):
+        for sentence in _sentences(paragraph):
+            if not re.search(r"viab", sentence, re.I):
+                continue
+            for figure in _numbers_in(sentence):
+                value = abs(figure.value)
+                if (score is not None and abs(value - score) < 0.5) or \
+                        (index is not None and abs(value - index) < 1.0):
+                    return True
+    return False
+
+
+def review_transcript(text, allowed, forecast):
+    """Everything wrong with a transcript, as a dict: "ungrounded" (the
+    figures, as written, that match nothing in `allowed`), "too_long",
+    "sentences" (how many), "states_viability", and "ok" -- True only
+    when there is nothing wrong at all."""
+    text = str(text or "")
+    ungrounded = [figure.written.strip() for figure in _numbers_in(text) if not _matches(figure, allowed)]
+    count = sum(len(_sentences(p)) for p in _paragraphs(text))
+    review = {
+        "ungrounded": ungrounded,
+        "too_long": len(text) > TRANSCRIPT_MAX_CHARS,
+        "sentences": count,
+        "states_viability": states_viability(text, forecast),
+    }
+    review["ok"] = (not ungrounded and not review["too_long"] and count >= TRANSCRIPT_MIN_SENTENCES
+                    and review["states_viability"])
+    return review
+
+
+def transcript_feedback(review):
+    """What the retry is told, in the model's terms: the offending
+    figures exactly as it wrote them, and anything else that was wrong."""
+    problems = []
+    if review.get("ungrounded"):
+        problems.append("It quoted figures that are not in the FORECAST COMPUTATION: "
+                        + "; ".join(dict.fromkeys(review["ungrounded"])) + ".")
+    if review.get("too_long"):
+        problems.append("It was too long -- keep to 5-8 sentences.")
+    if review.get("sentences", 0) < TRANSCRIPT_MIN_SENTENCES:
+        problems.append("It was too short -- write 5-8 sentences.")
+    if not review.get("states_viability"):
+        problems.append("It did not state the plan's viability score as given.")
+    return " ".join(problems) or "It did not meet the rules."
+
+
+def prune_transcript(text, allowed, forecast):
+    """The transcript with every sentence that quotes an unverifiable
+    figure dropped -- {"text", "kept", "dropped"} -- or None when what is
+    left is no longer a transcript (fewer than TRANSCRIPT_MIN_SENTENCES
+    sentences, the viability no longer stated, or still too long).
+
+    Whole sentences go, never single figures: "break-even in ₱ months"
+    with the number cut out would be worse than the sentence missing.
+    Paragraph breaks are kept."""
+    kept_paragraphs, kept, dropped = [], 0, 0
+    for paragraph in _paragraphs(text):
+        survivors = []
+        for sentence in _sentences(paragraph):
+            if any(not _matches(figure, allowed) for figure in _numbers_in(sentence)):
+                dropped += 1
+            else:
+                survivors.append(sentence)
+        if survivors:
+            kept += len(survivors)
+            kept_paragraphs.append(" ".join(survivors))
+    pruned = "\n\n".join(kept_paragraphs)
+    if not review_transcript(pruned, allowed, forecast)["ok"]:
+        return None
+    return {"text": pruned, "kept": kept, "dropped": dropped}
 
 
 def _rule_based_recommendation(context):
@@ -1096,12 +1243,24 @@ def build_recommendation(context):
 
     "forecast" is the trained model's payload from the context, on both
     paths: the LLM is asked to write ABOUT it and is never allowed to
-    supply it. The LLM's explanation replaces the rule-based one only
-    when it passes the grounding check (ungrounded_numbers); its
-    headline, summary, reasons and risks are used as before."""
+    supply it. The LLM's transcript (stored as "explanation") replaces
+    the rule-based model summary only when it passes the grounding check
+    (ungrounded_numbers); its headline, summary, reasons and risks are
+    used as before.
+
+    WHEN THAT TRANSCRIPT IS MISSING OR REJECTED, the dedicated
+    transcription call is asked before the model summary is settled for
+    (llm_service.transcribe_forecast: the whole computation, Gemini
+    first, one corrective retry, then sentence pruning). It is asked
+    when the one call answered at all -- some provider is working -- or,
+    if every provider failed it, when Gemini has a plausible key: the
+    dedicated call's reply is far shorter, so it can succeed where the
+    long one ran out of room. With no usable provider at all it is not
+    asked, since nothing would be different the second time."""
     recommendation = _rule_based_recommendation(context)
 
     if llm_recommendations_enabled():
+        from app.services import llm_service
         from app.services.llm_service import generate_recommendation_json
 
         llm_payload = generate_recommendation_json(context)
@@ -1141,6 +1300,24 @@ def build_recommendation(context):
             else:
                 recommendation["innovation"] = rule_innovation
 
+        explanation = recommendation.get("explanation")
+        still_the_summary = isinstance(explanation, dict) and \
+            not str(explanation.get("generated_by") or "").startswith("llm:")
+        if _forecast(context) is not None and still_the_summary and \
+                (llm_payload or llm_service.gemini_transcription_available()):
+            transcript = llm_service.transcribe_forecast(context)
+            if transcript:
+                recommendation["explanation"] = transcript
+            else:
+                # Gemini was just asked and failed. Stamp it as
+                # mark_transcript_failed would, so the page that shows
+                # this forecast does not ask again straight away -- it
+                # waits TRANSCRIPT_RETRY_AFTER like any failed upgrade.
+                recommendation["explanation"] = {
+                    **explanation,
+                    "transcript_failed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                }
+
     return recommendation
 
 
@@ -1173,15 +1350,144 @@ def _empty_recommendation():
 
 
 def _parse_explanation(value):
-    """{"text", "generated_by"} from storage, or None when the row has
-    no usable explanation (every row written before the two-stage
-    model)."""
+    """{"text", "generated_by"} from storage -- plus "transcript_failed_at"
+    when an upgrade to a Gemini transcript last failed (see
+    mark_transcript_failed) -- or None when the row has no usable
+    transcript (every row written before the two-stage model)."""
     if not isinstance(value, dict):
         return None
     text = str(value.get("text") or "").strip()
     if not text:
         return None
-    return {"text": text, "generated_by": str(value.get("generated_by") or RULE_BASED_EXPLANATION)}
+    parsed = {"text": text, "generated_by": str(value.get("generated_by") or RULE_BASED_EXPLANATION)}
+    if isinstance(value.get("transcript_failed_at"), str):
+        parsed["transcript_failed_at"] = value["transcript_failed_at"]
+    return parsed
+
+
+# ---------------------------------------------------------------------
+# 3b. Upgrading a STORED forecast's transcript
+# ---------------------------------------------------------------------
+# A forecast stored with the rule-based model summary -- made while no
+# Gemini key was configured, or before the transcript existed -- is
+# upgraded after the fact, from the page, without blocking its render:
+# the page shows the summary with a "Gemini is transcribing..." note,
+# and static/js/forecast_transcript.js asks
+# POST /api/forecasts/<id>/transcript (api_controller). Nothing is
+# re-scored: the context is rebuilt from the stored payload and the
+# plan, and only the stored "explanation" changes.
+
+def _utc(stamp):
+    """An ISO timestamp as an aware UTC datetime, or None. A naive one is
+    read as UTC (that is how every timestamp here is written)."""
+    try:
+        when = datetime.fromisoformat(str(stamp).strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def transcript_failed_recently(explanation, now=None):
+    """True while a failed upgrade is younger than TRANSCRIPT_RETRY_AFTER."""
+    if not isinstance(explanation, dict):
+        return False
+    when = _utc(explanation.get("transcript_failed_at"))
+    if when is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    return now - when < TRANSCRIPT_RETRY_AFTER
+
+
+def transcript_upgrade_due(rec, now=None):
+    """Whether the page should ask for a Gemini transcript of this parsed
+    recommendation (parse_recommendation's dict): it carries the model's
+    payload, its transcript is still the rule-based model summary, no
+    upgrade failed in the last TRANSCRIPT_RETRY_AFTER, and Gemini can
+    plausibly be asked (llm_service.gemini_transcription_available --
+    the LLM switch on and a usable Gemini key). Registered as the
+    template global `forecast_transcript_due` (api_controller), read by
+    shared/_plan_insights.html. The cheap checks come first, so a page
+    of AI-written transcripts never touches the key or the switch."""
+    if not isinstance(rec, dict) or not isinstance(rec.get("forecast"), dict):
+        return False
+    explanation = rec.get("explanation")
+    if not isinstance(explanation, dict) or not explanation.get("text"):
+        return False
+    if str(explanation.get("generated_by") or "").startswith("llm:"):
+        return False
+    if transcript_failed_recently(explanation, now):
+        return False
+    from app.services.llm_service import gemini_transcription_available
+
+    return gemini_transcription_available()
+
+
+def stored_recommendation(raw_text):
+    """forecast_result.recommendation as the dict it was stored as, or
+    None for a legacy plain-text row or anything unreadable."""
+    try:
+        payload = json.loads(str(raw_text or ""))
+    except (ValueError, TypeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def store_transcript(raw_text, transcript):
+    """The stored recommendation JSON with ONLY its "explanation"
+    replaced by `transcript` ({"text", "generated_by"}). Every other key
+    -- the payload, the headline, the reasons, anything a later version
+    added -- is written back exactly as it was read; the retry stamp of
+    an earlier failure goes with the summary it was attached to."""
+    payload = stored_recommendation(raw_text)
+    if payload is None:
+        raise ValueError("not a stored JSON recommendation")
+    payload["explanation"] = {"text": transcript["text"], "generated_by": transcript["generated_by"]}
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def mark_transcript_failed(raw_text, now=None):
+    """The stored recommendation JSON with explanation["transcript_failed_at"]
+    set to now (ISO, UTC), so the page leaves this forecast alone for
+    TRANSCRIPT_RETRY_AFTER. The model summary's text and everything else
+    stay as they were."""
+    payload = stored_recommendation(raw_text)
+    if payload is None:
+        raise ValueError("not a stored JSON recommendation")
+    explanation = dict(payload.get("explanation") or {}) if isinstance(payload.get("explanation"), dict) else {}
+    explanation["transcript_failed_at"] = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    payload["explanation"] = explanation
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def transcript_context(forecast_row, sme_profile):
+    """The context transcribe_forecast needs, rebuilt for a STORED
+    forecast -- from its stored payload and its plan, with no scoring.
+    The market figures come from the payload (what the forecast actually
+    said), the row's own columns standing in only where an older payload
+    lacks one. None when the row has no payload to transcribe."""
+    stored = parse_recommendation(forecast_row.recommendation)
+    payload = stored.get("forecast")
+    if not isinstance(payload, dict):
+        return None
+    market = payload.get("market") or {}
+    plan = payload.get("plan") or {}
+    inputs = payload.get("inputs") or {}
+    saturation = _number(market.get("saturation_index"), _number(forecast_row.saturation_index, 0.0))
+    scores = {
+        "saturation_index": saturation,
+        "industry_saturation_index": _number(market.get("industry_saturation_index"), saturation),
+        "cluster_label": market.get("cluster_label") or forecast_row.cluster_label,
+        "viability_score": _number(plan.get("viability_score"), _number(forecast_row.viability_score, 0.0)),
+        "confidence_level": _number(forecast_row.confidence_level,
+                                    _number(plan.get("confidence"), _number(market.get("confidence"), 0.0))),
+        "competitor_count": int(_number(market.get("competitor_count"), 0) or 0),
+    }
+    return build_recommendation_context(
+        sme_profile, scores,
+        population=_number(inputs.get("population"), 0) or 0,
+        subcategory_analysis=stored.get("subcategory_analysis"),
+        plan_forecast=payload,
+    )
 
 
 def _opportunity_type_from_headline(headline):
