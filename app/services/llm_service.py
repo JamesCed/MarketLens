@@ -1547,6 +1547,16 @@ def _log_transcript(message, *args):
         pass
 
 
+# How many corrective rewrites a rejected transcript draft gets before
+# the unverifiable sentences are pruned instead.
+TRANSCRIPT_REPAIRS = 2
+# The most one transcript may spend waiting on the AI, in seconds. A new
+# ask is only started while a whole GEMINI_TIMEOUT_SECONDS still fits, so
+# the extra asks above can never carry a request past gunicorn's 120 s
+# (a forecast run makes the one-call request first, then this).
+TRANSCRIPT_TIME_BUDGET_SECONDS = 65
+
+
 def transcribe_forecast(context):
     """The dedicated transcription call: Gemini (first -- see
     _ask_for_transcript) is handed the whole computation behind the
@@ -1580,13 +1590,26 @@ def transcribe_forecast(context):
     if not isinstance(forecast, dict):
         return None
 
+    import time
+
     _begin_attempt()
+    started = time.monotonic()
+
+    def time_for_another_ask():
+        return time.monotonic() - started + GEMINI_TIMEOUT_SECONDS <= TRANSCRIPT_TIME_BUDGET_SECONDS
+
     lines = _transcript_lines(context)
     allowed = rec_service.transcript_allowed_figures(
         [(text, kind == "percent") for text, kind in lines if kind != "head"], forecast
     )
 
     draft, provider = _ask_for_transcript(_transcript_prompt(lines))
+    if not draft and time_for_another_ask():
+        # A busy minute (429), a timeout or a dropped connection is
+        # usually gone a moment later; one more ask is cheaper than an
+        # owner looking at the model summary until the next retry.
+        _log_transcript("no usable transcript on the first ask; asking once more")
+        draft, provider = _ask_for_transcript(_transcript_prompt(lines))
     if not draft:
         _log_transcript("no provider returned a usable transcript; the model summary stands")
         return None
@@ -1599,17 +1622,27 @@ def transcribe_forecast(context):
     if review["ok"]:
         return result(draft)
 
-    feedback = rec_service.transcript_feedback(review)
-    _log_transcript("%s's draft rejected (%s); asking it once more with that feedback", provider, feedback)
-    retry, _ = _ask_for_transcript(_transcript_prompt(lines, feedback=feedback), only=provider)
-    if retry:
+    # Up to TRANSCRIPT_REPAIRS rewrites, each told exactly what was wrong
+    # with the one before. One slipped figure in eight good sentences is
+    # a fixable mistake, and a second chance fixes most of what a first
+    # one does not.
+    candidate = draft
+    for attempt in range(1, TRANSCRIPT_REPAIRS + 1):
+        if not time_for_another_ask():
+            _log_transcript("no time left for another rewrite; pruning what there is")
+            break
+        feedback = rec_service.transcript_feedback(review)
+        _log_transcript("%s's draft rejected (%s); rewrite %s of %s with that feedback",
+                        provider, feedback, attempt, TRANSCRIPT_REPAIRS)
+        retry, _ = _ask_for_transcript(_transcript_prompt(lines, feedback=feedback), only=provider)
+        if not retry:
+            break
+        candidate = retry
         review = rec_service.review_transcript(retry, allowed, forecast)
         if review["ok"]:
             _log_transcript("%s's rewrite passed the number check", provider)
             return result(retry)
-        _log_transcript("%s's rewrite rejected too (%s)", provider, rec_service.transcript_feedback(review))
 
-    candidate = retry or draft
     pruned = rec_service.prune_transcript(candidate, allowed, forecast)
     if pruned:
         _log_transcript("kept %s sentence(s) of %s's transcript after dropping %s with unverifiable figures",

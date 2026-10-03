@@ -18,6 +18,7 @@
   creates or changes a plan.
 #}
 
+{% from "shared/_plan_insights.html" import transcript_queue_hooks %}
 {% block content %}
 {% set first_name = (current_user.name or '').split(' ')[0] %}
 <div class="dss-overview-hero mb-4">
@@ -197,4 +198,8 @@
 </div>
 
 {% include "shared/_footer.html" %}
+
+{# Gemini transcripts for every plan, in the background, so each plan's
+   forecast is already transcribed when it is opened in Planning. #}
+{{ transcript_queue_hooks(plan_rows|map(attribute='forecast')|list) }}
 {% endblock %}

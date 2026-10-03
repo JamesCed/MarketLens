@@ -638,6 +638,9 @@ def planning():
         has_lgu_data=has_lgu_data,
         lgu_dataset=active_lgu_dataset_summary() if has_lgu_data else None,
         retention_days=TRASH_RETENTION_DAYS,
+        # Each plan's latest forecast, for the background Gemini
+        # transcript queue (shared/_plan_insights.html).
+        plan_forecasts=list(latest_by_plan.values()),
     )
 
 

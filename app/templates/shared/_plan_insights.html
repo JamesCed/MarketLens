@@ -317,3 +317,27 @@
     {{ explanation_paragraph(rec, compact=compact, forecast=forecast) }}
   {% endif %}
 {%- endmacro %}
+
+
+{#
+  transcript_queue_hooks(forecasts)
+  Every plan's forecast transcript, upgraded in the background -- not
+  only the plan on screen. `forecasts` is each plan's LATEST forecast.
+  Each one still holding the rule-based model summary (or predating the
+  plan model) gets a hidden hook; forecast_transcript.js asks for them
+  one at a time, after any visible transcript on the page, and a hook
+  for a forecast already shown on the page shares that one request. The
+  hooks are invisible: an owner opening any plan later finds Gemini's
+  transcript already there.
+#}
+{% macro transcript_queue_hooks(forecasts) -%}
+  {% set items = transcript_queue(forecasts) if transcript_queue is defined else [] %}
+  {% if items %}
+    <div hidden data-transcript-queue>
+      {% for fid, url in items %}
+        <span data-forecast-transcript data-transcript-url="{{ url }}" data-forecast-id="{{ fid }}"></span>
+      {% endfor %}
+    </div>
+    <script src="{{ url_for('static', filename='js/forecast_transcript.js') }}" defer></script>
+  {% endif %}
+{%- endmacro %}

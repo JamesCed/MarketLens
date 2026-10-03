@@ -663,6 +663,7 @@ def test_an_llm_explanation_that_invents_a_number_is_replaced(app, monkeypatch):
     explanation = dict(recommendation["explanation"])
     # The failed Gemini attempt is stamped, so the page does not retry at once.
     assert explanation.pop("transcript_failed_at")
+    assert explanation.pop("transcript_failed_version") == rec_service.TRANSCRIPT_REQUEST_VERSION
     assert explanation == rec_service._rule_based_explanation(_context())
     assert recommendation["explanation"]["generated_by"] == "rule-based"
     assert "2,400,000" not in json.dumps(recommendation, ensure_ascii=False)

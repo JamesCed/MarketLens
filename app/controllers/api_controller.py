@@ -643,7 +643,25 @@ def forecast_transcript(forecast_id):
     rec = rec_service.parse_recommendation(forecast.recommendation)
     explanation = rec.get("explanation")
     if stored is None or rec.get("forecast") is None or explanation is None:
-        return jsonify({"ok": False, "reason": "no_payload"})
+        # A forecast from before the trained plan model has no computation
+        # to transcribe. If it is still the plan's LATEST forecast, re-run
+        # it: the new forecast is scored by both models and Gemini writes
+        # its transcript as part of the run. (An older, superseded row is
+        # left alone -- the plan's current forecast is the one that counts.)
+        latest = plan.latest_forecast()
+        if latest is None or latest.forecast_id != forecast.forecast_id \
+                or not llm_service.gemini_transcription_available():
+            return jsonify({"ok": False, "reason": "no_payload"})
+        from app.services.forecasting_service import generate_forecast_for_profile
+
+        fresh = generate_forecast_for_profile(plan)
+        fresh_rec = rec_service.parse_recommendation(fresh.recommendation)
+        fresh_explanation = fresh_rec.get("explanation")
+        if fresh_explanation and fresh_explanation["generated_by"].startswith("llm:"):
+            return jsonify({"ok": True, "text": fresh_explanation["text"],
+                            "generated_by": fresh_explanation["generated_by"],
+                            "badge_html": str(badge(fresh_explanation)), "refreshed": True})
+        return jsonify({"ok": False, "reason": "failed"})
     if explanation["generated_by"].startswith("llm:"):
         # Already transcribed -- by an earlier request, another tab, or
         # the forecast run itself. Nothing to spend a call on.
@@ -684,6 +702,32 @@ def _forecast_transcript_due(rec):
 
 
 api_bp.add_app_template_global(_forecast_transcript_due, "forecast_transcript_due")
+
+
+def _transcript_queue(forecasts):
+    """[(forecast_id, url)] for every forecast in `forecasts` (each plan's
+    latest) that should get a Gemini transcript in the background -- see
+    recommendation_service.transcript_queue_due. The Planning and Home
+    pages render these as hidden hooks for forecast_transcript.js, so
+    EVERY plan is transcribed, not only the one on screen."""
+    from flask import url_for
+
+    from app.services.recommendation_service import parse_recommendation, transcript_queue_due
+
+    out = []
+    try:
+        for forecast in forecasts or []:
+            if forecast is None:
+                continue
+            if transcript_queue_due(parse_recommendation(forecast.recommendation)):
+                out.append((forecast.forecast_id,
+                            url_for("api.forecast_transcript", forecast_id=forecast.forecast_id)))
+    except Exception:  # noqa: BLE001 -- a page render must never fail on this
+        return []
+    return out
+
+
+api_bp.add_app_template_global(_transcript_queue, "transcript_queue")
 
 
 @api_bp.route("/notifications")

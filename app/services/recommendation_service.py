@@ -103,7 +103,13 @@ TRANSCRIPT_MIN_SENTENCES = 3
 # page waits before asking again. A quota or an outage does not clear in
 # seconds, and every page view retrying it would spend whatever is left
 # of the free tier on requests that fail.
-TRANSCRIPT_RETRY_AFTER = timedelta(minutes=15)
+TRANSCRIPT_RETRY_AFTER = timedelta(minutes=5)
+# The version of the Gemini request a failure stamp was made with. A
+# stamp from an OLDER request (the one that still sent temperature, see
+# llm_service._gemini_generation_config) says nothing about whether the
+# current request works, so it is ignored and the forecast is retried at
+# once. Bump this whenever the request itself is fixed.
+TRANSCRIPT_REQUEST_VERSION = 2
 
 
 # ---------------------------------------------------------------------
@@ -1434,6 +1440,7 @@ def build_recommendation(context):
                 recommendation["explanation"] = {
                     **explanation,
                     "transcript_failed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "transcript_failed_version": TRANSCRIPT_REQUEST_VERSION,
                 }
 
     return recommendation
@@ -1502,6 +1509,7 @@ def _parse_explanation(value):
     parsed = {"text": text, "generated_by": str(value.get("generated_by") or RULE_BASED_EXPLANATION)}
     if isinstance(value.get("transcript_failed_at"), str):
         parsed["transcript_failed_at"] = value["transcript_failed_at"]
+        parsed["transcript_failed_version"] = value.get("transcript_failed_version")
     return parsed
 
 
@@ -1528,8 +1536,12 @@ def _utc(stamp):
 
 
 def transcript_failed_recently(explanation, now=None):
-    """True while a failed upgrade is younger than TRANSCRIPT_RETRY_AFTER."""
+    """True while a failed upgrade is younger than TRANSCRIPT_RETRY_AFTER
+    AND was made with the current Gemini request -- a stamp left by an
+    older request version is ignored (see TRANSCRIPT_REQUEST_VERSION)."""
     if not isinstance(explanation, dict):
+        return False
+    if explanation.get("transcript_failed_version") != TRANSCRIPT_REQUEST_VERSION:
         return False
     when = _utc(explanation.get("transcript_failed_at"))
     if when is None:
@@ -1556,6 +1568,22 @@ def transcript_upgrade_due(rec, now=None):
     if str(explanation.get("generated_by") or "").startswith("llm:"):
         return False
     if transcript_failed_recently(explanation, now):
+        return False
+    from app.services.llm_service import gemini_transcription_available
+
+    return gemini_transcription_available()
+
+
+def transcript_queue_due(rec, now=None):
+    """Whether a plan's LATEST forecast should be queued for a Gemini
+    transcript in the background (Planning and Home queue every plan,
+    not only the one on screen). Either its transcript can be upgraded
+    (transcript_upgrade_due), or it predates the plan model altogether
+    -- no payload to transcribe -- and the endpoint re-runs the plan's
+    forecast, which writes a transcript as it goes."""
+    if transcript_upgrade_due(rec, now):
+        return True
+    if not isinstance(rec, dict) or isinstance(rec.get("forecast"), dict):
         return False
     from app.services.llm_service import gemini_transcription_available
 
@@ -1595,6 +1623,7 @@ def mark_transcript_failed(raw_text, now=None):
         raise ValueError("not a stored JSON recommendation")
     explanation = dict(payload.get("explanation") or {}) if isinstance(payload.get("explanation"), dict) else {}
     explanation["transcript_failed_at"] = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    explanation["transcript_failed_version"] = TRANSCRIPT_REQUEST_VERSION
     payload["explanation"] = explanation
     return json.dumps(payload, ensure_ascii=False)
 

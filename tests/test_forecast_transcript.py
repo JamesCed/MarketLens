@@ -330,10 +330,10 @@ def test_a_rewrite_that_still_invents_is_pruned_sentence_by_sentence(app, monkey
     still_wrong = TRANSCRIPT + INVENTED_SENTENCE
     with app.app_context():
         _gemini_on(app, monkeypatch)
-        calls = _generators(monkeypatch, {"gemini": [_reply(still_wrong), _reply(still_wrong)]})
+        calls = _generators(monkeypatch, {"gemini": [_reply(still_wrong)] * 3})
         result = llm_service.transcribe_forecast(_context())
 
-    assert len(calls) == 2
+    assert len(calls) == 3, "the first draft and two corrective rewrites"
     assert result["generated_by"] == f"llm:gemini:{MODEL}"
     assert "2,400,000" not in result["text"]
     assert result["text"] == TRANSCRIPT, "only the sentence with the invented figure is dropped"
@@ -346,7 +346,7 @@ def test_pruning_that_leaves_too_little_falls_back(app, monkeypatch):
             "You will sell 900 items a day. Profit is ₱75,000 a month. Break even in 4 months.")
     with app.app_context():
         _gemini_on(app, monkeypatch)
-        _generators(monkeypatch, {"gemini": [_reply(thin), _reply(thin)]})
+        _generators(monkeypatch, {"gemini": [_reply(thin)] * 3})
         assert llm_service.transcribe_forecast(_context()) is None
 
 
@@ -356,7 +356,7 @@ def test_pruning_that_loses_the_viability_falls_back(app, monkeypatch):
             "Plan for a break-even window of 10-15 months.")
     with app.app_context():
         _gemini_on(app, monkeypatch)
-        _generators(monkeypatch, {"gemini": [_reply(lost), _reply(lost)]})
+        _generators(monkeypatch, {"gemini": [_reply(lost)] * 3})
         assert llm_service.transcribe_forecast(_context()) is None
 
 
@@ -365,7 +365,8 @@ def test_no_answer_at_all_is_none(app, monkeypatch):
         _gemini_on(app, monkeypatch)
         calls = _generators(monkeypatch, {})
         assert llm_service.transcribe_forecast(_context()) is None
-    assert [name for name, _ in calls] == ["gemini", "openai", "anthropic"]
+    assert [name for name, _ in calls] == ["gemini", "openai", "anthropic"] * 2, \
+        "a round with no answer at all is tried once more before giving up"
 
 
 def test_no_payload_means_no_transcript_call(app, monkeypatch):
@@ -599,7 +600,7 @@ def test_a_trashed_plan_s_forecast_is_404(app, stored, monkeypatch):
     assert response.status_code == 404
 
 
-def test_a_failure_is_stamped_and_backs_off_for_15_minutes(app, stored, monkeypatch):
+def test_a_failure_is_stamped_and_backs_off(app, stored, monkeypatch):
     with app.app_context():
         _gemini_on(app, monkeypatch)
         seen = _fake_transcriber(monkeypatch, None)
@@ -624,15 +625,22 @@ def test_a_failure_is_stamped_and_backs_off_for_15_minutes(app, stored, monkeypa
         {k: v for k, v in before.items() if k != "explanation"}
 
 
-def test_the_backoff_window_is_15_minutes():
-    explanation = {"text": "t", "generated_by": "rule-based"}
+def test_the_backoff_window_is_5_minutes_and_versioned():
+    version = rec_service.TRANSCRIPT_REQUEST_VERSION
+    explanation = {"text": "t", "generated_by": "rule-based", "transcript_failed_version": version}
     now = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
-    for minutes, recent in ((1, True), (14, True), (15, False), (60, False)):
+    for minutes, recent in ((1, True), (4, True), (5, False), (60, False)):
         explanation["transcript_failed_at"] = (now - timedelta(minutes=minutes)).isoformat()
         assert rec_service.transcript_failed_recently(explanation, now=now) is recent, minutes
     # A naive stamp is read as UTC.
-    explanation["transcript_failed_at"] = (now - timedelta(minutes=5)).replace(tzinfo=None).isoformat()
+    explanation["transcript_failed_at"] = (now - timedelta(minutes=2)).replace(tzinfo=None).isoformat()
     assert rec_service.transcript_failed_recently(explanation, now=now) is True
+    # A stamp left by an OLDER Gemini request says nothing about this one:
+    # it is ignored, and the forecast is retried at once.
+    old = {"text": "t", "generated_by": "rule-based", "transcript_failed_at": (now - timedelta(minutes=1)).isoformat()}
+    assert rec_service.transcript_failed_recently(old, now=now) is False
+    old["transcript_failed_version"] = version - 1
+    assert rec_service.transcript_failed_recently(old, now=now) is False
 
 
 def test_the_stamp_survives_parsing_so_the_page_can_honour_it():
@@ -656,13 +664,52 @@ def test_without_a_usable_gemini_key_the_endpoint_asks_nobody(app, stored, monke
     assert seen == []
 
 
-def test_a_forecast_from_before_the_plan_model_has_nothing_to_transcribe(app, stored, monkeypatch):
+def test_a_forecast_from_before_the_plan_model_is_re_run_with_a_transcript(app, stored, monkeypatch):
+    """A plan's latest forecast with no payload has nothing to transcribe,
+    so the plan's forecast is re-run -- both models, and Gemini's
+    transcript written as part of the run."""
+    from app.services import forecasting_service
+
     with app.app_context():
         _gemini_on(app, monkeypatch)
         row = db.session.get(ForecastResult, stored["forecast_id"])
         old = json.loads(row.recommendation)
         old.pop("forecast")
         row.recommendation = json.dumps(old)
+        db.session.commit()
+
+        reruns = []
+
+        def fake_rerun(plan):
+            reruns.append(plan.sme_id)
+            fresh = ForecastResult(sme_id=plan.sme_id, market_id=row.market_id, lgu_id=row.lgu_id,
+                                   viability_score=6.1, saturation_index=42.1, confidence_level=84.0,
+                                   model_version="rf_v1+plan_rf_v1", input_industry_type=row.input_industry_type,
+                                   input_location=row.input_location,
+                                   recommendation=json.dumps({**json.loads(stored["raw"]), "explanation": {
+                                       "text": TRANSCRIPT, "generated_by": f"llm:gemini:{MODEL}"}}))
+            db.session.add(fresh)
+            db.session.commit()
+            return fresh
+
+        monkeypatch.setattr(forecasting_service, "generate_forecast_for_profile", fake_rerun)
+        data = _client(app, "owner@transcript.test").post(
+            f"/api/forecasts/{stored['forecast_id']}/transcript").get_json()
+    assert reruns, "the plan's forecast was re-run"
+    assert data["ok"] is True and data["generated_by"] == f"llm:gemini:{MODEL}" and data["refreshed"] is True
+
+
+def test_a_superseded_pre_model_forecast_is_left_alone(app, stored, monkeypatch):
+    with app.app_context():
+        _gemini_on(app, monkeypatch)
+        row = db.session.get(ForecastResult, stored["forecast_id"])
+        old = json.loads(row.recommendation)
+        old.pop("forecast")
+        row.recommendation = json.dumps(old)
+        newer = ForecastResult(sme_id=row.sme_id, market_id=row.market_id, lgu_id=row.lgu_id,
+                               viability_score=6.0, saturation_index=40.0, confidence_level=80.0,
+                               model_version="rf_v1+plan_rf_v1", recommendation=stored["raw"])
+        db.session.add(newer)
         db.session.commit()
         data = _client(app, "owner@transcript.test").post(
             f"/api/forecasts/{stored['forecast_id']}/transcript").get_json()
@@ -740,10 +787,15 @@ def test_the_hook_is_rendered_only_when_gemini_can_be_asked(app, monkeypatch):
         # inside the back-off, not with the switch off, not with an sk- key.
         assert "data-forecast-transcript" not in _render(app, _rec(), forecast=None)
         assert "data-forecast-transcript" not in _render(app, _rec(generated_by=f"llm:gemini:{MODEL}"))
+        version = rec_service.TRANSCRIPT_REQUEST_VERSION
         recent = datetime.now(timezone.utc).isoformat()
-        assert "data-forecast-transcript" not in _render(app, _rec(transcript_failed_at=recent))
-        stale = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
-        assert "data-forecast-transcript" in _render(app, _rec(transcript_failed_at=stale))
+        assert "data-forecast-transcript" not in _render(
+            app, _rec(transcript_failed_at=recent, transcript_failed_version=version))
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat()
+        assert "data-forecast-transcript" in _render(
+            app, _rec(transcript_failed_at=stale, transcript_failed_version=version))
+        # A stamp from the old (pre-fix) Gemini request does not hold it back.
+        assert "data-forecast-transcript" in _render(app, _rec(transcript_failed_at=recent))
         monkeypatch.setenv("USE_LLM_RECOMMENDATIONS", "false")
         assert "data-forecast-transcript" not in _render(app, _rec())
         monkeypatch.setenv("USE_LLM_RECOMMENDATIONS", "true")
@@ -834,3 +886,90 @@ def test_the_admin_switch_says_gemini_writes_the_transcript(app):
         _user("admin@transcript.test", role="Admin")
         page = _client(app, "admin@transcript.test").get("/admin/settings").get_data(as_text=True)
     assert "Gemini writes the forecast transcript" in page
+
+
+# ---------------------------------------------------------------------
+# Every plan is transcribed, not only the one on screen
+# ---------------------------------------------------------------------
+
+def _second_plan(stored):
+    """Another plan of the same owner, with its own model-summary forecast
+    (copied from the stored one -- the same state)."""
+    first = db.session.get(ForecastResult, stored["forecast_id"])
+    plan = SmeProfile(user_id=db.session.get(SmeProfile, stored["sme_id"]).user_id, business_name="Kape sa Tibag",
+                      industry_type="Food and Beverage", location="Tibag", business_stage="startup",
+                      startup_capital=200000, employee_count=1)
+    db.session.add(plan)
+    db.session.commit()
+    other = ForecastResult(sme_id=plan.sme_id, market_id=first.market_id, lgu_id=first.lgu_id,
+                           viability_score=first.viability_score, saturation_index=first.saturation_index,
+                           confidence_level=first.confidence_level, model_version=first.model_version,
+                           input_industry_type=first.input_industry_type, input_location=first.input_location,
+                           recommendation=stored["raw"], forecast_date=first.forecast_date)
+    db.session.add(other)
+    db.session.commit()
+    return plan, other
+
+
+@pytest.mark.parametrize("page", ["/planning", "/home"])
+def test_every_plan_is_queued_for_a_transcript_not_only_the_one_on_screen(app, stored, monkeypatch, page):
+    with app.app_context():
+        _gemini_on(app, monkeypatch)
+        _plan, other = _second_plan(stored)
+        client = _client(app, "owner@transcript.test")
+        # View the FIRST plan; the second must still be queued.
+        html = client.get(f"{page}?plan={stored['sme_id']}" if page == "/planning" else page).get_data(as_text=True)
+    assert "data-transcript-queue" in html
+    assert f'data-transcript-url="/api/forecasts/{other.forecast_id}/transcript"' in html
+    assert f'data-transcript-url="/api/forecasts/{stored["forecast_id"]}/transcript"' in html
+    assert "js/forecast_transcript.js" in html
+
+
+def test_nothing_is_queued_when_gemini_cannot_be_asked(app, stored, monkeypatch):
+    with app.app_context():
+        _second_plan(stored)
+        html = _client(app, "owner@transcript.test").get("/planning").get_data(as_text=True)
+    assert "data-transcript-queue" not in html
+
+
+def test_an_already_transcribed_plan_is_not_queued(app, stored, monkeypatch):
+    with app.app_context():
+        _gemini_on(app, monkeypatch)
+        _plan, other = _second_plan(stored)
+        other.recommendation = json.dumps({**json.loads(stored["raw"]), "explanation": {
+            "text": TRANSCRIPT, "generated_by": f"llm:gemini:{MODEL}"}})
+        db.session.commit()
+        html = _client(app, "owner@transcript.test").get(f"/planning?plan={stored['sme_id']}").get_data(as_text=True)
+    assert f"/api/forecasts/{other.forecast_id}/transcript" not in html
+
+
+def test_the_script_processes_hidden_queue_hooks():
+    with open(os.path.join(ROOT, "app", "static", "js", "forecast_transcript.js"), encoding="utf-8") as f:
+        script = f.read()
+    # The queue hooks carry the same attributes the visible hooks do, and
+    # the script's selector picks up both; a hook with no status/text
+    # elements is simply posted for, with nothing to repaint.
+    assert 'querySelectorAll("[data-forecast-transcript][data-transcript-url]")' in script
+    assert 'hook.querySelector("[data-transcript-status]")' in script and "if (!status) return;" in script
+
+
+def test_extra_asks_stop_when_the_time_budget_is_spent(app, monkeypatch):
+    """A slow AI must not carry one request past gunicorn's limit: once a
+    whole timeout no longer fits in the budget, no new ask is started."""
+    import time as time_module
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(time_module, "monotonic", lambda: clock["now"])
+    with app.app_context():
+        _gemini_on(app, monkeypatch)
+        calls = []
+
+        def slow(prompt):
+            calls.append(prompt)
+            clock["now"] += 40  # each answer takes 40 s
+            return _reply(TRANSCRIPT + INVENTED_SENTENCE)
+
+        monkeypatch.setitem(llm_service._GENERATORS, "gemini", slow)
+        result = llm_service.transcribe_forecast(_context())
+    assert len(calls) == 1, "40 s spent + a 30 s timeout no longer fits in 65 s"
+    assert result and "2,400,000" not in result["text"], "the draft is pruned instead"

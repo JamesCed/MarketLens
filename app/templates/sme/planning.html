@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Planning{% endblock %}
 {% from "shared/_plan_fields.html" import plan_core_fields %}
-{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, forecast_breakdown, explanation_badge, competitor_insight_panel %}
+{% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, forecast_breakdown, explanation_badge, competitor_insight_panel, transcript_queue_hooks %}
 {% set plan_industry = selected_plan.industry_type if selected_plan else featured_industry_type %}
 {% set trash_count = (trashed_plans or [])|length %}
 
@@ -522,6 +522,9 @@
      the same bar, and so Contact Us exists for every role rather than
      only for an SME. -->
 {% include "shared/_footer.html" %}
+
+{# Gemini transcripts for EVERY plan, in the background -- see the macro. #}
+{{ transcript_queue_hooks(plan_forecasts) }}
 
 <!-- One barangay list for every plan form on the page (Add, and each
      plan's Edit) -- 76 options once, not once per dialog. -->
