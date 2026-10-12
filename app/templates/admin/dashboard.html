@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set use_charts = true %}
 {% import "admin/_audit_macros.html" as audit with context %}
 {% block title %}Admin Dashboard{% endblock %}
 
@@ -154,7 +155,6 @@
   <div class="col-6 col-md"><a href="{{ url_for('admin.datasets') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-hdd-stack d-block fs-3 mb-1"></i> Datasets</a></div>
   <div class="col-6 col-md"><a href="{{ url_for('admin.settings') }}" class="btn btn-outline-primary w-100 py-3"><i class="bi bi-sliders d-block fs-3 mb-1"></i> System Settings</a></div>
 </div>
-{% include "shared/_footer.html" %}
 {% endblock %}
 
 {% block extra_scripts %}

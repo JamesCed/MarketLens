@@ -7,10 +7,10 @@
 {% endblock %}
 
 {% block content %}
-<!-- Hero / city-wide search -- the same shape as the SME Planning page
+{# Hero / city-wide search -- the same shape as the SME Planning page
      (sme/planning.html), so both roles get the same tools: the industry
      slider, the mini map and the search. The difference is that every
-     figure here is CITY-WIDE rather than scoped to one business plan. -->
+     figure here is CITY-WIDE rather than scoped to one business plan. #}
 <div class="dss-hero mb-4">
   <h2 class="text-center mb-1">Tarlac City Diversification &amp; Planning Dashboard</h2>
   <p class="text-center text-muted mb-3">City-wide market saturation across all {{ locations|length }} barangays</p>
@@ -101,9 +101,9 @@
   {% endif %}
 </div>
 
-<!-- City-wide industry slider: the SAME partial the SME Planning page
+{# City-wide industry slider: the SAME partial the SME Planning page
      uses (icons, score bands, Previous/Next), so both roles see one design.
-     Scores here are city-wide averages over the sample barangays below. -->
+     Scores here are city-wide averages over the sample barangays below. #}
 {% set slider_title = 'Industries across Tarlac City' %}
 {% set slider_location = None %}
 {% include "shared/_industry_slider.html" %}
@@ -114,13 +114,18 @@
   <a href="{{ url_for('sme.saturation_map') }}">Saturation Map</a> for a per-barangay view.
 </p>
 
-<!-- Original LGU planning stats, kept exactly as they were -->
+{# Original LGU planning stats, kept exactly as they were #}
 <div class="row g-3 mb-4">
   <div class="col-md-3">
     <div class="dss-card text-center">
       <div class="text-muted small">Barangays On File</div>
-      <div class="fs-2">{{ barangays_on_file|length }}</div>
+      <div class="fs-2">{{ barangays_on_file|length }} <span class="fs-6 text-muted">of {{ barangay_total }}</span></div>
       <div class="text-muted" style="font-size:.7rem;">{{ totals.barangays_with_businesses }} with businesses recorded</div>
+      {% if unrecognised_barangays %}
+        <div class="text-warning-emphasis mt-1" style="font-size:.7rem;" title="{{ unrecognised_barangays|join(', ') }}">
+          <i class="bi bi-exclamation-triangle"></i> {{ unrecognised_barangays|length }} uploaded name(s) not matched to a barangay
+        </div>
+      {% endif %}
     </div>
   </div>
   <div class="col-md-3">
@@ -155,15 +160,15 @@
         <span class="small text-muted">{{ "{:,}".format(totals.businesses) }} businesses on file &middot;
           {{ "{:,}".format(totals.from_places_api) }} confirmed live on Google Places</span>
       </div>
-      <!-- The same map.js the Saturation Map page and the SME Planning page
-           run, so the LGU sees the same boundaries, colours and pop-ups. -->
+      {# The same map.js the Saturation Map page and the SME Planning page
+           run, so the LGU sees the same boundaries, colours and pop-ups. #}
       <div id="dss-map" class="dss-mini-map dss-home-map mb-2"></div>
       <div class="dss-legend-inline small" aria-label="Saturation intensity scale">
         <span class="fw-semibold me-1">Saturation:</span>
-        <span><span class="dss-legend-swatch" style="background:#b91c1c"></span>High</span>
-        <span><span class="dss-legend-swatch" style="background:#f97316"></span>Moderate</span>
-        <span><span class="dss-legend-swatch" style="background:#fde047"></span>Low-Moderate</span>
-        <span><span class="dss-legend-swatch" style="background:#22c55e"></span>High Opportunity</span>
+        <span><span class="dss-legend-swatch" style="background:#b91c1c"></span>Saturated</span>
+        <span><span class="dss-legend-swatch" style="background:#f97316"></span>High</span>
+        <span><span class="dss-legend-swatch" style="background:#fde047"></span>Moderate</span>
+        <span><span class="dss-legend-swatch" style="background:#22c55e"></span>Low</span>
       </div>
       <p class="dss-chart-note">The map is shaded for {{ default_industry }}: red barangays already have many such
         businesses, green ones have room. Click a barangay for its details, or open the full map to switch industry.</p>
@@ -199,10 +204,10 @@
   </div>
 </div>
 
-<!-- Every barangay, with its real business counts. Replaces the old
+{# Every barangay, with its real business counts. Replaces the old
      plain list of name badges: the LGU needs to see WHICH barangays
      carry how much business activity, and how much of that is live
-     Google Places data. -->
+     Google Places data. #}
 <div class="dss-card">
   <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
     <h6 class="mb-0">All Barangays &mdash; Businesses Fetched From Google Places</h6>
@@ -210,7 +215,7 @@
            placeholder="Filter barangays...">
   </div>
   <p class="text-muted small mb-3">
-    Business counts are the freshest <code>market_data</code> figure for every industry recorded in that barangay.
+    Business counts are the latest figure on file for every industry recorded in that barangay.
     The <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">live</span> column
     is the portion confirmed from a Google Places API lookup; the remainder is data already on file.
     Click any barangay to open it on the Saturation Map.
@@ -253,10 +258,9 @@
   </div>
   {% else %}
   <p class="text-muted small mb-0">No barangay data on file yet -- the AI engine is currently relying entirely on
-    reference figures (see app/ml/seed_data.py). Upload real data to replace them.</p>
+    reference figures. Upload real data to replace them.</p>
   {% endif %}
 </div>
-{% include "shared/_footer.html" %}
 
 {% endblock %}
 

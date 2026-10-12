@@ -150,27 +150,31 @@ def test_the_support_dialog_gives_the_same_address(app):
 
 def test_contact_us_is_a_button_not_a_span(app):
     """The old one was a <span>: not focusable, not reachable by
-    keyboard, and it did nothing when clicked."""
+    keyboard, and it did nothing when clicked. It is now an icon button
+    in the top bar, with a label for screen readers."""
     page = _signed_in(app, "sme@contact.test").get("/home").get_data(as_text=True)
 
     assert "<span>📞 Contact Us</span>" not in page
-    assert 'class="dss-footer-link"' in page
+    bar = page[page.index('class="dss-quick-links"'):]
+    bar = bar[:bar.index("</nav>")]
+    assert '<button type="button" class="dss-quick-link" data-bs-toggle="modal" data-bs-target="#contactModal"' in bar
+    assert 'aria-label="Contact Us"' in bar
 
 
-def test_the_footer_is_one_shared_partial(app):
-    """Three copies of a footer is how the LGU dashboard ends up
-    missing whatever the SME one gained last month."""
+def test_the_old_footer_bar_is_gone_and_the_links_are_one_partial(app):
+    """IT expert review: the footer bar looked random and sat below
+    pages too long to scroll through, so its links became top-bar icons.
+    No template builds the old bar any more, and the icons come from one
+    partial included by the top bar."""
     from pathlib import Path
 
     templates = Path(app.root_path) / "templates"
-    inline_footers = [
+    footers = [
         str(path.relative_to(templates))
         for path in templates.rglob("*.html")
         if "dss-home-footer" in path.read_text(encoding="utf-8")
-        and path.name != "_footer.html"
+        or 'include "shared/_footer.html"' in path.read_text(encoding="utf-8")
     ]
-
-    assert not inline_footers, (
-        f"{inline_footers} still build the footer inline instead of including "
-        f"shared/_footer.html"
-    )
+    assert not footers, f"{footers} still build or include the old footer bar"
+    topbar = (templates / "shared" / "_topbar.html").read_text(encoding="utf-8")
+    assert '{% include "shared/_quick_links.html" %}' in topbar

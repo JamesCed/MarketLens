@@ -84,9 +84,19 @@ def dashboard():
     saturated_count = live_plan_forecasts().filter(ForecastResult.saturation_index > CLUSTER_THRESHOLDS[2]).count()
     opportunity_count = live_plan_forecasts().filter(ForecastResult.saturation_index <= CLUSTER_THRESHOLDS[0]).count()
 
-    barangays_on_file = [
-        row[0] for row in db.session.query(LguData.barangay).distinct().order_by(LguData.barangay).all()
-    ]
+    # Counted against the official 76 (IT expert review: the dashboard
+    # showed "77 barangays on file" beside 76-barangay coverage). A name
+    # written another way ("Baras" for Baras-baras) is folded into the
+    # official one, and a name that is not a Tarlac City barangay at all
+    # is listed separately instead of inflating the count.
+    from app.ml.seed_data import canonical_barangay
+
+    on_file, unrecognised = set(), set()
+    for (raw_name,) in db.session.query(LguData.barangay).distinct().all():
+        official = canonical_barangay(raw_name)
+        (on_file if official else unrecognised).add(official or (raw_name or "").strip())
+    barangays_on_file = sorted(on_file)
+    unrecognised_barangays = sorted(n for n in unrecognised if n)
 
     latest_market = latest_market_data_by_key()
     barangay_rows = get_barangay_business_table(latest_market)
@@ -161,6 +171,8 @@ def dashboard():
         saturated_count=saturated_count,
         opportunity_count=opportunity_count,
         barangays_on_file=barangays_on_file,
+        unrecognised_barangays=unrecognised_barangays,
+        barangay_total=len(BARANGAY_NAMES),
         lgu_data_count=LguData.query.count(),
         market_data_count=MarketData.query.count(),
         industry_cards=industry_cards,

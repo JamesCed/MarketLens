@@ -378,14 +378,32 @@ def users():
 @admin_bp.route("/users/create", methods=["POST"])
 @role_required("Admin")
 def create_user():
-    name = request.form.get("name", "").strip()
+    from app.services.account_params import compose_full_name, normalise_ph_mobile, password_problems, SUFFIXES
+
+    first = request.form.get("first_name", "").strip()[:60]
+    middle = request.form.get("middle_name", "").strip()[:60]
+    last = request.form.get("last_name", "").strip()[:60]
+    suffix = request.form.get("suffix", "").strip()
+    suffix = suffix if suffix in SUFFIXES else ""
+    # The name in parts, like sign-up; a single "name" is still read so an
+    # older form (or script) keeps working.
+    name = compose_full_name(first, middle, last, suffix) if (first and last) else request.form.get("name", "").strip()
     email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
     role = request.form.get("role", "SME")
-    contact_number = request.form.get("contact_number", "").strip()
+    raw_contact = request.form.get("contact_number", "").strip()
+    contact_number = normalise_ph_mobile(raw_contact) if raw_contact else None
 
     if not name or not email or not password or role not in ("Admin", "SME", "LGU"):
-        flash("Name, email, password are required and role must be Admin, SME or LGU.", "danger")
+        flash("First name, last name, email and password are required, and the role must be Admin, SME or LGU.", "danger")
+        return redirect(url_for("admin.users"))
+    problems = password_problems(password)
+    if problems:
+        for problem in problems:
+            flash(problem, "danger")
+        return redirect(url_for("admin.users"))
+    if raw_contact and contact_number is None:
+        flash("Enter the contact number as a Philippine mobile number, e.g. 09171234567.", "danger")
         return redirect(url_for("admin.users"))
 
     existing = User.query.filter_by(email=email).first()
@@ -399,7 +417,8 @@ def create_user():
         flash("A user with that email already exists.", "danger")
         return redirect(url_for("admin.users"))
 
-    user = User(name=name, email=email, role=role, contact_number=contact_number or None)
+    user = User(name=name, email=email, role=role, contact_number=contact_number,
+                first_name=first or None, middle_name=middle or None, last_name=last or None, suffix=suffix or None)
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
@@ -874,6 +893,12 @@ def _archived_records():
     return records
 
 
+def _system_account_email():
+    from app.services.forecasting_service import SYSTEM_USER_EMAIL
+
+    return SYSTEM_USER_EMAIL
+
+
 @admin_bp.route("/datasets")
 @role_required("Admin")
 def datasets():
@@ -892,6 +917,7 @@ def datasets():
         market_real_count=market_real_count,
         archived_records=_archived_records(),
         places_api_key_configured=bool(current_app.config.get("GOOGLE_PLACES_API_KEY")),
+        system_email=_system_account_email(),
     )
 
 

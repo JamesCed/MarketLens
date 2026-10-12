@@ -12,6 +12,8 @@ Run with:
 
 import pytest
 
+from tests.account_fixtures import STRONG_PASSWORD, account_fields
+
 from app import create_app
 from app.extensions import db
 from app.models import User, SystemSetting
@@ -44,10 +46,7 @@ def test_register_and_login_sme(client, app):
     response = client.post(
         "/register",
         data={
-            "full_name": "Test SME",
-            "email": "test.sme@example.com",
-            "password": "password123",
-            "confirm_password": "password123",
+            **account_fields("test.sme@example.com"),
             "role": "sme",
             "business_name": "Test Store",
             "industry_type": "Food and Beverage",
@@ -67,7 +66,7 @@ def test_register_and_login_sme(client, app):
 
     response = client.post(
         "/login",
-        data={"email": "test.sme@example.com", "password": "password123"},
+        data={"email": "test.sme@example.com", "password": STRONG_PASSWORD},
         follow_redirects=True,
     )
     assert response.status_code == 200

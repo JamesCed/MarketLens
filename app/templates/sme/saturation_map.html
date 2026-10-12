@@ -2,7 +2,7 @@
 {% block title %}Saturation Map{% endblock %}
 
 {% block extra_head %}
-<!-- Leaflet's stylesheet MUST load before the map is built, and it must
+{# Leaflet's stylesheet MUST load before the map is built, and it must
      be in <head>, not next to the script at the end of <body>.
 
      NOTE: no `integrity` attribute on purpose. An SRI hash that does not
@@ -13,12 +13,12 @@
      the choropleth polygons spill over the whole layout. That is exactly
      the bug this attribute caused here. If you want SRI back, copy the
      current hashes from https://cdnjs.com/libraries/leaflet -- do not
-     type them from memory. -->
+     type them from memory. #}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
       crossorigin="anonymous" referrerpolicy="no-referrer">
-<!-- Layout for the legend, caption and "About this map's data" note
+{# Layout for the legend, caption and "About this map's data" note
      below the map. Page-specific, so it lives here rather than in the
-     site-wide style.css. -->
+     site-wide style.css. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/map.css') }}">
 {% endblock %}
 
@@ -67,11 +67,11 @@
           <i class="bi bi-eye-slash"></i> Hide Saturation
         </button>
       </div>
-      <!-- OpenStreetMap via Leaflet: no API key, so unlike the old
-           Google basemap there is no "key missing" placeholder state. -->
-      <!-- The map and its loading state share a positioned wrapper, so
+      {# OpenStreetMap via Leaflet: no API key, so unlike the old
+           Google basemap there is no "key missing" placeholder state. #}
+      {# The map and its loading state share a positioned wrapper, so
            the overlay covers the map only -- not the legend or the
-           barangay list, which stay readable while scores refresh. -->
+           barangay list, which stay readable while scores refresh. #}
       <div class="dss-map-wrap">
         <div id="dss-map"></div>
         <div id="mapLoading" class="dss-map-loading" hidden>
@@ -125,21 +125,21 @@
 
       <div class="dss-map-legend" id="saturationLegend">
         <div class="dss-map-legend-items" role="group" aria-label="Show or hide saturation levels">
-          <span class="dss-map-legend-label">Show:</span>
-          <button type="button" class="dss-tier-toggle" data-tier-filter="Saturated" aria-pressed="true" title="Show or hide High Saturation">
-            <span class="dss-legend-swatch" style="background:#b91c1c"></span>High Saturation
+          <span class="dss-map-legend-label">Saturation:</span>
+          <button type="button" class="dss-tier-toggle" data-tier-filter="Saturated" aria-pressed="true" title="Show or hide Saturated barangays">
+            <span class="dss-legend-swatch" style="background:#b91c1c"></span>Saturated
             <span class="badge bg-light text-dark ms-1" data-tier-count="Saturated">0</span>
           </button>
-          <button type="button" class="dss-tier-toggle" data-tier-filter="High" aria-pressed="true" title="Show or hide Moderate">
-            <span class="dss-legend-swatch" style="background:#f97316"></span>Moderate
+          <button type="button" class="dss-tier-toggle" data-tier-filter="High" aria-pressed="true" title="Show or hide High saturation">
+            <span class="dss-legend-swatch" style="background:#f97316"></span>High
             <span class="badge bg-light text-dark ms-1" data-tier-count="High">0</span>
           </button>
-          <button type="button" class="dss-tier-toggle" data-tier-filter="Moderate" aria-pressed="true" title="Show or hide Low-Moderate">
-            <span class="dss-legend-swatch" style="background:#fde047"></span>Low-Moderate
+          <button type="button" class="dss-tier-toggle" data-tier-filter="Moderate" aria-pressed="true" title="Show or hide Moderate saturation">
+            <span class="dss-legend-swatch" style="background:#fde047"></span>Moderate
             <span class="badge bg-light text-dark ms-1" data-tier-count="Moderate">0</span>
           </button>
-          <button type="button" class="dss-tier-toggle" data-tier-filter="Low" aria-pressed="true" title="Show or hide High Opportunity">
-            <span class="dss-legend-swatch" style="background:#22c55e"></span>High Opportunity
+          <button type="button" class="dss-tier-toggle" data-tier-filter="Low" aria-pressed="true" title="Show or hide Low saturation">
+            <span class="dss-legend-swatch" style="background:#22c55e"></span>Low
             <span class="badge bg-light text-dark ms-1" data-tier-count="Low">0</span>
           </button>
         </div>

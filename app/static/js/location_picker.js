@@ -159,7 +159,7 @@
     document.querySelectorAll("[data-location-picker-toggle]").forEach((btn) => {
       const panel = document.getElementById(btn.getAttribute("aria-controls"));
       const group = btn.closest(".input-group");
-      const input = group && group.querySelector("input");
+      const input = group && group.querySelector("input, select");
       if (!panel || !input) return;
       const picker = new Picker(
         panel.querySelector("[data-location-picker-map]"),

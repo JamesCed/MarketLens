@@ -1,0 +1,18 @@
+{#
+  shared/_page_loader.html
+  --------------------------
+  The rotating-circle loading screen shown while the next page loads
+  (link clicks, form submits, script navigations -- see the "PAGE
+  LOADER" section of static/js/main.js).
+
+  A direct child of <body>, like the flash toasts, and position: fixed:
+  nothing inside a page container, so no container ever has to be
+  transformed for it (see tests/test_flash_and_page_transition.py).
+
+  Rendered `hidden`; main.js reveals it only if the next page has not
+  arrived within ~0.12 s, so a fast navigation never flashes it.
+#}
+<div class="dss-page-loader" id="dssPageLoader" role="status" aria-live="polite" hidden>
+  <div class="dss-spinner" aria-hidden="true"></div>
+  <span class="dss-page-loader-text">Loading&hellip;</span>
+</div>

@@ -117,6 +117,13 @@ def test_the_computed_cells_remain_as_a_fallback(app, monkeypatch):
     monkeypatch.setitem(cs._official_cache, "loaded", True)
     monkeypatch.setitem(cs._official_cache, "value", None)
     with app.app_context():
+        # The endpoint's response cache lives on disk and outlives one
+        # test's app: without this, a test that ran earlier and cached the
+        # official polygons answers here instead (the order-dependent
+        # failure this test used to have).
+        from app.services.response_cache import clear_response_cache
+
+        clear_response_cache()
         assert cs.barangay_boundaries_geojson(app) is None
     payload = _client(app).get("/api/barangay-choropleth").get_json()
     assert len(payload["features"]) == 76
@@ -292,7 +299,9 @@ def test_map_js_passes_the_month_and_labels_it():
     assert "&as_of=${encodeURIComponent(asOf)}" in js
     assert "window.dssReloadMap = function" in js
     assert '"dss:locations-loaded"' in js
-    assert "timelineDetailHtml(detail.location)" in js
+    # The panel labels the chosen month's figures and guidance as that
+    # month's (IT expert review), not today's.
+    assert "selectedPeriodRow(detail.location)" in js and "periodGuidanceHtml(period" in js
     with open(os.path.join(ROOT, "app", "static", "js", "map_timeline.js"), encoding="utf-8") as handle:
         timeline = handle.read()
     assert "window.DSS_MAP_AS_OF" in timeline

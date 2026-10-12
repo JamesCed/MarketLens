@@ -64,13 +64,20 @@ def test_no_community_or_moderation_in_the_menu(app, role):
     assert 'data-tour="nav-community"' not in nav
 
 
-@pytest.mark.parametrize("role,page", [("SME", "/home"), ("LGU", "/lgu/dashboard"), ("Admin", "/admin/dashboard")])
-def test_the_footer_link_opens_discord_in_a_new_tab(app, role, page):
+@pytest.mark.parametrize("role,page", [("SME", "/home"), ("LGU", "/lgu/dashboard"), ("Admin", "/admin/dashboard"),
+                                       ("SME", "/trend-reports")])
+def test_the_top_bar_link_opens_discord_in_a_new_tab(app, role, page):
+    """The link moved from a footer bar into the top bar as an icon (IT
+    expert review), so it is now on every signed-in page, not only the
+    dashboards."""
     body = _login(app, role).get(page).get_data(as_text=True)
-    footer = body[body.index('class="dss-home-footer'):]
-    link = footer[footer.index('href="/community"') - 3:footer.index("Community Forum")]
+    bar = body[body.index('class="dss-quick-links"'):]
+    bar = bar[:bar.index("</nav>")]
+    start = bar.index('href="/community"')
+    link = bar[bar.rindex("<a", 0, start):bar.index(">", start) + 1]
     assert 'target="_blank"' in link and 'rel="noopener"' in link
     assert 'data-tour="community-link"' in link
+    assert 'aria-label="Community Forum"' in link
 
 
 def test_an_admin_can_change_the_invite(app):

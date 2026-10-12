@@ -329,7 +329,7 @@ def test_simulated_competitor_counts_are_disclosed_as_a_consideration(app):
     with app.app_context():
         result = rank_location_opportunities("Food and Beverage", ["Poblacion", "Tibag", "Aguso"], use_llm=False)
         risks = " ".join(result["opportunities"][0]["risks"]).lower()
-        assert "simulated" in risks
+        assert "estimate, not a live count" in risks
 
 
 def test_the_plans_own_barangay_is_flagged_not_hidden(app, sme_plan):

@@ -127,6 +127,39 @@ def create_app(config_name=None):
 
     app.jinja_env.globals["short_industry"] = short_industry_label
 
+    # Confidential values are shown masked wherever a screen only needs
+    # to tell records apart (app/utils/privacy.py).
+    from app.utils.privacy import mask_email, mask_phone
+
+    app.jinja_env.filters["mask_email"] = mask_email
+    app.jinja_env.filters["mask_phone"] = mask_phone
+
+    # The password rule, shown as a live checklist next to every "new
+    # password" field (shared/_password_rules.html).
+    from app.services.account_params import PASSWORD_HINT, PASSWORD_MIN_LENGTH, PASSWORD_RULES
+
+    app.jinja_env.globals["PASSWORD_RULES"] = [(key, label) for key, label, _test in PASSWORD_RULES]
+    app.jinja_env.globals["PASSWORD_HINT"] = PASSWORD_HINT
+    app.jinja_env.globals["PASSWORD_MIN_LENGTH"] = PASSWORD_MIN_LENGTH
+    app.jinja_env.globals["MIN_CAPITAL"] = int(app.config.get("MIN_PLAN_CAPITAL", 5000))
+    # One colour rule for every score out of 10 (IT expert review: a 3.3/10
+    # was shown in green). good >= 6.5 (green), fair >= 4 (amber), low < 4
+    # (red) -- the same cuts as the forecast's HIGH / MODERATE / LOW word.
+    def score_tone(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "fair"
+        return "good" if number >= 6.5 else ("fair" if number >= 4 else "low")
+
+    app.jinja_env.globals["score_tone"] = score_tone
+    app.jinja_env.globals["SCORE_COLORS"] = {"good": "#16a34a", "fair": "#d97706", "low": "#dc2626"}
+
+    # Tarlac City's 76 barangays, alphabetical -- every barangay dropdown.
+    from app.ml.seed_data import BARANGAY_NAMES
+
+    app.jinja_env.globals["BARANGAY_LIST"] = sorted(BARANGAY_NAMES)
+
     @app.context_processor
     def inject_globals():
         from flask_login import current_user
@@ -136,7 +169,7 @@ def create_app(config_name=None):
 
         unread_count = 0
         if current_user.is_authenticated:
-            unread_count = Notification.query.filter_by(user_id=current_user.user_id, is_read=False).count()
+            unread_count = Notification.unread_count_for(current_user.user_id)
         return {
             "GOOGLE_MAPS_JS_API_KEY": app.config.get("GOOGLE_MAPS_JS_API_KEY", ""),
             "unread_notification_count": unread_count,
@@ -162,6 +195,26 @@ def create_app(config_name=None):
     from app.services.startup_migrations import run_startup_migrations
 
     run_startup_migrations(app)
+
+    # ---- speed: cache-busted static files, gzip, per-request memo ----
+    # See app/utils/http_perf.py and app/utils/request_memo.py.
+    from sqlalchemy.orm import Session as _OrmSession
+
+    from app.utils.http_perf import install_compression, install_static_versioning
+    from app.utils.request_memo import install_flush_invalidation
+
+    install_static_versioning(app)
+    if app.config.get("COMPRESS_RESPONSES", True):
+        install_compression(app)
+    install_flush_invalidation(_OrmSession)
+
+    # ---- warm-up: models, templates and reference data loaded now ----
+    # Under gunicorn --preload this runs before the port opens, so no
+    # visitor is served by a half-loaded process. See warmup.py.
+    if app.config.get("WARM_ON_BOOT"):
+        from app.services.warmup import warm_up
+
+        warm_up(app)
 
     # ---- error pages ----
     @app.errorhandler(403)

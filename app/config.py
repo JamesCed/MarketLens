@@ -115,6 +115,13 @@ class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", DEV_SECRET_KEY)
     PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
 
+    # Encrypts the personal details collected at sign-up (birthday,
+    # gender, address, contact number) at rest -- see app/utils/privacy.py.
+    # Any long random string; set it ONCE on the host and never change
+    # it, or stored details become unreadable. Blank = derived from
+    # SECRET_KEY (which Render keeps stable).
+    PII_ENCRYPTION_KEY = os.environ.get("PII_ENCRYPTION_KEY", "")
+
     # ---------------- Database (MySQL) ----------------
     # Given project credentials (see .env / .env):
     #   host=127.0.0.1 port=3306 user=root password=root database=dss_db
@@ -197,6 +204,19 @@ class Config:
     # that key -- and OpenAI is asked first instead.
     USE_LLM_RECOMMENDATIONS = _bool(os.environ.get("USE_LLM_RECOMMENDATIONS"), False)
     LLM_PROVIDER = (os.environ.get("LLM_PROVIDER") or "gemini").strip().lower()
+
+    # ---------------- Speed ----------------
+    # WARM_ON_BOOT loads both trained models, compiles every template and
+    # parses the reference data inside create_app(), so the first visitor
+    # after a restart is not the one who pays for it (app/services/
+    # warmup.py). COMPRESS_RESPONSES gzips HTML/CSS/JS/JSON for browsers
+    # that accept it (app/utils/http_perf.py).
+    WARM_ON_BOOT = _bool(os.environ.get("WARM_ON_BOOT"), True)
+
+    # Smallest starting capital a business plan may have, in pesos (IT
+    # expert review) -- see app/services/plan_params.py.
+    MIN_PLAN_CAPITAL = float(os.environ.get("MIN_PLAN_CAPITAL", "5000") or 5000)
+    COMPRESS_RESPONSES = _bool(os.environ.get("COMPRESS_RESPONSES"), True)
 
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
     OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -511,6 +531,9 @@ class ProductionConfig(Config):
 class TestingConfig(Config):
     TESTING = True
     WTF_CSRF_ENABLED = False
+    # Every test builds its own app; loading the forests for each one
+    # would add a second to every test. Tests that need warm-up call it.
+    WARM_ON_BOOT = False
     SQLALCHEMY_DATABASE_URI = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
     # A retried Gemini send waits nothing in the tests (see
     # llm_service.GEMINI_RETRY_BACKOFF_SECONDS).

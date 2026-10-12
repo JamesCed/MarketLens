@@ -178,11 +178,21 @@
     {{ offering_field(prefix, p.product_offering if p else None) }}
   </div>
   <div class="mb-3">
+    {# A dropdown of the 76 barangays, not free text (IT expert review). A
+       plan saved under a name the list does not contain keeps it, marked
+       "(current)", so opening Edit and saving never moves the business. #}
+    {% set chosen_location = p.location if p else default_location %}
     <label class="form-label" for="{{ prefix }}-location">Location / Barangay</label>
     <div class="input-group">
       <span class="input-group-text"><i class="bi bi-geo-alt" aria-hidden="true"></i></span>
-      <input type="text" id="{{ prefix }}-location" name="location" class="form-control" list="{{ datalist_id }}"
-             maxlength="150" placeholder="e.g., Poblacion" value="{{ p.location if p else default_location }}" required>
+      <select id="{{ prefix }}-location" name="location" class="form-select" required>
+        {% if chosen_location and chosen_location not in BARANGAY_LIST %}
+          <option value="{{ chosen_location }}" selected>{{ chosen_location }} (current)</option>
+        {% elif not chosen_location %}
+          <option value="">Choose a barangay&hellip;</option>
+        {% endif %}
+        {% for loc in BARANGAY_LIST %}<option value="{{ loc }}"{{ ' selected' if loc == chosen_location }}>{{ loc }}</option>{% endfor %}
+      </select>
       <button type="button" class="btn btn-outline-primary" data-location-picker-toggle
               aria-expanded="false" aria-controls="{{ prefix }}-picker">
         <i class="bi bi-map" aria-hidden="true"></i> Pick on map
@@ -192,7 +202,7 @@
       <div class="dss-location-picker-map" data-location-picker-map></div>
       <div class="form-text" data-location-picker-status>Click a barangay on the map to choose it.</div>
     </div>
-    <div class="form-text">Type a barangay, or pick it on the map.</div>
+    <div class="form-text">Choose a barangay, or pick it on the map.</div>
   </div>
   <div class="row">
     <div class="col-md-6 mb-3">
@@ -220,12 +230,14 @@
         the browser asks for it before the dialog will save.
       #}
       <label class="form-label" for="{{ prefix }}-capital">Capital (&#8369;)</label>
-      <input type="number" id="{{ prefix }}-capital" name="capital" class="form-control" min="1" step="any"
-             inputmode="decimal" placeholder="500000" required aria-describedby="{{ prefix }}-capital-help"
+      {# A plan saved below the minimum before it existed may keep its capital when edited. #}
+      {% set capital_min = (p.capital|float) if p and p.capital and (p.capital|float) > 0 and (p.capital|float) < MIN_CAPITAL else MIN_CAPITAL %}
+      <input type="number" id="{{ prefix }}-capital" name="capital" class="form-control" min="{{ capital_min }}" step="any"
+             inputmode="decimal" placeholder="50000" required aria-describedby="{{ prefix }}-capital-help"
              value="{{ ('%.2f'|format(p.capital)).rstrip('0').rstrip('.') if p and p.capital > 0 else '' }}">
       <div class="form-text" id="{{ prefix }}-capital-help">
-        All the money you have for the business. The forecast checks how many months of rent and
-        payroll it covers.
+        All the money you have for the business (at least &#8369;{{ "{:,}".format(MIN_CAPITAL) }}). The forecast checks
+        how many months of rent and payroll it covers.
       </div>
     </div>
     <div class="col-md-6 mb-3">

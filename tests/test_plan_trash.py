@@ -565,7 +565,7 @@ def test_every_plan_form_on_home_asks_for_a_required_capital(app, two_plans):
     capital_inputs = re.findall(r'<input type="number" id="[^"]+-capital" name="capital"[^>]*>', page)
     assert len(capital_inputs) == 3                     # Add + one Edit per plan
     for tag in capital_inputs:
-        assert "required" in tag and 'min="1"' in tag
+        assert "required" in tag and 'min="5000"' in tag    # the PHP 5,000 floor (IT expert review)
     assert page.count("Capital (&#8369;)") == 3 or page.count("Capital (₱)") == 3
     assert "Startup capital" not in page
     assert 'name="startup_capital"' not in page

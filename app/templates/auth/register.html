@@ -72,8 +72,8 @@
           <span><strong>Your email is verified first.</strong> A six-digit code is sent
             before the account is created.</span></li>
         <li><i class="bi bi-cpu"></i>
-          <span><strong>Real data behind every score.</strong> Competitor counts and
-            2024 PSA population, not estimates.</span></li>
+          <span><strong>Grounded in real data.</strong> 2024 PSA population and recorded
+            business counts; where a figure is an estimate, the page labels it.</span></li>
       </ul>
     </div>
 
@@ -85,7 +85,8 @@
         <ol class="ml-steps-rail" id="mlRail">
           <li data-step="1" class="is-active"><span>1</span> Account type</li>
           <li data-step="2"><span>2</span> Your business</li>
-          <li data-step="3"><span>3</span> Sign-in details</li>
+          <li data-step="3"><span>3</span> About you</li>
+          <li data-step="4"><span>4</span> Sign-in details</li>
         </ol>
 
         <form method="POST" action="{{ url_for('auth.register') }}" id="mlSignupForm">
@@ -159,18 +160,22 @@
               {{ offering_field('ml', f.get('product_offering')) }}
             </div>
 
+            {# A dropdown of Tarlac City's 76 barangays rather than free
+               text (IT expert review): the system only covers Tarlac City,
+               so a typed name could only ever be a misspelling of one of
+               these. #}
             <div class="mb-3">
               <label class="form-label" for="ml-location">Location / barangay</label>
               <div class="input-group">
                 <span class="input-group-text"><i class="bi bi-geo-alt"></i></span>
-                <input type="text" id="ml-location" name="location" class="form-control"
-                       list="mlLocationOptions" placeholder="e.g. Poblacion"
-                       value="{{ f.get('location','') }}">
+                <select id="ml-location" name="location" class="form-select">
+                  <option value="">Choose a barangay&hellip;</option>
+                  {% for loc in locations|sort %}
+                    <option value="{{ loc }}" {{ 'selected' if f.get('location') == loc else '' }}>{{ loc }}</option>
+                  {% endfor %}
+                </select>
               </div>
-              <datalist id="mlLocationOptions">
-                {% for loc in locations %}<option value="{{ loc }}">{% endfor %}
-              </datalist>
-              <div class="form-text">Any of Tarlac City's 76 barangays &mdash; start typing to search.</div>
+              <div class="form-text">Tarlac City's 76 barangays.</div>
             </div>
 
             <div class="row g-3 mb-3">
@@ -197,7 +202,7 @@
                   {# Re-filled after a bounced submit from either name: an
                      old cached copy of this form still posts startup_capital. #}
                   <input type="number" id="ml-capital" name="capital" class="form-control"
-                         min="1" step="any" inputmode="decimal" placeholder="500000"
+                         min="{{ MIN_CAPITAL }}" step="any" inputmode="decimal" placeholder="50000"
                          value="{{ f.get('capital') or f.get('startup_capital') or '' }}">
                 </div>
               </div>
@@ -209,8 +214,8 @@
             </div>
             <p class="ml-step-note">
               <i class="bi bi-info-circle"></i>
-              Capital is required: the forecast checks how many months of rent and wages it covers.
-              Employees are optional. You do not need a revenue figure &mdash; the break-even window
+              Capital is required (at least &#8369;{{ "{:,}".format(MIN_CAPITAL) }}): the forecast checks how many months
+              of rent and wages it covers. Employees are optional. You do not need a revenue figure &mdash; the break-even window
               comes from the forecast itself.
             </p>
 
@@ -232,20 +237,120 @@
             </div>
           </div>
 
-          {# ------------------------- step 3 ------------------------- #}
+          {# --------------------- step 3: about you --------------------- #}
+          {#
+            The account owner's personal information, in full (IT expert
+            review): the name in parts, gender, birthday (the age is worked
+            out from it, never typed), contact number and address. Asked of
+            SME and LGU accounts alike. Gender, birthday, contact number and
+            address are stored ENCRYPTED -- see app/utils/privacy.py.
+          #}
           <div class="ml-step" data-step="3" hidden>
             <div class="ml-auth-head">
-              <h2>Sign-in details</h2>
-              <p>Last step. Administrator accounts are created by an existing administrator, not here.</p>
+              <h2>About you</h2>
+              <p>The account owner&rsquo;s details. Kept confidential and stored encrypted.</p>
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-sm-6">
+                <label class="form-label" for="ml-first">First name</label>
+                <input type="text" id="ml-first" name="first_name" class="form-control" maxlength="60"
+                       autocomplete="given-name" value="{{ f.get('first_name','') }}"
+                       pattern="[A-Za-zÀ-ÖØ-öø-ÿÑñ][A-Za-zÀ-ÖØ-öø-ÿÑñ .'\-]*" title="Letters, spaces, hyphens, apostrophes and periods only">
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label" for="ml-middle">Middle name <span class="text-muted fw-normal">(optional)</span></label>
+                <input type="text" id="ml-middle" name="middle_name" class="form-control" maxlength="60"
+                       autocomplete="additional-name" value="{{ f.get('middle_name','') }}"
+                       pattern="[A-Za-zÀ-ÖØ-öø-ÿÑñ][A-Za-zÀ-ÖØ-öø-ÿÑñ .'\-]*" title="Letters, spaces, hyphens, apostrophes and periods only">
+              </div>
+              <div class="col-sm-8">
+                <label class="form-label" for="ml-last">Last name</label>
+                <input type="text" id="ml-last" name="last_name" class="form-control" maxlength="60"
+                       autocomplete="family-name" value="{{ f.get('last_name','') }}"
+                       pattern="[A-Za-zÀ-ÖØ-öø-ÿÑñ][A-Za-zÀ-ÖØ-öø-ÿÑñ .'\-]*" title="Letters, spaces, hyphens, apostrophes and periods only">
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label" for="ml-suffix">Suffix <span class="text-muted fw-normal">(optional)</span></label>
+                <select id="ml-suffix" name="suffix" class="form-select" autocomplete="honorific-suffix">
+                  {% for sx in suffixes %}
+                    <option value="{{ sx }}" {{ 'selected' if f.get('suffix','') == sx else '' }}>{{ sx or 'None' }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-sm-5">
+                <label class="form-label" for="ml-gender">Gender</label>
+                <select id="ml-gender" name="gender" class="form-select">
+                  <option value="">Choose&hellip;</option>
+                  {% for g in genders %}
+                    <option value="{{ g }}" {{ 'selected' if f.get('gender') == g else '' }}>{{ g }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label" for="ml-birthdate">Birthday</label>
+                <input type="date" id="ml-birthdate" name="birthdate" class="form-control"
+                       max="{{ latest_birthdate }}" min="1920-01-01" autocomplete="bday"
+                       value="{{ f.get('birthdate','') }}">
+              </div>
+              <div class="col-sm-3">
+                <label class="form-label" for="ml-age">Age</label>
+                <input type="text" id="ml-age" class="form-control" readonly tabindex="-1"
+                       placeholder="&mdash;" aria-describedby="mlAgeNote">
+              </div>
+              <div class="col-12 form-text mt-1" id="mlAgeNote">Worked out from your birthday. You must be 18 or older.</div>
             </div>
 
             <div class="mb-3">
-              <label class="form-label" for="ml-name">Full name</label>
+              <label class="form-label" for="ml-contact">Contact number</label>
               <div class="input-group">
-                <span class="input-group-text"><i class="bi bi-person"></i></span>
-                <input type="text" id="ml-name" name="full_name" class="form-control"
-                       value="{{ f.get('full_name','') }}" autocomplete="name">
+                <span class="input-group-text"><i class="bi bi-telephone"></i></span>
+                <input type="tel" id="ml-contact" name="contact_number" class="form-control"
+                       value="{{ f.get('contact_number','') }}" placeholder="09XXXXXXXXX" autocomplete="tel"
+                       inputmode="tel" maxlength="16" pattern="[0-9+\(\)\s\-]{10,16}" title="A Philippine mobile number, e.g. 09171234567">
               </div>
+            </div>
+
+            <div class="mb-1">
+              <label class="form-label" for="ml-street">Address: house no. and street</label>
+              <input type="text" id="ml-street" name="address_line" class="form-control" maxlength="150"
+                     autocomplete="address-line1" placeholder="e.g. 123 Rizal St."
+                     value="{{ f.get('address_line','') }}">
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-sm-7">
+                <label class="form-label" for="ml-addr-brgy">Barangay</label>
+                <select id="ml-addr-brgy" name="address_barangay" class="form-select">
+                  <option value="">Choose a barangay&hellip;</option>
+                  {% for loc in locations|sort %}
+                    <option value="{{ loc }}" {{ 'selected' if f.get('address_barangay') == loc else '' }}>{{ loc }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-sm-5">
+                <label class="form-label" for="ml-city">City</label>
+                <input type="text" id="ml-city" class="form-control" value="Tarlac City" readonly tabindex="-1">
+              </div>
+            </div>
+
+            <div class="ml-step-actions">
+              <button type="button" class="ml-btn ml-btn-outline-dark" data-go="prev">
+                <i class="bi bi-arrow-left"></i> Back
+              </button>
+              <button type="button" class="ml-btn ml-btn-primary" data-go="next">
+                Continue <i class="bi bi-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+
+          {# ------------------------- step 4 ------------------------- #}
+          <div class="ml-step" data-step="4" hidden>
+            <div class="ml-auth-head">
+              <h2>Sign-in details</h2>
+              <p>Last step. Administrator accounts are created by an existing administrator, not here.</p>
             </div>
 
             <div class="mb-3">
@@ -258,25 +363,15 @@
               <div class="form-text"><i class="bi bi-shield-check"></i> We'll send a 6-digit code here to confirm it's really you.</div>
             </div>
 
-            <div class="mb-3">
-              <label class="form-label" for="ml-contact">Contact number <span class="text-muted">(optional)</span></label>
-              <div class="input-group">
-                <span class="input-group-text"><i class="bi bi-telephone"></i></span>
-                <input type="text" id="ml-contact" name="contact_number" class="form-control"
-                       value="{{ f.get('contact_number','') }}" placeholder="09XXXXXXXXX" autocomplete="tel">
-              </div>
-            </div>
-
             <div class="row g-3">
               <div class="col-sm-6">
                 <label class="form-label" for="ml-pw">Password</label>
                 <div class="input-group">
                   <input type="password" id="ml-pw" name="password" class="form-control"
-                         minlength="6" autocomplete="new-password">
+                         minlength="{{ PASSWORD_MIN_LENGTH }}" autocomplete="new-password">
                   <button class="btn btn-outline-secondary ml-reveal" type="button"
                           data-target="ml-pw" aria-label="Show password"><i class="bi bi-eye"></i></button>
                 </div>
-                <div class="form-text">At least 6 characters.</div>
               </div>
               <div class="col-sm-6">
                 <label class="form-label" for="ml-pw2">Confirm password</label>
@@ -284,11 +379,24 @@
                    did, which is the field you most want to check. #}
                 <div class="input-group">
                   <input type="password" id="ml-pw2" name="confirm_password" class="form-control"
-                         minlength="6" autocomplete="new-password">
+                         minlength="{{ PASSWORD_MIN_LENGTH }}" autocomplete="new-password">
                   <button class="btn btn-outline-secondary ml-reveal" type="button"
                           data-target="ml-pw2" aria-label="Show password"><i class="bi bi-eye"></i></button>
                 </div>
               </div>
+            </div>
+            {% with target='ml-pw' %}{% include "shared/_password_rules.html" %}{% endwith %}
+
+            {# The site is online and holds personal and business details,
+               so the owner agrees to how they are handled before an
+               account exists (IT expert review). #}
+            <div class="form-check mt-3">
+              <input class="form-check-input" type="checkbox" id="ml-terms" name="accept_terms" value="1"
+                     {{ 'checked' if f.get('accept_terms') else '' }}>
+              <label class="form-check-label small" for="ml-terms">
+                I have read and agree to the
+                <a href="{{ url_for('auth.terms') }}" data-bs-toggle="modal" data-bs-target="#termsModal">Terms and Conditions and Data Privacy Notice</a>.
+              </label>
             </div>
 
             <div class="ml-step-actions">
@@ -306,6 +414,8 @@
       </div>
     </div>
   </section>
+
+  {% include "shared/_terms_modal.html" %}
 
   <footer class="ml-footer">
     <div class="ml-footer-brand">
@@ -349,12 +459,13 @@
   // put on only the fields that are currently visible and relevant.
   const REQUIRED = {
     2: ["business_name", "industry_type", "location", "capital"],
-    3: ["full_name", "email", "password", "confirm_password"],
+    3: ["first_name", "last_name", "gender", "birthdate", "contact_number", "address_line", "address_barangay"],
+    4: ["email", "password", "confirm_password", "accept_terms"],
   };
 
   const isSme = () => form.querySelector('input[name="role"]:checked')?.value === "sme";
   // LGU accounts have no business plan, so step 2 does not apply to them.
-  const visibleSteps = () => (isSme() ? [1, 2, 3] : [1, 3]);
+  const visibleSteps = () => (isSme() ? [1, 2, 3, 4] : [1, 3, 4]);
 
   let current = 1;
 
@@ -377,6 +488,10 @@
     rail.querySelectorAll("li").forEach(li => {
       const n = Number(li.dataset.step);
       li.hidden = !order.includes(n);
+      // Number the steps the visitor actually sees: an LGU sign-up skips
+      // "Your business", so it reads 1-2-3, not 1-3-4.
+      const badge = li.querySelector("span");
+      if (badge && order.includes(n)) badge.textContent = String(order.indexOf(n) + 1);
       li.classList.toggle("is-active", n === step);
       li.classList.toggle("is-done", order.indexOf(n) < order.indexOf(step));
       if (n === step) li.setAttribute("aria-current", "step");
@@ -440,12 +555,46 @@
   if (stageSelect) stageSelect.addEventListener("change", syncStage);
   syncStage();
 
-  // If the server bounced the form back with errors, open on the last
-  // step -- the fields are all re-filled from `form`, and the flash
-  // messages above say what was wrong, so making the visitor click
-  // forward through two completed steps again would be pointless.
+  // Age, worked out from the birthday as it is entered -- never typed.
+  const birth = document.getElementById("ml-birthdate");
+  const ageBox = document.getElementById("ml-age");
+  function syncAge() {
+    if (!birth || !ageBox) return;
+    const d = birth.value ? new Date(birth.value + "T00:00:00") : null;
+    if (!d || isNaN(d)) { ageBox.value = ""; return; }
+    const now = new Date();
+    let age = now.getFullYear() - d.getFullYear();
+    if (now.getMonth() < d.getMonth() || (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())) age--;
+    ageBox.value = age >= 0 ? String(age) : "";
+  }
+  if (birth) birth.addEventListener("input", syncAge);
+  syncAge();
+
+  // Confirm password must match -- flagged before the round trip.
+  const pw = document.getElementById("ml-pw");
+  const pw2 = document.getElementById("ml-pw2");
+  function syncMatch() {
+    if (pw && pw2) pw2.setCustomValidity(pw2.value && pw2.value !== pw.value ? "The passwords do not match." : "");
+  }
+  [pw, pw2].forEach(el => el && el.addEventListener("input", syncMatch));
+
+  // If the server bounced the form back with errors, open the first step
+  // with something to fix (every field is re-filled from `form`, and the
+  // messages at the top say what was wrong); if the browser cannot tell
+  // which, the last step.
   syncRoleNote();
-  show(document.querySelector(".alert-danger") ? visibleSteps().at(-1) : 1);
+  if (document.querySelector(".dss-flash-error")) {
+    const order = visibleSteps();
+    show(order.at(-1));
+    const bad = order.find(n => {
+      syncRequired();
+      const el = steps.find(st => Number(st.dataset.step) === n);
+      return el && [...el.querySelectorAll("input, select, textarea")].some(i => !i.disabled && !i.checkValidity());
+    });
+    show(bad || order.at(-1));
+  } else {
+    show(1);
+  }
 })();
 </script>
 {% endblock %}

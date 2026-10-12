@@ -912,7 +912,7 @@ def test_the_admin_switch_says_gemini_writes_the_transcript(app):
     with app.app_context():
         _user("admin@transcript.test", role="Admin")
         page = _client(app, "admin@transcript.test").get("/admin/settings").get_data(as_text=True)
-    assert "Gemini writes the forecast transcript" in page
+    assert "Gemini turns each forecast" in page and "plain-language explanation" in page
 
 
 # ---------------------------------------------------------------------

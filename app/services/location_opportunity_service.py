@@ -470,8 +470,8 @@ def _risks_for(row, city, market_meta, industry_label):
 
     if not market_meta.get("is_live"):
         risks.append(
-            "this barangay's competitor figure is a simulated estimate, not a live Google Places count "
-            "-- configure a Places API key for exact figures"
+            "this barangay's competitor figure is an estimate, not a live count "
+            "-- treat it as a guide until live business counts are available"
         )
     if competitors >= PLACES_RESULT_CEILING:
         risks.append(

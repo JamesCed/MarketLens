@@ -45,7 +45,7 @@
   <div class="col-6 col-lg-3">
     <div class="dss-card dss-stat-card h-100">
       <div class="dss-stat-label"><i class="bi bi-trophy" aria-hidden="true"></i> Best plan viability</div>
-      <div class="dss-stat-value">{{ '%.1f'|format(best_plan.viability_score|float) ~ '/10' if best_plan else '—' }}</div>
+      <div class="dss-stat-value{{ (' dss-score-text-' ~ score_tone(best_plan.viability_score)) if best_plan }}">{{ '%.1f'|format(best_plan.viability_score|float) ~ '/10' if best_plan else '—' }}</div>
       <div class="dss-stat-note text-truncate">{{ best_plan.profile.business_name if best_plan else 'No plan scored yet' }}</div>
     </div>
   </div>
@@ -199,7 +199,6 @@
   </div>
 </div>
 
-{% include "shared/_footer.html" %}
 
 {# Gemini transcripts for every plan, in the background, so each plan's
    forecast is already transcribed when it is opened in Planning. #}

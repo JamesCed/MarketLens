@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set use_charts = true %}
 {% block title %}Planning{% endblock %}
 {% from "shared/_plan_fields.html" import plan_core_fields %}
 {% from "shared/_plan_insights.html" import subcategory_compare, innovation_panel, forecast_breakdown, explanation_badge, competitor_insight_panel, transcript_queue_hooks, ai_writing_status %}
@@ -6,7 +7,7 @@
 {% set trash_count = (trashed_plans or [])|length %}
 
 {% block extra_head %}
-<!-- Leaflet's stylesheet MUST load before the map is built, and it must
+{# Leaflet's stylesheet MUST load before the map is built, and it must
      be in <head>, not next to the script at the end of <body>.
 
      NOTE: no `integrity` attribute on purpose. An SRI hash that does not
@@ -17,15 +18,15 @@
      the choropleth polygons spill over the whole layout. That is exactly
      the bug this attribute caused here. If you want SRI back, copy the
      current hashes from https://cdnjs.com/libraries/leaflet -- do not
-     type them from memory. -->
+     type them from memory. #}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
       crossorigin="anonymous" referrerpolicy="no-referrer">
-<!-- SCRIPTING OFF. The plan dialogs (Edit, Trash) are opened by links
+{# SCRIPTING OFF. The plan dialogs (Edit, Trash) are opened by links
      to their own #id, which Bootstrap intercepts when it runs. Without
      it the browser just jumps to the fragment, and this shows the
      dialog that is the :target -- so editing a plan and restoring one
      from Trash still work, as ordinary form posts. Inside <noscript>
-     so it can never fight Bootstrap's own modal state. -->
+     so it can never fight Bootstrap's own modal state. #}
 <noscript>
   <style>
     .modal:target { display: block; position: relative; opacity: 1; height: auto; z-index: 1; }
@@ -35,14 +36,14 @@
 {% endblock %}
 
 {% block content %}
-<!-- Hero / search -- matches Reference/Figma_Storyboard/src/app/pages/home.tsx's
+{# Hero / search -- matches Reference/Figma_Storyboard/src/app/pages/home.tsx's
      gradient header + centered search bar, minus the duplicate app title
      (already shown in the shared top bar).
 
      REVISION: the location is picked on a MAP (or typed), not from a
      dropdown; the industry type sits in its own labelled box on the
      right, where it is seen rather than tucked into the search bar; and
-     Clear empties both. -->
+     Clear empties both. #}
 <div class="dss-hero mb-3">
   <h2 class="text-center mb-1">Business Planning</h2>
   <p class="text-center text-muted mb-3">Build and compare your business plans: market score, map, forecast and
@@ -259,13 +260,13 @@
   arrows or scroll sideways to see all {{ industry_cards|length }}, and open a card for its Saturation Map.
 </p>
 
-<!-- Main analysis section -->
+{# Main analysis section #}
 <h4 class="text-center mb-3">AI-Powered Market Saturation &amp; Viability Analysis</h4>
 <div class="row g-4">
-  <!-- Saturation map (real data). Bigger than it was, and it FILLS its
+  {# Saturation map (real data). Bigger than it was, and it FILLS its
        card: the map grows to the height of the forecast panel beside it,
        so there is no empty band under it. It follows the chosen plan --
-       that plan's industry, centred on that plan's barangay. -->
+       that plan's industry, centred on that plan's barangay. #}
   <div class="col-lg-7">
     <div class="dss-card h-100 d-flex flex-column dss-home-map-card">
       <div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-2">
@@ -277,14 +278,14 @@
           </span>
         {% endif %}
       </div>
-      <!-- OpenStreetMap via Leaflet -- no API key needed. -->
+      {# OpenStreetMap via Leaflet -- no API key needed. #}
       <div id="dss-map" class="dss-mini-map dss-home-map mb-2" data-tour="mini-map"></div>
       <div class="dss-legend-inline small" aria-label="Saturation intensity scale">
         <span class="fw-semibold me-1">Saturation:</span>
-        <span><span class="dss-legend-swatch" style="background:#b91c1c"></span>High</span>
-        <span><span class="dss-legend-swatch" style="background:#f97316"></span>Moderate</span>
-        <span><span class="dss-legend-swatch" style="background:#fde047"></span>Low-Moderate</span>
-        <span><span class="dss-legend-swatch" style="background:#22c55e"></span>High Opportunity</span>
+        <span><span class="dss-legend-swatch" style="background:#b91c1c"></span>Saturated</span>
+        <span><span class="dss-legend-swatch" style="background:#f97316"></span>High</span>
+        <span><span class="dss-legend-swatch" style="background:#fde047"></span>Moderate</span>
+        <span><span class="dss-legend-swatch" style="background:#22c55e"></span>Low</span>
       </div>
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2">
         <p class="text-muted mb-0" style="font-size:.7rem;">Official barangay boundaries &copy; PSA &amp; NAMRIA (2023) &middot; city border &copy; OpenStreetMap contributors, ODbL.</p>
@@ -350,7 +351,7 @@
     </div>
   </div>
 
-  <!-- Forecast & Recommendations -->
+  {# Forecast & Recommendations #}
   <div class="col-lg-5">
     <div class="dss-card h-100" data-tour="forecast-panel">
       <h6 class="mb-2">Forecast &amp; Recommendations</h6>
@@ -396,7 +397,7 @@
             <canvas id="viabilityGauge" width="120" height="120" role="img"
                     aria-label="Plan viability {{ '%.1f'|format(vscore) }} out of 10"></canvas>
             <div class="position-absolute top-50 start-50 translate-middle text-center" aria-hidden="true">
-              <div class="fs-4 fw-bold">{{ '%.1f'|format(vscore) }}</div>
+              <div class="fs-4 fw-bold dss-score-text-{{ score_tone(vscore) }}">{{ '%.1f'|format(vscore) }}</div>
               <div class="dss-text-muted-sm">/10</div>
             </div>
           </div>
@@ -527,25 +528,14 @@
   </div>
 </div>
 
-<!-- Footer -- matches Reference/Figma_Storyboard/src/app/pages/home.tsx.
-     Moved into shared/_footer.html so the LGU and Admin dashboards get
-     the same bar, and so Contact Us exists for every role rather than
-     only for an SME. -->
-{% include "shared/_footer.html" %}
-
 {# Gemini transcripts for EVERY plan, in the background -- see the macro. #}
 {{ transcript_queue_hooks(plan_forecasts) }}
 
-<!-- One barangay list for every plan form on the page (Add, and each
-     plan's Edit) -- 76 options once, not once per dialog. -->
-<datalist id="locationOptions">
-  {% for loc in locations %}<option value="{{ loc }}">{% endfor %}
-</datalist>
 
-<!-- "+ New Business Plan" modal. The same form body as each plan's Edit
+{# "+ New Business Plan" modal. The same form body as each plan's Edit
      dialog below (plan_core_fields in shared/_plan_fields.html):
      sub-category, what you sell, the REQUIRED capital, what makes you
-     different, the optional price list -- and no monthly revenue. -->
+     different, the optional price list -- and no monthly revenue. #}
 <div class="modal fade" id="addPlanModal" tabindex="-1" aria-hidden="true" aria-labelledby="addPlanTitle">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
     <div class="modal-content">
@@ -716,8 +706,8 @@
   </div>
 </div>
 
-<!-- Pick-a-location dialog for the search bar: a map of the 76
-     barangays instead of a dropdown. Click a barangay, then Use. -->
+{# Pick-a-location dialog for the search bar: a map of the 76
+     barangays instead of a dropdown. Click a barangay, then Use. #}
 <div class="modal fade" id="locationPickerModal" tabindex="-1" aria-hidden="true" aria-labelledby="locationPickerTitle">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
@@ -842,7 +832,9 @@
     data: {
       datasets: [{
         data: [{{ featured_forecast.viability_score }}, {{ 10 - featured_forecast.viability_score }}],
-        backgroundColor: ['#2563eb', '#e5e7eb'],
+        // Red / amber / green by the score itself -- a 3.3 is a warning,
+        // not a neutral blue (IT expert review).
+        backgroundColor: ['{{ SCORE_COLORS[score_tone(featured_forecast.viability_score)] }}', '#e5e7eb'],
         borderWidth: 0,
       }],
     },

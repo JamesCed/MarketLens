@@ -24,7 +24,7 @@
   page -- none of which an LGU or Admin account ever needed.
 #}
 {% set sections = [
-  ('profile',       'Profile',       'bi-person-circle', 'Your name, photo and contact details'),
+  ('profile',       'Profile',       'bi-person-circle', 'Your personal information and photo'),
   ('notifications', 'Notifications', 'bi-bell',          'Notification preferences and your inbox'),
   ('appearance',    'Appearance',    'bi-palette',       'Switch between light and dark'),
   ('security',      'Security',      'bi-shield-lock',   'Password and account status'),
@@ -76,6 +76,7 @@
           <div class="text-start small">
             <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Role</span><strong>{{ current_user.role|upper }}</strong></div>
             <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Contact Number</span><strong>{{ current_user.contact_number or '—' }}</strong></div>
+            <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Age</span><strong>{{ current_user.age if current_user.age is not none else '—' }}</strong></div>
             {% if current_user.is_sme() %}
             <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Saved Plans</span><strong>{{ saved_plans_count }}</strong></div>
             <div class="d-flex justify-content-between border-top py-2"><span class="text-muted">Forecasts Run</span><strong>{{ reports_viewed_count }}</strong></div>
@@ -91,15 +92,72 @@
       </div>
 
       <div class="col-lg-7">
+        {#
+          Personal information in full (IT expert review): the name in parts,
+          gender, birthday (age is worked out), contact number and address.
+          Gender, birthday, contact number and address are stored encrypted.
+          An account created before sign-up asked for these is reminded here
+          until they are filled in.
+        #}
+        {% if not current_user.personal_info_complete %}
+          <div class="alert alert-warning small d-flex gap-2 align-items-start" role="status">
+            <i class="bi bi-person-exclamation fs-5" aria-hidden="true"></i>
+            <div><strong>Please complete your personal information.</strong>
+              New accounts now give these details at sign-up; yours is missing some of them.</div>
+          </div>
+        {% endif %}
         <form method="POST" action="{{ url_for('profile.settings') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="form_type" value="profile">
 
           <div class="dss-card">
-            <h6 class="mb-3">Personal Information</h6>
-            <div class="mb-3">
-              <label class="form-label" for="set-name"><i class="bi bi-person"></i> Full Name</label>
-              <input type="text" id="set-name" name="name" class="form-control" value="{{ current_user.name }}">
+            <h6 class="mb-1">Personal Information</h6>
+            <p class="text-muted small mb-3"><i class="bi bi-lock"></i> Kept confidential. Gender, birthday, contact number and address are stored encrypted.</p>
+            <div class="row g-3 mb-3">
+              <div class="col-sm-6">
+                <label class="form-label" for="set-first">First name</label>
+                <input type="text" id="set-first" name="first_name" class="form-control" maxlength="60" required
+                       autocomplete="given-name" value="{{ current_user.name_parts[0] }}">
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label" for="set-middle">Middle name <span class="text-muted fw-normal">(optional)</span></label>
+                <input type="text" id="set-middle" name="middle_name" class="form-control" maxlength="60"
+                       autocomplete="additional-name" value="{{ current_user.name_parts[1] }}">
+              </div>
+              <div class="col-sm-8">
+                <label class="form-label" for="set-last">Last name</label>
+                <input type="text" id="set-last" name="last_name" class="form-control" maxlength="60" required
+                       autocomplete="family-name" value="{{ current_user.name_parts[2] }}">
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label" for="set-suffix">Suffix <span class="text-muted fw-normal">(optional)</span></label>
+                <select id="set-suffix" name="suffix" class="form-select">
+                  {% for sx in suffixes %}
+                    <option value="{{ sx }}" {{ 'selected' if (current_user.suffix or '') == sx else '' }}>{{ sx or 'None' }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-sm-5">
+                <label class="form-label" for="set-gender">Gender</label>
+                <select id="set-gender" name="gender" class="form-select" required>
+                  <option value="">Choose&hellip;</option>
+                  {% for g in genders %}
+                    <option value="{{ g }}" {{ 'selected' if current_user.gender == g else '' }}>{{ g }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label" for="set-birthdate">Birthday</label>
+                <input type="date" id="set-birthdate" name="birthdate" class="form-control" required
+                       min="1920-01-01" max="{{ latest_birthdate }}" value="{{ current_user.birthdate_iso or '' }}">
+              </div>
+              <div class="col-sm-3">
+                <label class="form-label" for="set-age">Age</label>
+                <input type="text" id="set-age" class="form-control" readonly tabindex="-1"
+                       value="{{ current_user.age if current_user.age is not none else '' }}" placeholder="&mdash;">
+              </div>
             </div>
             <div class="mb-3">
               <label class="form-label" for="set-email"><i class="bi bi-envelope"></i> Email Address</label>
@@ -108,7 +166,29 @@
             </div>
             <div class="mb-3">
               <label class="form-label" for="set-contact"><i class="bi bi-telephone"></i> Contact Number</label>
-              <input type="tel" id="set-contact" name="contact_number" class="form-control" value="{{ current_user.contact_number or '' }}">
+              <input type="tel" id="set-contact" name="contact_number" class="form-control" required
+                     inputmode="tel" maxlength="16" placeholder="09XXXXXXXXX" pattern="[0-9+\(\)\s\-]{10,16}"
+                     value="{{ current_user.contact_number or '' }}">
+            </div>
+            <div class="mb-1">
+              <label class="form-label" for="set-street">Address: house no. and street</label>
+              <input type="text" id="set-street" name="address_line" class="form-control" maxlength="150" required
+                     autocomplete="address-line1" value="{{ current_user.address_line or '' }}">
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-sm-7">
+                <label class="form-label" for="set-brgy">Barangay</label>
+                <select id="set-brgy" name="address_barangay" class="form-select" required>
+                  <option value="">Choose a barangay&hellip;</option>
+                  {% for b in barangays %}
+                    <option value="{{ b }}" {{ 'selected' if current_user.address_barangay == b else '' }}>{{ b }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-sm-5">
+                <label class="form-label" for="set-city">City</label>
+                <input type="text" id="set-city" class="form-control" value="Tarlac City" readonly tabindex="-1">
+              </div>
             </div>
             <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Changes</button>
           </div>
@@ -291,31 +371,51 @@
            id="section-security" data-section="security">
     <div class="row g-4">
       <div class="col-lg-7">
-        <form method="POST" action="{{ url_for('profile.settings') }}">
+        {#
+          Changing the password is checked IN PLACE (IT expert review: "I
+          changed my password, it reloaded and sent me back to Profile --
+          on an error it should just show an alert, no reload"). The script
+          below posts it with fetch and shows the result here; with
+          scripting off the form still posts normally.
+        #}
+        <form method="POST" action="{{ url_for('profile.settings') }}" id="passwordForm" novalidate>
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="form_type" value="password">
 
           <div class="dss-card">
             <h6 class="mb-3">Change Password</h6>
+            <div id="passwordAlert" class="alert d-none small" role="alert" aria-live="assertive"></div>
             <div class="mb-3">
               <label class="form-label" for="set-cur-pw">Current Password</label>
-              <input type="password" id="set-cur-pw" name="current_password" class="form-control" required
-                     autocomplete="current-password">
+              <div class="input-group has-validation">
+                <input type="password" id="set-cur-pw" name="current_password" class="form-control" required
+                       autocomplete="current-password">
+                <button class="btn btn-outline-secondary ml-reveal" type="button" data-target="set-cur-pw" aria-label="Show password"><i class="bi bi-eye"></i></button>
+                <div class="invalid-feedback" data-error-for="current_password"></div>
+              </div>
             </div>
-            <div class="row g-3 mb-3">
+            <div class="row g-3 mb-2">
               <div class="col-sm-6">
                 <label class="form-label" for="set-new-pw">New Password</label>
-                <input type="password" id="set-new-pw" name="new_password" class="form-control" required
-                       minlength="6" autocomplete="new-password">
-                <div class="form-text">At least 6 characters.</div>
+                <div class="input-group has-validation">
+                  <input type="password" id="set-new-pw" name="new_password" class="form-control" required
+                         minlength="{{ PASSWORD_MIN_LENGTH }}" autocomplete="new-password">
+                  <button class="btn btn-outline-secondary ml-reveal" type="button" data-target="set-new-pw" aria-label="Show password"><i class="bi bi-eye"></i></button>
+                  <div class="invalid-feedback" data-error-for="new_password"></div>
+                </div>
               </div>
               <div class="col-sm-6">
                 <label class="form-label" for="set-new-pw2">Confirm New Password</label>
-                <input type="password" id="set-new-pw2" name="confirm_password" class="form-control" required
-                       minlength="6" autocomplete="new-password">
+                <div class="input-group has-validation">
+                  <input type="password" id="set-new-pw2" name="confirm_password" class="form-control" required
+                         minlength="{{ PASSWORD_MIN_LENGTH }}" autocomplete="new-password">
+                  <button class="btn btn-outline-secondary ml-reveal" type="button" data-target="set-new-pw2" aria-label="Show password"><i class="bi bi-eye"></i></button>
+                  <div class="invalid-feedback" data-error-for="confirm_password"></div>
+                </div>
               </div>
             </div>
-            <button type="submit" class="btn btn-outline-primary"><i class="bi bi-key"></i> Update Password</button>
+            {% with target='set-new-pw' %}{% include "shared/_password_rules.html" %}{% endwith %}
+            <button type="submit" class="btn btn-outline-primary mt-3" id="passwordSubmit"><i class="bi bi-key"></i> Update Password</button>
           </div>
         </form>
       </div>
@@ -408,8 +508,8 @@
   </div>
 </div>
 
-<!-- "Edit profile picture" modal -- lives outside the panes so Bootstrap
-     can move it to the end of <body> without taking a pane with it. -->
+{# "Edit profile picture" modal -- lives outside the panes so Bootstrap
+     can move it to the end of <body> without taking a pane with it. #}
 <div class="modal fade" id="editAvatarModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -453,6 +553,79 @@
 
 {% block extra_scripts %}
 <script>
+// Change password IN PLACE: errors are shown beside the field that caused
+// them and nothing reloads (IT expert review). Falls back to a normal
+// post if fetch is unavailable.
+(function () {
+  const form = document.getElementById("passwordForm");
+  if (!form || !window.fetch) return;
+  const alertBox = document.getElementById("passwordAlert");
+  const button = document.getElementById("passwordSubmit");
+
+  function clearErrors() {
+    form.querySelectorAll(".is-invalid").forEach((el) => el.classList.remove("is-invalid"));
+    form.querySelectorAll("[data-error-for]").forEach((el) => { el.textContent = ""; });
+    alertBox.className = "alert d-none small";
+    alertBox.textContent = "";
+  }
+  function showAlert(tone, text) {
+    alertBox.className = `alert alert-${tone} small`;
+    alertBox.innerHTML = `<i class="bi ${tone === "success" ? "bi-check-circle" : "bi-exclamation-triangle"}"></i> `;
+    alertBox.appendChild(document.createTextNode(text));
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    clearErrors();
+    if (!form.checkValidity()) { form.reportValidity(); return; }
+    button.disabled = true;
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        headers: { "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" },
+        credentials: "same-origin",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.success) {
+        form.reset();
+        form.querySelectorAll("input[type=password]").forEach((el) => el.dispatchEvent(new Event("input")));
+        showAlert("success", data.message || "Password updated.");
+      } else {
+        const errors = data.errors || {};
+        let first = null;
+        Object.entries(errors).forEach(([field, message]) => {
+          const input = form.querySelector(`[name="${field}"]`);
+          const slot = form.querySelector(`[data-error-for="${field}"]`);
+          if (input) { input.classList.add("is-invalid"); first = first || input; }
+          if (slot) slot.textContent = message;
+        });
+        showAlert("danger", data.message || "Your password was not changed.");
+        if (first) first.focus();
+      }
+    } catch (_err) {
+      showAlert("danger", "Could not reach the server. Check your connection and try again.");
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+
+// Age follows the birthday as it is picked.
+(function () {
+  const birth = document.getElementById("set-birthdate");
+  const age = document.getElementById("set-age");
+  if (!birth || !age) return;
+  birth.addEventListener("input", () => {
+    const d = birth.value ? new Date(birth.value + "T00:00:00") : null;
+    if (!d || isNaN(d)) { age.value = ""; return; }
+    const now = new Date();
+    let years = now.getFullYear() - d.getFullYear();
+    if (now.getMonth() < d.getMonth() || (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())) years--;
+    age.value = years >= 0 ? String(years) : "";
+  });
+})();
+
 (function () {
   const nav   = document.getElementById("settingsNav");
   const panes = [...document.querySelectorAll(".dss-settings-pane")];

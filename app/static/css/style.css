@@ -2222,3 +2222,115 @@ body.dss-skin .dss-main .table > thead th {
 .dss-chart-guide {
   border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: .7rem .85rem; background: var(--bs-body-bg);
 }
+
+/* =====================================================================
+   PAGE LOADER -- the rotating circle shown while the next page loads
+   =====================================================================
+   Markup: shared/_page_loader.html (a direct child of <body>).
+   Behaviour: the "PAGE LOADER" section of static/js/main.js.
+   The spinner rotates ITSELF; no page container is animated or
+   transformed (see tests/test_flash_and_page_transition.py). */
+.dss-page-loader {
+  position: fixed; inset: 0; z-index: 2000;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .85rem;
+  background: rgba(244, 248, 251, .62);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  cursor: progress;
+}
+.dss-page-loader[hidden] { display: none !important; }
+.dss-spinner {
+  width: 54px; height: 54px; border-radius: 50%;
+  border: 5px solid rgba(17, 42, 72, .14);
+  border-top-color: var(--ml-cyan-600);
+  border-right-color: var(--ml-navy);
+  animation: dss-spin .8s linear infinite;
+}
+.dss-page-loader-text {
+  font-weight: 600; font-size: .95rem; letter-spacing: .02em; color: var(--ml-navy);
+  background: rgba(255, 255, 255, .85); padding: .2rem .75rem; border-radius: 999px;
+}
+@keyframes dss-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .dss-spinner { animation-duration: 1.8s; }
+}
+[data-bs-theme="dark"] .dss-page-loader { background: rgba(10, 17, 26, .62); }
+[data-bs-theme="dark"] .dss-spinner { border-color: rgba(255, 255, 255, .14); border-top-color: var(--ml-cyan); border-right-color: #8bbcff; }
+[data-bs-theme="dark"] .dss-page-loader-text { color: #e6edf5; background: rgba(22, 32, 43, .9); }
+
+/* =====================================================================
+   REQUIRED-FIELD ASTERISK AND PASSWORD CHECKLIST (IT expert review)
+   ===================================================================== */
+.is-required::after { content: " *"; color: var(--bs-danger, #dc3545); font-weight: 700; }
+.form-check-label.is-required::after { content: " *"; }
+.dss-pw-rules { list-style: none; padding: 0; margin: .4rem 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .1rem .75rem; font-size: .78rem; color: var(--bs-secondary-color, #6c757d); }
+.dss-pw-rules li { display: flex; align-items: center; gap: .35rem; }
+.dss-pw-rules li.is-met { color: var(--dss-green, #16a34a); }
+.dss-pw-rules li i { font-size: .8rem; }
+.dss-terms h3 { font-size: 1rem; font-weight: 700; margin: 1.1rem 0 .4rem; }
+.dss-terms p, .dss-terms li { font-size: .9rem; line-height: 1.55; }
+.dss-terms ul { padding-left: 1.2rem; }
+
+/* =====================================================================
+   TOP-BAR QUICK LINKS (shared/_quick_links.html) -- PSA, DTI, Community,
+   Contact Us as icons, replacing the old footer bar (IT expert review).
+   ===================================================================== */
+.dss-quick-links { display: inline-flex; align-items: center; gap: .15rem; margin-right: .35rem; padding-right: .5rem; border-right: 1px solid var(--bs-border-color); }
+.dss-quick-link {
+  display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem;
+  border-radius: .55rem; border: 0; background: transparent; color: var(--ml-navy-600, #285a80);
+  font-size: 1.1rem; text-decoration: none; transition: background .15s ease, color .15s ease;
+}
+.dss-quick-link:hover, .dss-quick-link:focus-visible { background: var(--dss-blue-light); color: var(--dss-blue); }
+[data-bs-theme="dark"] .dss-quick-link { color: #9fb3c8; }
+@media (max-width: 575.98px) { .dss-quick-links { gap: 0; margin-right: .1rem; padding-right: .2rem; } .dss-quick-link { width: 2rem; } }
+
+/* =====================================================================
+   SCORE COLOURS -- one rule everywhere a score appears (IT expert review):
+   green = good (>= 6.5/10), amber = caution (4-6.4), red = risk (< 4).
+   ===================================================================== */
+.dss-score-pill { display: inline-flex; align-items: center; font-weight: 700; font-size: .8rem; padding: .15rem .55rem; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; }
+.dss-score-good { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.dss-score-fair, .dss-score-moderate { background: #fef3c7; color: #b45309; border-color: #fde68a; }
+.dss-score-low { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+[data-bs-theme="dark"] .dss-score-good { background: rgba(34,197,94,.16); color: #86efac; border-color: rgba(34,197,94,.3); }
+[data-bs-theme="dark"] .dss-score-fair, [data-bs-theme="dark"] .dss-score-moderate { background: rgba(245,158,11,.16); color: #fcd34d; border-color: rgba(245,158,11,.3); }
+[data-bs-theme="dark"] .dss-score-low { background: rgba(239,68,68,.16); color: #fca5a5; border-color: rgba(239,68,68,.3); }
+.dss-score-text-good { color: #15803d !important; }
+.dss-score-text-fair, .dss-score-text-moderate { color: #b45309 !important; }
+.dss-score-text-low { color: #b91c1c !important; }
+[data-bs-theme="dark"] .dss-score-text-good { color: #86efac !important; }
+[data-bs-theme="dark"] .dss-score-text-fair, [data-bs-theme="dark"] .dss-score-text-moderate { color: #fcd34d !important; }
+[data-bs-theme="dark"] .dss-score-text-low { color: #fca5a5 !important; }
+
+/* Compact ranking rows (Trend Reports > Top Performing Industries). */
+.dss-rank-row { display: flex; align-items: center; gap: .75rem; padding: .5rem .75rem; border: 1px solid var(--bs-border-color); border-radius: .55rem; margin-bottom: .4rem; }
+.dss-rank-num { width: 1.6rem; text-align: center; font-weight: 700; color: var(--bs-secondary-color); }
+.dss-rank-change { min-width: 4.5rem; text-align: right; font-weight: 600; font-size: .85rem; }
+.min-w-0 { min-width: 0; }
+
+/* Colour chips used in "How to read" explanations, matching the chart. */
+.dss-swatch { display: inline-block; width: .9rem; height: .9rem; border-radius: .2rem; vertical-align: -.1rem; }
+.dss-swatch-hollow { background: #fff; border: 2px solid #2a78d6; border-radius: 50%; }
+.dss-howto-btn { font-size: .78rem; font-weight: 600; text-decoration: none; }
+
+/* Saturation Map list: the business count keeps one style, including on
+   the selected (blue) row, where grey-on-blue read as a different font. */
+.dss-loc-count { font-size: .75rem; line-height: 1.2; color: var(--bs-secondary-color); margin-top: .15rem; }
+.dss-loc-item.active .dss-loc-count { color: rgba(255, 255, 255, .92); }
+
+/* =====================================================================
+   RECOMMENDATIONS: "In brief" summary and folded full analysis
+   ===================================================================== */
+.dss-brief { border-radius: .7rem; padding: .75rem 1rem; border: 1px solid var(--bs-border-color); border-left-width: 4px; background: var(--bs-tertiary-bg); }
+.dss-brief-good { border-left-color: #16a34a; }
+.dss-brief-fair { border-left-color: #d97706; }
+.dss-brief-low { border-left-color: #dc2626; }
+.dss-brief-title { font-weight: 700; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--bs-secondary-color); margin-bottom: .3rem; }
+.dss-brief ul { padding-left: 1.1rem; font-size: .9rem; }
+.dss-brief li { margin-bottom: .2rem; }
+.dss-full-analysis > summary, .dss-opp-card > summary { list-style: none; cursor: pointer; font-weight: 600; }
+.dss-full-analysis > summary::-webkit-details-marker, .dss-opp-card > summary::-webkit-details-marker { display: none; }
+.dss-full-analysis > summary { padding: .55rem .75rem; border: 1px solid var(--bs-border-color); border-radius: .55rem; }
+.dss-full-analysis > summary:hover { background: var(--bs-tertiary-bg); }
+.dss-chevron { display: inline-block; transition: transform .15s ease; }
+details[open] > summary .dss-chevron { transform: rotate(90deg); }

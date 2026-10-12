@@ -58,6 +58,7 @@ from sqlalchemy.dialects.mysql import LONGTEXT
 
 from app.extensions import db, login_manager
 from app.models.archive import ArchivableMixin
+from app.utils.privacy import EncryptedText
 
 
 class User(ArchivableMixin, UserMixin, db.Model):
@@ -68,7 +69,32 @@ class User(ArchivableMixin, UserMixin, db.Model):
     email = db.Column(db.String(150), unique=True, nullable=False, index=True)
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.Enum("Admin", "SME", "LGU", name="user_role"), nullable=False)
-    contact_number = db.Column(db.String(20))
+
+    # ---------------- Personal information (IT expert review) ----------------
+    # The name in parts. `name` above stays the single display name every
+    # page already shows; it is composed from these
+    # (account_params.compose_full_name). NULL on accounts created before
+    # sign-up asked for them -- Settings asks those owners to complete it.
+    first_name = db.Column(db.String(60), nullable=True)
+    middle_name = db.Column(db.String(60), nullable=True)
+    last_name = db.Column(db.String(60), nullable=True)
+    suffix = db.Column(db.String(10), nullable=True)
+
+    # ENCRYPTED AT REST (app/utils/privacy.py): the table holds only
+    # ciphertext; the app reads and writes plain strings. The contact
+    # number moved here from the original VARCHAR(20) `contact_number`
+    # column, which is too short for ciphertext -- startup_migrations
+    # encrypts any number still in it and clears it. The old column is
+    # kept (mapped as legacy_contact_number) so the given schema is not
+    # altered.
+    contact_number = db.Column("contact_number_enc", EncryptedText, nullable=True)
+    legacy_contact_number = db.Column("contact_number", db.String(20), nullable=True)
+    gender = db.Column("gender_enc", EncryptedText, nullable=True)
+    birthdate_iso = db.Column("birthdate_enc", EncryptedText, nullable=True)
+    address_line = db.Column("address_line_enc", EncryptedText, nullable=True)
+    address_barangay = db.Column("address_barangay_enc", EncryptedText, nullable=True)
+    # When the Terms and Conditions / Data Privacy Notice were accepted.
+    terms_accepted_at = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.Enum("active", "inactive", name="user_status"), nullable=False, default="active")
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     # Additive -- see docstring above. A data: URI (base64 image), or
@@ -221,6 +247,54 @@ class User(ArchivableMixin, UserMixin, db.Model):
         # archiving is the admin's replacement for deletion, so it has to
         # be at least as final as deletion was for access.
         return self.status == "active" and self.archived_at is None
+
+    # ---------------- personal information helpers ----------------
+    @property
+    def birthdate(self):
+        from datetime import date as _date
+
+        try:
+            return _date.fromisoformat(self.birthdate_iso) if self.birthdate_iso else None
+        except ValueError:
+            return None
+
+    @birthdate.setter
+    def birthdate(self, value):
+        self.birthdate_iso = value.isoformat() if value else None
+
+    @property
+    def age(self):
+        from app.services.account_params import age_on
+
+        return age_on(self.birthdate)
+
+    @property
+    def address_display(self):
+        from app.services.account_params import CITY
+
+        parts = [p for p in (self.address_line, self.address_barangay) if p]
+        return ", ".join(parts + [CITY]) if parts else None
+
+    @property
+    def name_parts(self):
+        """(first, middle, last) for the Settings form. An account from
+        before the name was asked in parts gets a best guess from its
+        display name -- the first word and the last -- so the owner only
+        has to check it, not retype it."""
+        if self.first_name or self.last_name:
+            return self.first_name or "", self.middle_name or "", self.last_name or ""
+        words = (self.name or "").split()
+        if len(words) >= 2:
+            return " ".join(words[:-1]), "", words[-1]
+        return (words[0] if words else ""), "", ""
+
+    @property
+    def personal_info_complete(self):
+        """True once every detail sign-up now asks for is on file -- an
+        account from before that stays usable, but Settings asks its
+        owner to fill the gaps."""
+        return all((self.first_name, self.last_name, self.gender, self.birthdate_iso,
+                    self.contact_number, self.address_line, self.address_barangay))
 
     def set_password(self, raw_password):
         self.password = generate_password_hash(raw_password)

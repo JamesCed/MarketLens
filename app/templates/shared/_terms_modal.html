@@ -1,0 +1,22 @@
+{# The sign-up dialog that shows shared/_terms_content.html. The link that
+   opens it also points at /terms, so it still works without JavaScript. #}
+<div class="modal fade" id="termsModal" tabindex="-1" aria-labelledby="termsModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title fs-5" id="termsModalTitle"><i class="bi bi-shield-lock"></i> Terms and Conditions &amp; Data Privacy Notice</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        {% include "shared/_terms_content.html" %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal"
+                onclick="var t=document.getElementById('ml-terms'); if (t) { t.checked = true; t.dispatchEvent(new Event('change')); }">
+          I agree
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -773,7 +773,78 @@ def compute_scores(industry_type, location, years_in_operation=0):
     }
 
 
+_BATCH_CACHE = {}
+_BATCH_CACHE_TTL_SECONDS = 120
+_BATCH_CACHE_MAX_ENTRIES = 64
+_BATCH_CACHE_LOCK = threading.Lock()
+
+
+def _scoring_inputs_fingerprint():
+    """market_data's fingerprint (the one Trend Reports already keys on)
+    plus lgu_data's -- everything compute_scores_batch() reads from the
+    database. Both are memoised per request."""
+    from app.services.trend_analytics_service import _data_fingerprint
+    from app.utils.request_memo import request_memo
+
+    def lgu_fingerprint():
+        count, max_id, newest = db.session.query(
+            func.count(LguData.lgu_id), func.max(LguData.lgu_id), func.max(LguData.upload_date),
+        ).one()
+        return int(count or 0), int(max_id or 0), str(newest) if newest else None
+
+    return _data_fingerprint(), request_memo("lgu_fingerprint", lgu_fingerprint)
+
+
 def compute_scores_batch(pairs, years_in_operation=0):
+    """compute_scores() for many (industry_type, location) pairs, with
+    the result remembered for two minutes.
+
+    The same batches recur on every visit -- the Planning slider scores
+    all twenty sections in the plan's barangay, the LGU dashboard 120
+    industry x barangay cells -- and each one costs four queries plus a
+    pass of every tree in the forest. The answer can only change when
+    market_data or lgu_data does, so it is keyed on both tables'
+    fingerprints (any insert, edit or archive moves them) and, as a
+    second net, expires after _BATCH_CACHE_TTL_SECONDS. A batch that had
+    to CREATE rows is never cached. Callers get their own copies."""
+    import copy
+    import time as _time
+
+    pairs = list(pairs)
+    if not pairs:
+        return []
+    try:
+        fingerprint = _scoring_inputs_fingerprint()
+    except Exception:  # noqa: BLE001 -- no fingerprint, no cache; the scores are still right
+        return _compute_scores_batch(pairs, years_in_operation)
+
+    _load_models()
+    if _MODEL_CACHE.get("rf") is None:
+        # The formula fallback reads Admin-tunable weights; not worth
+        # caching for a state that only exists before the first training.
+        return _compute_scores_batch(pairs, years_in_operation)
+    key = (tuple(pairs), years_in_operation, id(_MODEL_CACHE["rf"]))
+    hit = _BATCH_CACHE.get(key)
+    if hit is not None and hit[0] == fingerprint and (_time.monotonic() - hit[1]) <= _BATCH_CACHE_TTL_SECONDS:
+        return copy.deepcopy(hit[2])
+
+    results = _compute_scores_batch(pairs, years_in_operation)
+    try:
+        if _scoring_inputs_fingerprint() == fingerprint:  # nothing was written while scoring
+            with _BATCH_CACHE_LOCK:
+                if len(_BATCH_CACHE) >= _BATCH_CACHE_MAX_ENTRIES:
+                    _BATCH_CACHE.clear()
+                _BATCH_CACHE[key] = (fingerprint, _time.monotonic(), copy.deepcopy(results))
+    except Exception:  # noqa: BLE001
+        pass
+    return results
+
+
+def clear_batch_cache():
+    _BATCH_CACHE.clear()
+
+
+def _compute_scores_batch(pairs, years_in_operation=0):
     """compute_scores() for many (industry_type, location) pairs at
     once, returning the same dicts in the same order.
 
@@ -797,10 +868,6 @@ def compute_scores_batch(pairs, years_in_operation=0):
     behaves exactly as before and a warm one -- which is every request
     after the first -- takes the fast route.
     """
-    pairs = list(pairs)
-    if not pairs:
-        return []
-
     industries = {industry for industry, _location in pairs}
     locations = {location for _industry, location in pairs}
 

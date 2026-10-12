@@ -1,0 +1,204 @@
+{#
+  sme/trend_report_print.html
+  -----------------------------
+  The Trend Report as a printable DOCUMENT (sme_controller.trend_report_print).
+
+  Deliberately NOT built on base.html: no sidebar, no top bar, no
+  buttons in the printout -- a letterhead with the MarketLens logo, the
+  report title and period, then the figures as tables and bars. Every
+  printed page carries a footer with the report name and "Page X of Y"
+  (CSS @page margin boxes). The figures are the same ones the Trend
+  Reports page shows, from the same cached build.
+#}
+{% set po = report.period_overview or {} %}
+{% set cards = po.cards or {} %}
+{% set ov = report.overview or {} %}
+{% set period_label = (report.period or {}).label or po.as_of_label %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MarketLens Trend Report &ndash; {{ period_label }}</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/marketlens-icon-32.png') }}">
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 15mm 20mm;
+      @bottom-left { content: "MarketLens \2014 Trend Report, {{ period_label }}"; font: 8pt Arial, sans-serif; color: #5b6b7c; }
+      @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 8pt Arial, sans-serif; color: #5b6b7c; }
+    }
+    :root { --navy: #112a48; --cyan: #2ba6c8; --line: #d9e2ec; --muted: #5b6b7c; --good: #15803d; --warn: #b45309; --bad: #b91c1c; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #eef2f6; color: #14212f; font: 10.5pt/1.45 "Segoe UI", Arial, sans-serif; }
+    .sheet { max-width: 210mm; margin: 0 auto; background: #fff; padding: 16mm 15mm 18mm; box-shadow: 0 2px 16px rgba(17, 42, 72, .12); }
+    .toolbar { max-width: 210mm; margin: 14px auto; display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+    .toolbar p { margin: 0 auto 0 0; color: var(--muted); font-size: 9.5pt; }
+    .toolbar button, .toolbar a { font: 600 10pt Arial, sans-serif; border-radius: 8px; padding: 8px 14px; border: 1px solid var(--navy); cursor: pointer; text-decoration: none; }
+    .toolbar button { background: var(--navy); color: #fff; }
+    .toolbar a { background: #fff; color: var(--navy); }
+    header.letterhead { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid var(--navy); padding-bottom: 10px; margin-bottom: 14px; }
+    header.letterhead img { height: 30px; }
+    header.letterhead .org { text-align: right; font-size: 8.5pt; color: var(--muted); line-height: 1.35; }
+    h1 { font-size: 18pt; margin: 0 0 2px; color: var(--navy); }
+    .subtitle { color: var(--muted); margin: 0 0 12px; }
+    .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 14px; font-size: 9pt; background: #f4f8fb; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 16px; }
+    .meta b { display: block; color: var(--muted); font-weight: 600; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .04em; }
+    h2 { font-size: 12pt; color: var(--navy); margin: 18px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line); break-after: avoid; }
+    p.note { font-size: 8.5pt; color: var(--muted); margin: 4px 0 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 9pt; break-inside: auto; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    th { text-align: left; background: var(--navy); color: #fff; font-weight: 600; padding: 5px 6px; }
+    td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .kpi { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; break-inside: avoid; }
+    .kpi .label { font-size: 7.5pt; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+    .kpi .value { font-size: 15pt; font-weight: 700; color: var(--navy); }
+    .kpi .delta { font-size: 8.5pt; }
+    .good { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+    .bar { height: 9px; background: #e3eaf1; border-radius: 3px; overflow: hidden; min-width: 60px; }
+    .bar span { display: block; height: 100%; background: var(--cyan); }
+    .pill { display: inline-block; font-size: 7.5pt; font-weight: 700; padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor; }
+    footer.doc-end { margin-top: 18px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 8pt; color: var(--muted); }
+    @media print {
+      body { background: #fff; }
+      .toolbar { display: none !important; }
+      .sheet { box-shadow: none; padding: 0; max-width: none; }
+      a { color: inherit; text-decoration: none; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <p>Tip: in the print dialog choose <strong>Save as PDF</strong>, and turn off the browser&rsquo;s own &ldquo;Headers and footers&rdquo; &mdash; this report has its own.</p>
+    <a href="{{ url_for('sme.trend_reports', as_of=(report.period or {}).as_of) }}">Back to Trend Reports</a>
+    <button type="button" onclick="window.print()">Print / Save as PDF</button>
+  </div>
+
+  <main class="sheet">
+    <header class="letterhead">
+      <img src="{{ url_for('static', filename='img/marketlens-wordmark.png') }}" alt="MarketLens">
+      <div class="org">SME Business Planning &amp; Market Entry<br>Decision Support System &middot; Tarlac City</div>
+    </header>
+
+    <h1>Trend Report &amp; Market Analytics</h1>
+    <p class="subtitle">City-wide market indicators for Tarlac City&rsquo;s 76 barangays, as of {{ period_label }}.</p>
+
+    <div class="meta">
+      <div><b>Period</b>{{ period_label }}</div>
+      <div><b>Prepared for</b>{{ current_user.name }} ({{ current_user.role }})</div>
+      <div><b>Generated</b>{{ generated_at.strftime('%B %d, %Y %I:%M %p') }} PHT</div>
+    </div>
+
+    <h2>1. Key indicators</h2>
+    {% macro kpi(label, card, fmt, unit='', higher_is_better=True, digits=1) -%}
+      <div class="kpi">
+        <div class="label">{{ label }}</div>
+        <div class="value">{{ fmt(card.value) if card and card.value is not none else '&mdash;'|safe }}</div>
+        {% set delta = card.delta_percent if card and card.delta_percent is defined else (card.delta_points if card else none) %}
+        {% if delta is not none %}
+          {% set good = (delta >= 0) if higher_is_better else (delta <= 0) %}
+          <div class="delta {{ 'muted' if delta == 0 else ('good' if good else 'bad') }}">
+            {{ '+' if delta > 0 }}{{ '%.*f'|format(digits, delta) }}{{ '%' if card.delta_percent is defined else unit }} vs {{ po.previous_label or 'last month' }}
+            {% if card and not card.measured %}<span class="muted">(estimated)</span>{% endif %}
+          </div>
+        {% else %}
+          <div class="delta muted">no comparison available</div>
+        {% endif %}
+      </div>
+    {%- endmacro %}
+    <div class="kpis">
+      {{ kpi('Total businesses', cards.total_businesses, "{:,}".format) }}
+      {{ kpi('New startups', cards.new_startups, "{:,}".format, ' new', True, 0) }}
+      {{ kpi('Market saturation', cards.market_saturation, "{:.1f}%".format, ' pts', False) }}
+      {{ kpi('Average viability', cards.avg_viability, "{:.1f}/10".format, ' pts', True, 2) }}
+    </div>
+    <p class="note">Saturation: share of a market already taken by competitors (lower leaves more room). Viability: 0&ndash;10, higher is better.
+      Colours follow one rule throughout: <span class="good">green = good</span>, <span class="warn">amber = caution</span>, <span class="bad">red = risk</span>.</p>
+
+    <h2>2. Quarterly performance{% if quarterly_industry %} &mdash; {{ quarterly_industry }}{% else %} &mdash; all industries{% endif %}</h2>
+    <table>
+      <thead><tr><th>Quarter</th><th class="num">Businesses on file</th><th class="num">Growth vs previous quarter</th><th>Basis</th></tr></thead>
+      <tbody>
+        {% for label in quarterly.labels or [] %}
+          {% set growth = (quarterly.growth_rate_percent or [])[loop.index0] %}
+          {% set projected = (quarterly.projected or [])[loop.index0] %}
+          <tr>
+            <td>{{ label }}</td>
+            <td class="num">{{ "{:,}".format((quarterly.businesses or [])[loop.index0] or 0) }}</td>
+            <td class="num {{ 'muted' if growth is none or growth == 0 else ('good' if growth > 0 else 'bad') }}">{% if growth is none %}&mdash;{% elif growth == 0 %}0%{% else %}{{ '+' if growth > 0 }}{{ growth }}%{% endif %}</td>
+            <td>{{ 'Estimated (before records began)' if projected else 'Measured' }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="muted">No quarterly figures yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>3. Top performing industries</h2>
+    <table>
+      <thead><tr><th class="num">#</th><th>Industry</th><th class="num">Market score</th><th class="num">Change since last month</th></tr></thead>
+      <tbody>
+        {% for row in report.top_industries or [] %}
+          {% set score = row.market_score or 0 %}
+          <tr>
+            <td class="num">{{ loop.index }}</td>
+            <td>{{ row.name }}</td>
+            <td class="num"><span class="pill {{ 'good' if score >= 6.5 else ('warn' if score >= 4 else 'bad') }}">{{ score }}/10</span></td>
+            {% set ch = (row.change_percent or 0)|float %}
+            <td class="num {{ 'muted' if ch == 0 else ('good' if ch > 0 else 'bad') }}">{% if ch == 0 %}0%{% else %}{{ '+' if ch > 0 }}{{ ch }}%{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="note">Market score (out of 10) is how much room a new business has: green 6.5 and above, amber 4&ndash;6.4, red below 4.</p>
+
+    <h2>4. Industry distribution</h2>
+    <table>
+      <thead><tr><th>Industry</th><th class="num">Businesses</th><th class="num">Share</th><th style="width:30%">&nbsp;</th></tr></thead>
+      <tbody>
+        {% for row in distribution %}
+          <tr>
+            <td>{{ row.name }}</td>
+            <td class="num">{{ "{:,}".format(row.count or 0) }}</td>
+            <td class="num">{{ row.percent }}%</td>
+            <td><div class="bar"><span style="width: {{ ((row.percent or 0) / top_share * 100)|round(1) }}%"></span></div></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% set mt = report.monthly_trends or {} %}
+    {% if mt.labels %}
+    <h2>5. Monthly saturation by industry (%)</h2>
+    <table>
+      <thead><tr><th>Industry</th>{% for m in mt.labels %}<th class="num">{{ m.split(' ')[0][:3] }} {{ m.split(' ')[-1][2:] }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for name, values in (mt.series or {}).items() %}
+          <tr>
+            <td>{{ short_industry(name) }}</td>
+            {% for v in values %}
+              {% set val = v if v is number else (v.value if v is mapping else none) %}
+              <td class="num {{ '' if val is none else ('bad' if val >= 75 else ('warn' if val >= 50 else '')) }}">{{ '%.1f'|format(val) if val is not none else '&mdash;'|safe }}</td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="note">Red: 75% and above (saturated). Amber: 50&ndash;74% (high).</p>
+    {% endif %}
+
+    <footer class="doc-end">
+      Figures combine the 76-barangay reference dataset, recorded business counts and the forecasts made in MarketLens. Where a figure is
+      an estimate it is marked as one. This report is decision support, not financial advice.
+    </footer>
+  </main>
+
+  {% if autoprint %}
+  <script>window.addEventListener("load", () => setTimeout(() => window.print(), 300));</script>
+  {% endif %}
+</body>
+</html>

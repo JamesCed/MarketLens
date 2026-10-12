@@ -1,0 +1,35 @@
+{#
+  shared/_quick_links.html
+  --------------------------
+  PSA data source, DTI, the Discord community and Contact Us, as icons in
+  the top bar of every signed-in page.
+
+  They used to be a dark footer bar at the foot of the dashboards. The IT
+  expert's review: the footer looked random, and on long pages nobody
+  scrolled far enough to find it -- put them in the navbar as icons; the
+  icons explain themselves. Each still has a text label for screen
+  readers and a tooltip.
+
+  The community link goes through /community, which redirects to the
+  Discord invite set in Admin > System Settings, in a new tab so
+  MarketLens stays open. data-tour="community-link" is what the guided
+  tour points at.
+#}
+<nav class="dss-quick-links" aria-label="Sources and help">
+  <a href="https://psa.gov.ph" target="_blank" rel="noopener" class="dss-quick-link"
+     title="PSA Data Source (opens psa.gov.ph)" aria-label="PSA Data Source">
+    <i class="bi bi-globe2" aria-hidden="true"></i>
+  </a>
+  <a href="https://www.dti.gov.ph" target="_blank" rel="noopener" class="dss-quick-link"
+     title="DTI-Verified industry categories (opens dti.gov.ph)" aria-label="DTI-Verified">
+    <i class="bi bi-patch-check" aria-hidden="true"></i>
+  </a>
+  <a href="{{ url_for('community.discord') }}" target="_blank" rel="noopener" class="dss-quick-link"
+     data-tour="community-link" title="Community Forum on Discord (opens in a new tab)" aria-label="Community Forum">
+    <i class="bi bi-discord" aria-hidden="true"></i>
+  </a>
+  <button type="button" class="dss-quick-link" data-bs-toggle="modal" data-bs-target="#contactModal"
+          title="Contact Us" aria-label="Contact Us">
+    <i class="bi bi-headset" aria-hidden="true"></i>
+  </button>
+</nav>

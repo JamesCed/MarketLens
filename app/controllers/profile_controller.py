@@ -64,7 +64,7 @@ base64 data: URI directly on the user row, no upload folder needed.
 
 import base64
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user
 
 from app.controllers.onboarding_controller import describe_walkthrough
@@ -255,34 +255,9 @@ def settings():
             return redirect(url_for("profile.settings", section="notifications"))
 
         if form_type == "password":
-            current_password = request.form.get("current_password", "")
-            new_password = request.form.get("new_password", "")
-            confirm_password = request.form.get("confirm_password", "")
+            return _change_password()
 
-            if not current_user.check_password(current_password):
-                flash("Current password is incorrect.", "danger")
-            elif len(new_password) < 6:
-                flash("New password must be at least 6 characters.", "danger")
-            elif new_password != confirm_password:
-                flash("New passwords do not match.", "danger")
-            else:
-                current_user.set_password(new_password)
-                db.session.commit()
-                log_action("change_password")
-                flash("Password updated.", "success")
-            return redirect(url_for("profile.settings"))
-
-        before = {"name": current_user.name, "contact_number": current_user.contact_number}
-        name = request.form.get("name", "").strip()
-        if name:
-            current_user.name = name
-        current_user.contact_number = request.form.get("contact_number", "").strip() or None
-        db.session.commit()
-        changed = diff_fields(before, {"name": current_user.name, "contact_number": current_user.contact_number})
-        log_action("update_profile", details=("changed " + ", ".join(changed)) if changed else "no changes",
-                   changes=changed)
-        flash("Profile updated.", "success")
-        return redirect(url_for("profile.settings"))
+        return _update_personal_info()
 
     # `section` only picks which pane opens first; an unknown value is
     # ignored rather than 404'd, because it arrives from a redirect or a
@@ -330,8 +305,22 @@ def settings():
     unread_count = Notification.query.filter_by(user_id=current_user.user_id, is_read=False).count()
     read_count = Notification.query.filter_by(user_id=current_user.user_id, is_read=True).count()
 
+    from app.ml.seed_data import BARANGAY_NAMES
+    from app.services.account_params import GENDERS, MIN_AGE, SUFFIXES
+    from datetime import date as _date
+
+    today = _date.today()
+    try:
+        latest_birthdate = today.replace(year=today.year - MIN_AGE)
+    except ValueError:
+        latest_birthdate = today.replace(year=today.year - MIN_AGE, day=28)
+
     return render_template(
         "shared/settings.html",
+        suffixes=SUFFIXES,
+        genders=GENDERS,
+        barangays=sorted(BARANGAY_NAMES),
+        latest_birthdate=latest_birthdate.isoformat(),
         saved_plans_count=saved_plans_count,
         reports_viewed_count=reports_viewed_count,
         notifications=notifications,
@@ -359,6 +348,105 @@ def settings():
         # rather than being left to wonder where the email went.
         **_alert_sender_context(),
     )
+
+
+def _wants_json():
+    """The Settings page's script asks for JSON (so a wrong password is
+    reported in place, without reloading -- IT expert review); a browser
+    with scripting off gets the flash-and-redirect it always did."""
+    if (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest":
+        return True
+    accept = request.accept_mimetypes
+    return accept.provided and accept.best_match(("text/html", "application/json")) == "application/json"
+
+
+def _change_password():
+    from app.services.account_params import password_problems
+
+    current_password = request.form.get("current_password", "")
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+
+    errors = {}
+    if not current_user.check_password(current_password):
+        errors["current_password"] = "Your current password is incorrect."
+    problems = password_problems(new_password)
+    if problems:
+        errors["new_password"] = " ".join(problems)
+    elif new_password != confirm_password:
+        errors["confirm_password"] = "The new passwords do not match."
+    elif current_password and new_password == current_password:
+        errors["new_password"] = "Choose a password different from your current one."
+
+    if errors:
+        log_action("change_password_failed", details=", ".join(sorted(errors)))
+        if _wants_json():
+            return jsonify({"success": False, "errors": errors,
+                            "message": "Your password was not changed. Fix the highlighted field."}), 400
+        for message in errors.values():
+            flash(message, "danger")
+        return redirect(url_for("profile.settings", section="security"))
+
+    current_user.set_password(new_password)
+    db.session.commit()
+    log_action("change_password")
+    if _wants_json():
+        return jsonify({"success": True, "message": "Password updated. Use your new password next time you sign in."})
+    flash("Password updated.", "success")
+    return redirect(url_for("profile.settings", section="security"))
+
+
+# Personal details are confidential: the audit trail records THAT they
+# changed, with the values masked, never the values themselves.
+from app.services.account_params import PII_FIELDS as _PII_FIELDS  # noqa: E402
+
+
+def _personal_snapshot(user):
+    return {
+        "name": user.name,
+        "first_name": user.first_name,
+        "middle_name": user.middle_name,
+        "last_name": user.last_name,
+        "suffix": user.suffix,
+        "gender": user.gender,
+        "birthdate": user.birthdate_iso,
+        "contact_number": user.contact_number,
+        "address_line": user.address_line,
+        "address_barangay": user.address_barangay,
+    }
+
+
+def _masked_changes(before, after):
+    """diff_fields() over the real values (so a change is never missed),
+    with every confidential value replaced before it reaches the trail:
+    the trail says THAT the gender, birthday, contact number or address
+    changed, never what it was or became (a partly masked value would
+    still give most of it away)."""
+    def mask(field, value):
+        if value in (None, "") or field not in _PII_FIELDS:
+            return value
+        return "(hidden)"
+
+    return {field: [mask(field, old), mask(field, new)] for field, (old, new) in diff_fields(before, after).items()}
+
+
+def _update_personal_info():
+    from app.services.account_params import apply_personal_info, parse_personal_info
+
+    data, errors = parse_personal_info(request.form)
+    if errors:
+        for message in errors:
+            flash(message, "danger")
+        return redirect(url_for("profile.settings"))
+
+    before = _personal_snapshot(current_user)
+    apply_personal_info(current_user, data)
+    db.session.commit()
+    changed = _masked_changes(before, _personal_snapshot(current_user))
+    log_action("update_profile", details=("changed " + ", ".join(changed)) if changed else "no changes",
+               changes=changed)
+    flash("Personal information saved.", "success")
+    return redirect(url_for("profile.settings"))
 
 
 def _alert_sender_context():

@@ -74,6 +74,24 @@ MAX_CAPITAL = 9_999_999_999.99
 MAX_EMPLOYEE_COUNT = 10_000
 MAX_ITEM_PRICE = 10_000_000.0
 
+# The smallest starting capital a plan may have (IT expert review: "a
+# one-peso capital is impossible -- set a real minimum, with validation").
+# PHP 5,000 is low enough for a sari-sari store or a home-based micro
+# business and high enough to stop a placeholder value from being
+# forecast as if it were a plan. Overridable with MIN_PLAN_CAPITAL.
+DEFAULT_MIN_CAPITAL = 5_000
+
+
+def min_capital():
+    try:
+        from flask import current_app, has_app_context
+
+        if has_app_context():
+            return float(current_app.config.get("MIN_PLAN_CAPITAL", DEFAULT_MIN_CAPITAL))
+    except (RuntimeError, TypeError, ValueError):
+        pass
+    return float(DEFAULT_MIN_CAPITAL)
+
 
 def _is_finite(value):
     """False for NaN and +/-infinity -- both of which float() accepts
@@ -135,7 +153,7 @@ def parse_offering_items(form, errors):
     return items
 
 
-def _capital(form, errors):
+def _capital(form, errors, keep_capital=None):
     """The plan's capital in pesos, REQUIRED and > 0.
 
     Read from `capital`, falling back to the legacy field name
@@ -169,13 +187,21 @@ def _capital(form, errors):
     if value <= 0:
         errors.append("Capital must be greater than zero.")
         return None
+    floor = min_capital()
+    # An existing plan saved before the minimum existed keeps its capital
+    # when edited for something else (a rename, a new price) -- the floor
+    # applies to a capital being SET, not to one being left alone.
+    unchanged = keep_capital is not None and abs(value - float(keep_capital or 0)) < 0.005
+    if value < floor and not unchanged:
+        errors.append(f"Capital must be at least ₱{floor:,.0f} -- enough to cover the first month of a real business.")
+        return None
     if value > MAX_CAPITAL:
         errors.append("Capital is larger than this system can store.")
         return None
     return value
 
 
-def parse_plan_form(form, keep_industry=None):
+def parse_plan_form(form, keep_industry=None, keep_location=None, keep_capital=None):
     """(data, errors). `data` holds every plan field, JSON-safe.
 
     `keep_industry` is the plan's CURRENT industry when editing: a plan
@@ -198,7 +224,20 @@ def parse_plan_form(form, keep_industry=None):
     elif industry_type not in BUSINESS_TYPES and industry_type != keep_industry:
         errors.append("That industry type is not one of the options.")
     if not location:
-        errors.append("Please give the barangay or location you are planning for.")
+        errors.append("Please choose the barangay you are planning for.")
+    else:
+        # The forms offer Tarlac City's 76 barangays as a dropdown; a name
+        # written another way ("Baras" for Baras-baras) is folded into the
+        # official one, and anything else is refused -- except, when
+        # editing, the plan's own current location, so an old plan saved
+        # under an unlisted name can still be opened and saved.
+        from app.ml.seed_data import canonical_barangay
+
+        official = canonical_barangay(location)
+        if official:
+            location = official
+        elif location != keep_location:
+            errors.append("Choose one of Tarlac City's 76 barangays from the list.")
     if business_stage not in BUSINESS_STAGES:
         business_stage = "startup"
     if subcategory and industry_type in BUSINESS_TYPES and not is_valid_subcategory(industry_type, subcategory):
@@ -232,7 +271,7 @@ def parse_plan_form(form, keep_industry=None):
             return None
         return value
 
-    capital = _capital(form, errors)
+    capital = _capital(form, errors, keep_capital=keep_capital)
     employee_count = _number("employee_count", "Employee count", int, MAX_EMPLOYEE_COUNT)
 
     registration_date = None

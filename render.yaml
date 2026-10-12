@@ -61,6 +61,18 @@ services:
       - key: SECRET_KEY
         generateValue: true
 
+      # Encrypts the personal details collected at sign-up (birthday,
+      # gender, address, contact number) -- app/utils/privacy.py. Set it
+      # BY HAND (Render asks for it when the Blueprint is applied) and keep
+      # a copy somewhere safe, outside Render: if the service were ever
+      # recreated, a newly generated key could not read details already in
+      # the database. Never change it afterwards. Left blank, the key is
+      # derived from SECRET_KEY -- keep a copy of that one for the same
+      # reason. Adding this later is safe: older values still decrypt.
+      #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+      - key: PII_ENCRYPTION_KEY
+        sync: false
+
       - key: FLASK_CONFIG
         value: production
 

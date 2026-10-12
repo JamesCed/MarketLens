@@ -1,0 +1,55 @@
+{#
+  shared/_terms_content.html
+  ----------------------------
+  The Terms and Conditions and Data Privacy Notice, written once and shown
+  in two places: the sign-up dialog (shared/_terms_modal.html) and the
+  public /terms page (auth/terms.html). IT expert review: the site is
+  online and collects personal and business details, so people must know
+  how those are handled before they hand them over.
+
+  Have your adviser (and, for a real deployment, the LGU's data
+  protection officer) review this wording -- it is written for the
+  capstone system as built, not as legal advice.
+#}
+<div class="dss-terms">
+  <p class="text-muted small mb-3">Last updated {{ TERMS_UPDATED or 'October 2026' }}</p>
+
+  <h3>1. What MarketLens is</h3>
+  <p>MarketLens is a decision support system that estimates how crowded (saturated) each industry is in Tarlac City&rsquo;s
+    76 barangays and helps business owners and the city plan where businesses should open. It is an undergraduate
+    capstone project. Its forecasts, scores and AI-written explanations are <strong>decision support, not financial,
+    legal or investment advice</strong>. Some figures are estimates; the pages label them as such.</p>
+
+  <h3>2. Your account</h3>
+  <ul>
+    <li>Give true, complete and current information, and keep it up to date in Settings.</li>
+    <li>Keep your password secret. You are responsible for what is done with your account.</li>
+    <li>Use the system only for lawful business planning. Do not try to access other accounts, other roles&rsquo; pages,
+      or the system&rsquo;s data in ways the pages do not offer.</li>
+    <li>An administrator may suspend or archive an account that breaks these terms. Archived accounts can be restored.</li>
+  </ul>
+
+  <h3>3. Data Privacy Notice</h3>
+  <p>MarketLens processes personal information in line with the Data Privacy Act of 2012 (Republic Act No. 10173).</p>
+  <p><strong>What we collect.</strong> Your name, email address, gender, birthday, contact number and address; the business
+    plans you enter (business name, industry, barangay, capital, staff, prices and ideas); and a record of actions taken in the
+    system (who did what, when, from which page and device) for security.</p>
+  <p><strong>Why.</strong> To create and secure your account, to produce your forecasts and recommendations, to let the
+    city plan with aggregated, city-wide figures, to send the alerts you switch on, and to keep an audit trail.</p>
+  <p><strong>Who can see it.</strong> Your plans and forecasts are visible to you. LGU officials see city-wide totals and
+    trends, not your personal details. Administrators manage accounts and see your name and email; your other personal
+    details are shown to them masked. Your details are never sold. AI-written explanations are generated from your
+    plan&rsquo;s figures, not from your personal details.</p>
+  <p><strong>How it is protected.</strong> Your password is stored only as a one-way hash. Your gender, birthday, contact
+    number and address are encrypted in the database. Pages are served over HTTPS, every form is protected against forged
+    requests, and each role can open only its own pages.</p>
+  <p><strong>How long it is kept.</strong> For as long as your account exists. Records are archived rather than deleted so
+    they cannot disappear by accident; a plan moved to Trash is deleted for good after 30 days.</p>
+  <p><strong>Your rights.</strong> You may ask to see, correct, or have your personal information archived, and you may
+    object to its processing, by contacting {{ SUPPORT_EMAIL or 'the system administrator' }}. You can correct most details
+    yourself in Settings.</p>
+
+  <h3>4. Changes</h3>
+  <p>These terms may be updated. The date above shows the latest version; continuing to use MarketLens after a change means
+    you accept it.</p>
+</div>

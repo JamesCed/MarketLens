@@ -83,7 +83,11 @@
             <tr>
               <td>
                 {{ u.name }}{% if is_self %} <span class="dss-meta">(you)</span>{% endif %}
-                <div class="dss-meta text-break">{{ u.email }} &middot; UID #{{ u.user_id }}</div>
+                {# Masked on screen (IT expert review); the eye shows it to the admin who needs it. #}
+                <div class="dss-meta text-break">
+                  <span class="dss-masked" data-full="{{ u.email }}" data-masked="{{ u.email|mask_email }}">{{ u.email|mask_email }}</span>
+                  <button type="button" class="btn btn-link btn-sm p-0 align-baseline dss-unmask" aria-label="Show email"><i class="bi bi-eye"></i></button>
+                  &middot; UID #{{ u.user_id }}</div>
               </td>
               <td>{{ role_badge(u.role) }}</td>
               <td>
@@ -167,7 +171,10 @@
             <tr>
               <td>
                 {{ u.name }}
-                <div class="dss-meta text-break">{{ u.email }}</div>
+                <div class="dss-meta text-break">
+                  <span class="dss-masked" data-full="{{ u.email }}" data-masked="{{ u.email|mask_email }}">{{ u.email|mask_email }}</span>
+                  <button type="button" class="btn btn-link btn-sm p-0 align-baseline dss-unmask" aria-label="Show email"><i class="bi bi-eye"></i></button>
+                </div>
               </td>
               <td>{{ role_badge(u.role) }}</td>
               <td class="text-nowrap">
@@ -175,7 +182,7 @@
                 <div class="dss-meta">{{ archived_local.strftime('%I:%M %p') }} {{ tz_label }}</div>
               </td>
               <td>
-                {% if by %}{{ by.name }}<div class="dss-meta text-break">{{ by.email }}</div>
+                {% if by %}{{ by.name }}<div class="dss-meta text-break">{{ by.email|mask_email }}</div>
                 {% elif u.archived_by %}<span class="dss-meta">Account #{{ u.archived_by }}</span>
                 {% else %}<span class="dss-meta">&mdash;</span>{% endif %}
               </td>
@@ -210,13 +217,21 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-header"><h5 class="modal-title">Create Account</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
         <div class="modal-body">
-          <div class="mb-3"><label class="form-label">Full Name</label><input class="form-control" name="name" required></div>
-          <div class="mb-3"><label class="form-label">Email</label><input type="email" class="form-control" name="email" required></div>
-          <div class="mb-3"><label class="form-label">Password</label><input type="password" class="form-control" name="password" required minlength="6"></div>
-          <div class="mb-3"><label class="form-label">Contact Number <span class="text-muted">(optional)</span></label><input class="form-control" name="contact_number"></div>
+          <div class="row g-2 mb-3">
+            <div class="col-sm-6"><label class="form-label" for="cu-first">First name</label><input id="cu-first" class="form-control" name="first_name" maxlength="60" required></div>
+            <div class="col-sm-6"><label class="form-label" for="cu-middle">Middle name <span class="text-muted">(optional)</span></label><input id="cu-middle" class="form-control" name="middle_name" maxlength="60"></div>
+            <div class="col-sm-8"><label class="form-label" for="cu-last">Last name</label><input id="cu-last" class="form-control" name="last_name" maxlength="60" required></div>
+            <div class="col-sm-4"><label class="form-label" for="cu-suffix">Suffix</label>
+              <select id="cu-suffix" class="form-select" name="suffix"><option value="">None</option><option>Jr.</option><option>Sr.</option><option>II</option><option>III</option><option>IV</option><option>V</option></select></div>
+          </div>
+          <div class="mb-3"><label class="form-label" for="cu-email">Email</label><input id="cu-email" type="email" class="form-control" name="email" required></div>
+          <div class="mb-3"><label class="form-label" for="cu-pw">Password</label><input id="cu-pw" type="password" class="form-control" name="password" required minlength="{{ PASSWORD_MIN_LENGTH }}" autocomplete="new-password">
+            {% with target='cu-pw' %}{% include "shared/_password_rules.html" %}{% endwith %}
+            <div class="form-text">The owner completes their other personal details in Settings after signing in.</div></div>
+          <div class="mb-3"><label class="form-label" for="cu-contact">Contact Number <span class="text-muted">(optional)</span></label><input id="cu-contact" type="tel" class="form-control" name="contact_number" placeholder="09XXXXXXXXX"></div>
           <div class="mb-3">
-            <label class="form-label">Role</label>
-            <select class="form-select" name="role">
+            <label class="form-label" for="cu-role">Role</label>
+            <select id="cu-role" class="form-select" name="role">
               <option value="SME">SME (Entrepreneur / Business Owner)</option>
               <option value="LGU">LGU Official</option>
               <option value="Admin">Administrator</option>

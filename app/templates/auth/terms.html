@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Terms and Data Privacy{% endblock %}
+{% block auth_content %}
+<div class="container py-5" style="max-width: 860px;">
+  <a href="{{ url_for('auth.login') }}" class="d-inline-block mb-4" aria-label="MarketLens home">
+    {% with variant='dark', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+  </a>
+  <h1 class="h3 mb-3">Terms and Conditions &amp; Data Privacy Notice</h1>
+  {% include "shared/_terms_content.html" %}
+  <p class="mt-4"><a href="{{ url_for('auth.register') }}" class="btn btn-primary">Back to sign-up</a></p>
+</div>
+{% endblock %}
+{% block content %}
+<h4 class="mb-3">Terms and Conditions &amp; Data Privacy Notice</h4>
+<div class="dss-card">{% include "shared/_terms_content.html" %}</div>
+{% endblock %}

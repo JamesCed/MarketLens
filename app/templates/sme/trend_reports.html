@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set use_charts = true %}
 {% block title %}Trend Reports{% endblock %}
 
 {% block content %}
@@ -10,41 +11,48 @@
       on file -- not just today's forecasts. Numbers get more "real" as more real usage accumulates.</p>
   </div>
   <div class="d-flex align-items-center gap-2 flex-wrap">
-    <!-- "Select Period" -- the storyboard's calendar control. Widening
+    {# "Select Period" -- the storyboard's calendar control. Widening
          it does NOT invent history: months/quarters with no real
          snapshot behind them stay flagged as back-projections, so a
          3-year view honestly shows mostly projection until three years
-         of real data exist. -->
+         of real data exist. #}
     <label class="text-muted small mb-0" for="trendMonth"><i class="bi bi-calendar3"></i> Select Period</label>
-    <!-- A real month picker: <input type="month"> gives the browser's
+    {# A real month picker: <input type="month"> gives the browser's
          own calendar with YEAR and MONTH only and no day grid, which is
          exactly what "as of this month" means here. `min` is January
          2020 -- the start of the published national establishment series
          this page's history is grounded in -- and `max` is the current
          month, because a month that hasn't happened yet would be pure
-         projection dressed as history. -->
+         projection dressed as history. #}
     <input type="month" id="trendMonth" class="form-control form-control-sm"
            style="max-width:190px;"
            value="{{ selected_month }}" min="{{ earliest_month }}" max="{{ latest_month }}">
-    <!-- Changing the month no longer reloads the page, so there is no
+    {# Changing the month no longer reloads the page, so there is no
          browser progress bar to signal work. This does, and it sits next
-         to the control the user just touched. -->
+         to the control the user just touched. #}
     <span id="trendPeriodBusy" class="d-none text-muted small">
       <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
       <span class="visually-hidden">Loading the selected month</span>
     </span>
-    <button class="btn btn-primary btn-sm" onclick="window.print()"><i class="bi bi-download"></i> Export / Print Report</button>
+    {# Opens the report as a proper document -- letterhead with the logo,
+       page footers and numbers -- instead of printing this web page with
+       its sidebar and buttons (IT expert review). Kept in step with the
+       chosen month and industry by syncExportLink() below. #}
+    <a class="btn btn-primary btn-sm" id="exportReport" target="_blank" rel="noopener"
+       href="{{ url_for('sme.trend_report_print', as_of=selected_month, autoprint=1) }}">
+      <i class="bi bi-file-earmark-pdf"></i> Export / Print Report
+    </a>
   </div>
 </div>
 
-<!-- Loading state.
+{# Loading state.
      The FIRST build of this page is genuinely slow -- 500 Random Forest
      predictions -- so the bar has to hold attention for several seconds
      without claiming progress it cannot measure. It names the stage it
      is on rather than inventing a percentage, and the fill carries a
      travelling sheen so a slow stage never looks like a freeze.
      Subsequent loads come from cache and finish almost instantly, in
-     which case this is on screen for a blink. -->
+     which case this is on screen for a blink. #}
 <div id="trendLoading" class="dss-loader mb-3" role="status" aria-live="polite">
   <div class="dss-loader-spin" aria-hidden="true"></div>
   <div class="dss-loader-body">
@@ -58,16 +66,16 @@
 
 <div id="trendLoadError" class="alert alert-danger d-none" role="alert"></div>
 
-<!-- The paper's Figure 4 KPI row: four market indicators, each with its
+{# The paper's Figure 4 KPI row: four market indicators, each with its
      month-over-month change, AS OF the month picked above. A card whose
      month has no dated rows behind it shows "no comparison" rather than
-     a fabricated "+0% from last month". -->
-<!-- EQUAL HEIGHT, whatever the text does. Bootstrap columns are
+     a fabricated "+0% from last month". #}
+{# EQUAL HEIGHT, whatever the text does. Bootstrap columns are
      already full-height; it is the .dss-card inside that shrinks to
      its content, so a card whose trend line wraps to two ("(estimated)")
      grew taller than its neighbours. .dss-kpi-row makes each card fill
      its column and pins the big number to a fixed row, so the four
-     headline figures stay on one line across. -->
+     headline figures stay on one line across. #}
 <div class="row g-3 mb-3 dss-kpi-row" id="summaryCards">
   <div class="col-6 col-lg-3">
     <div class="dss-card dss-kpi">
@@ -166,12 +174,20 @@
 <div class="dss-card mb-3">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
     <div>
-      <h6 class="mb-1">Quarterly Performance &amp; Growth Rate</h6>
+      <h6 class="mb-1">Quarterly Performance &amp; Growth Rate
+        {# The explanation opens beside the chart instead of sitting under
+           it, where it was easy to miss and reading it meant scrolling
+           away from the graph (IT expert review). #}
+        <button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline dss-howto-btn" data-bs-toggle="modal"
+                data-bs-target="#quarterlyGuideModal" aria-label="How to read this chart">
+          <i class="bi bi-info-circle"></i> How to read
+        </button>
+      </h6>
       <p class="text-muted small mb-0" id="quarterlyNote">How the market itself moved, quarter by quarter.</p>
     </div>
-    <!-- Industry filter: pick which market to review. Hits the
+    {# Industry filter: pick which market to review. Hits the
          lightweight /api/quarterly-performance endpoint, so switching is
-         instant -- it does not re-run the city-wide AI sweep. -->
+         instant -- it does not re-run the city-wide AI sweep. #}
     <div class="d-flex align-items-center gap-2">
       <label class="text-muted small mb-0" for="quarterlyIndustry">Industry</label>
       <select id="quarterlyIndustry" class="form-select form-select-sm" style="max-width:260px;">
@@ -181,40 +197,71 @@
     </div>
   </div>
 
-  <!-- Figure 4.1's shape: ONE chart carrying both series -- market
+  {# Figure 4.1's shape: ONE chart carrying both series -- market
        demand (businesses on file) as a filled area on the left axis,
        and quarter-over-quarter growth % as a second area on the right.
        Reading them together is the point: rising demand with falling
        growth is a market flattening out, which two separate charts
-       side by side made much harder to see. -->
+       side by side made much harder to see. #}
   <canvas id="quarterlyChart" height="110" role="img"
           aria-label="Chart of businesses on file and quarter-over-quarter growth"></canvas>
   <div class="text-muted small mt-2" id="quarterlyProvenance"></div>
-  {# HOW TO READ IT. This chart puts two different things on one picture,
-     which is exactly what makes it hard to read cold -- so the reading is
-     spelled out once, plainly, and then applied to the numbers on screen. #}
-  <div class="dss-chart-guide mt-3">
-    <div class="fw-semibold small mb-1"><i class="bi bi-info-circle" aria-hidden="true"></i> How to read this chart</div>
-    <ul class="small mb-2 ps-3">
-      <li><strong>The blue area</strong> (left scale) is how many businesses are on file each quarter &mdash; the
-        size of the market. Higher means more businesses are operating.</li>
-      <li><strong>The green area</strong> (right scale) is the <em>growth rate</em>: how much that number changed
-        compared with the quarter before, in percent. Above 0% the market grew; below 0% it shrank.</li>
-      <li><strong>Read them together.</strong> Blue rising while green falls means the market is still growing
-        but more slowly &mdash; it is filling up. Both rising means it is expanding fast. Blue flat and green
-        near 0% means a stable, mature market.</li>
-      <li>Hollow points are early quarters estimated from national data, because the app had no records yet.</li>
-    </ul>
-    <p class="dss-chart-note mb-0" id="quarterlyReading" aria-live="polite"></p>
+  {# The reading of the numbers on screen stays right under the chart --
+     it is the one line worth reading; the general explanation is in the
+     "How to read" dialog. #}
+  <p class="dss-chart-note mt-2 mb-0" id="quarterlyReading" aria-live="polite"></p>
+</div>
+
+<div class="modal fade" id="quarterlyGuideModal" tabindex="-1" aria-labelledby="quarterlyGuideTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title fs-6" id="quarterlyGuideTitle"><i class="bi bi-info-circle"></i> How to read the quarterly chart</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body small">
+        <ul class="ps-3 mb-2">
+          <li class="mb-2"><span class="dss-swatch" style="background:#2a78d6"></span> <strong>The blue area</strong> (left scale) is how
+            many businesses are on file each quarter &mdash; the size of the market.</li>
+          <li class="mb-2"><span class="dss-swatch" style="background:#16a34a"></span> <strong>The green line</strong> (right scale) is the
+            <em>growth rate</em>: the change from the quarter before. Above 0% the market grew; below 0% it shrank.</li>
+          <li class="mb-2"><strong>Read them together.</strong> Blue rising while green falls: still growing, but filling up.
+            Both rising: expanding fast. Blue flat and green near 0%: a stable, mature market.</li>
+          <li><span class="dss-swatch dss-swatch-hollow"></span> Hollow points are early quarters estimated from national data,
+            from before the app had records.</li>
+        </ul>
+      </div>
+    </div>
   </div>
 </div>
 
 <div class="dss-card mb-3">
-  <h6 class="mb-1">Top Performing Industries (blended baseline + real data)</h6>
-  <p class="text-muted small mb-3">Industries ranked by Market Score (out of 10: higher means more room for a new
-    business), with how much the score changed since the previous month.</p>
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div>
+      <h6 class="mb-1">Top Performing Industries</h6>
+      <p class="text-muted small mb-2">Market Score out of 10 (higher = more room for a new business) and its change since last month.</p>
+    </div>
+    {# The top five are shown; the rest open in a dialog rather than
+       stretching the page (IT expert review: less scrolling). #}
+    <button type="button" class="btn btn-outline-primary btn-sm" id="topIndustriesAll" data-bs-toggle="modal"
+            data-bs-target="#topIndustriesModal" hidden>
+      <i class="bi bi-list-ol"></i> View all
+    </button>
+  </div>
   <div id="topIndustriesList"></div>
   <p class="dss-chart-note" id="topIndustriesNote" aria-live="polite"></p>
+</div>
+
+<div class="modal fade" id="topIndustriesModal" tabindex="-1" aria-labelledby="topIndustriesTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title fs-6" id="topIndustriesTitle"><i class="bi bi-list-ol"></i> All industries by Market Score</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="topIndustriesModalList"></div>
+    </div>
+  </div>
 </div>
 
 
@@ -358,6 +405,12 @@ function renderPeriodCards(po) {
     c.market_saturation, { format: (v) => `${Number(v).toFixed(1)}%`, pointUnit: " pts", deltaDigits: 1 });
   renderKpi("statViability", "statViabilityTrend", "statViabilityIcon",
     c.avg_viability, { format: (v) => `${Number(v).toFixed(1)}/10`, pointUnit: " pts", deltaDigits: 2 });
+  // The score itself is coloured by the same rule as every other score.
+  const viabilityEl = document.getElementById("statViability");
+  if (viabilityEl && c.avg_viability) {
+    viabilityEl.classList.remove("dss-score-text-good", "dss-score-text-fair", "dss-score-text-low");
+    viabilityEl.classList.add(`dss-score-text-${scoreTone(c.avg_viability.value)}`);
+  }
 
 }
 
@@ -382,11 +435,11 @@ function renderQuarterly(q) {
 
   const projectedCount = (q.projected || []).filter(Boolean).length;
   provenance.innerHTML = q.has_real_history
-    ? `${q.measured_quarters} of ${q.labels.length} quarters measured from real <code>market_data</code> snapshots` +
+    ? `${q.measured_quarters} of ${q.labels.length} quarters measured from recorded business counts` +
       (projectedCount
         ? ` &middot; the ${projectedCount} earliest quarter(s), from before any snapshot existed, are a documented back-projection (drawn with hollow points) and are replaced by real readings as history accumulates.`
         : " &middot; every quarter shown is measured, not projected.")
-    : "No market_data snapshots on file yet -- this chart fills in as the app fetches business data.";
+    : "No recorded business counts yet -- this chart fills in as business data is collected.";
 
   renderQuarterlyReading(q);
 
@@ -394,8 +447,11 @@ function renderQuarterly(q) {
 
   // Reference palette from the paper's Figure 4.1: a solid steel-blue
   // demand area with a lighter green growth area laid over it.
-  const demandColor = "#5aa9c4";
-  const growthColor = "#6ecdaa";
+  // Two clearly different hues (IT expert review: the two areas read as
+  // one colour, and the legend markers did not match them): a blue area
+  // for demand and a solid green line for growth.
+  const demandColor = "#2a78d6";
+  const growthColor = "#16a34a";
   // A back-projected quarter gets a hollow point, so measured and
   // estimated are distinguishable without reading the caption.
   const pointStyle = (i) => (q.projected && q.projected[i] ? "#ffffff" : demandColor);
@@ -410,7 +466,7 @@ function renderQuarterly(q) {
           data: q.businesses,
           yAxisID: "y",
           borderColor: demandColor,
-          backgroundColor: "rgba(90, 169, 196, 0.85)",
+          backgroundColor: "rgba(42, 120, 214, 0.28)",
           fill: true,
           tension: 0.35,
           pointRadius: 3,
@@ -424,14 +480,12 @@ function renderQuarterly(q) {
           data: q.growth_rate_percent,
           yAxisID: "yGrowth",
           borderColor: growthColor,
-          // Filled like the demand series -- Figure 4.1 shows two
-          // overlapping translucent areas, not an area plus a dashed
-          // line, and the lighter green reads as "on top of" the blue.
-          backgroundColor: "rgba(110, 205, 170, 0.55)",
-          fill: true,
+          backgroundColor: growthColor,
+          fill: false,
           tension: 0.35,
-          pointRadius: 0,
-          borderWidth: 1.5,
+          pointRadius: 3,
+          pointBackgroundColor: growthColor,
+          borderWidth: 2.5,
         },
       ],
     },
@@ -439,7 +493,27 @@ function renderQuarterly(q) {
       responsive: true,
       interaction: { mode: "index", intersect: false },
       plugins: {
-        legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 8, padding: 16 } },
+        // Legend swatches are drawn in each series' own colour. The
+        // default took the FIRST POINT's fill -- white, because the first
+        // quarter is an estimate drawn hollow -- so the blue series showed
+        // a white dot in the legend.
+        legend: {
+          position: "bottom",
+          labels: {
+            padding: 16,
+            boxWidth: 14,
+            boxHeight: 10,
+            generateLabels: (chart) => chart.data.datasets.map((ds, i) => ({
+              text: ds.label,
+              fillStyle: ds.borderColor,
+              strokeStyle: ds.borderColor,
+              lineWidth: 0,
+              hidden: !chart.isDatasetVisible(i),
+              datasetIndex: i,
+              fontColor: Chart.defaults.color,
+            })),
+          },
+        },
         tooltip: {
           callbacks: {
             label: (ctx) => (ctx.datasetIndex === 0
@@ -456,14 +530,14 @@ function renderQuarterly(q) {
         y: {
           position: "left",
           beginAtZero: true,
-          title: { display: true, text: "Businesses", color: "#6c757d" },
+          title: { display: true, text: "Businesses (blue)", color: demandColor },
           ticks: { color: "#6c757d" },
           grid: { color: "rgba(0,0,0,.06)" },
         },
         yGrowth: {
           position: "right",
           beginAtZero: true,
-          title: { display: true, text: "Growth %", color: "#6c757d" },
+          title: { display: true, text: "Growth % (green)", color: growthColor },
           ticks: { color: "#6c757d", callback: (v) => `${v}%` },
           grid: { drawOnChartArea: false },
         },
@@ -619,30 +693,62 @@ function renderMonthlyNote() {
     + "Pick one industry above for a reading of its own line.";
 }
 
+// Market Score colour: the same cuts everywhere a score appears (>= 6.5
+// good, >= 4 caution, below 4 risk) -- green, amber, red.
+function scoreTone(score) {
+  const v = Number(score) || 0;
+  return v >= 6.5 ? "good" : (v >= 4 ? "fair" : "low");
+}
+
+function industryRow(ind, idx) {
+  const arrow = ind.change_percent > 0 ? "bi-arrow-up text-success" : (ind.change_percent < 0 ? "bi-arrow-down text-danger" : "bi-dash text-muted");
+  const sign = ind.change_percent > 0 ? "+" : "";
+  return `
+    <div class="dss-rank-row">
+      <span class="dss-rank-num">${idx + 1}</span>
+      <div class="flex-grow-1 min-w-0"><strong class="d-block text-truncate">${escapeHtml(ind.name)}</strong></div>
+      <span class="dss-score-pill dss-score-${scoreTone(ind.market_score)}" title="Market Score">${ind.market_score}/10</span>
+      <span class="dss-rank-change"><i class="bi ${arrow}"></i> ${sign}${ind.change_percent}%</span>
+    </div>`;
+}
+
+const TOP_INDUSTRIES_SHOWN = 5;
+
 function renderTopIndustries(rows) {
   const list = document.getElementById("topIndustriesList");
   if (!list) return;
-  list.innerHTML = (rows || []).map((ind, idx) => {
-    const arrow = ind.change_percent > 0 ? "bi-arrow-up text-success" : (ind.change_percent < 0 ? "bi-arrow-down text-danger" : "bi-dash text-muted");
-    const sign = ind.change_percent > 0 ? "+" : "";
-    return `
-    <div class="d-flex justify-content-between align-items-center border rounded p-3 mb-2">
-      <div class="d-flex align-items-center gap-3">
-        <span class="fs-4 text-muted">${idx + 1}</span>
-        <div><strong>${ind.name}</strong><div class="text-muted small">Market Score: ${ind.market_score}/10</div></div>
-      </div>
-      <span class="fw-bold"><i class="bi ${arrow}"></i> ${sign}${ind.change_percent}%</span>
-    </div>`;
-  }).join("") || '<p class="text-muted">No industries to rank yet.</p>';
+  rows = rows || [];
+  list.innerHTML = rows.slice(0, TOP_INDUSTRIES_SHOWN).map(industryRow).join("")
+    || '<p class="text-muted">No industries to rank yet.</p>';
+  const all = document.getElementById("topIndustriesModalList");
+  if (all) all.innerHTML = rows.map(industryRow).join("");
+  const more = document.getElementById("topIndustriesAll");
+  if (more) {
+    more.hidden = rows.length <= TOP_INDUSTRIES_SHOWN;
+    more.innerHTML = `<i class="bi bi-list-ol"></i> View all ${rows.length}`;
+  }
   const note = document.getElementById("topIndustriesNote");
-  if (note && rows && rows.length) {
+  if (note && rows.length) {
     const best = rows[0];
     const rising = rows.filter((r) => r.change_percent > 0).length;
-    note.textContent = `${best.name} has the most room right now (Market Score ${best.market_score}/10). `
-      + `${rising} of the ${rows.length} industries listed improved since last month; `
-      + "an upward arrow means it became easier to enter, a downward arrow that it became harder.";
+    note.textContent = `${best.name} has the most room right now (${best.market_score}/10). `
+      + `${rising} of ${rows.length} industries improved since last month.`;
   }
 }
+
+// The Export link carries the month (and the quarterly industry filter)
+// the page is showing, so the document matches what is on screen.
+function syncExportLink() {
+  const link = document.getElementById("exportReport");
+  if (!link) return;
+  const params = new URLSearchParams({ as_of: currentMonth(), autoprint: "1" });
+  const industry = document.getElementById("quarterlyIndustry");
+  if (industry && industry.value) params.set("industry_type", industry.value);
+  link.href = "{{ url_for('sme.trend_report_print') }}?" + params.toString();
+}
+document.addEventListener("change", (event) => {
+  if (event.target && (event.target.id === "trendMonth" || event.target.id === "quarterlyIndustry")) syncExportLink();
+});
 
 function currentMonth() {
   const el = document.getElementById("trendMonth");

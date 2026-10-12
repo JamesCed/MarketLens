@@ -91,7 +91,7 @@ def test_the_batch_does_not_scale_its_query_count_with_the_batch(app):
     many pairs it is given."""
     from sqlalchemy import event
 
-    from app.services.forecasting_service import compute_scores_batch
+    from app.services.forecasting_service import clear_batch_cache, compute_scores_batch
 
     with app.app_context():
         pairs = _seed()
@@ -104,9 +104,14 @@ def test_the_batch_does_not_scale_its_query_count_with_the_batch(app):
 
         event.listen(db.engine, "before_cursor_execute", count)
         try:
+            # Measured with the two-minute result cache emptied, so this
+            # is the cost of actually scoring -- the cache has its own
+            # test below.
+            clear_batch_cache()
             compute_scores_batch(pairs)
             many = counter["n"]
             counter["n"] = 0
+            clear_batch_cache()
             compute_scores_batch(pairs[:4])
             few = counter["n"]
         finally:
@@ -358,3 +363,53 @@ def test_caching_is_a_no_op_when_the_package_is_missing(app, monkeypatch):
         with app.test_request_context("/api/trend-data"):
             assert view() == {"value": 1}
             assert view() == {"value": 2}
+
+
+def test_a_repeated_batch_is_served_from_the_result_cache_until_the_data_changes(app):
+    """The Planning slider and the LGU dashboard ask for the same batch on
+    every visit. The second ask is answered from the two-minute cache in
+    two fingerprint queries -- and a new market_data row moves the
+    fingerprint, so the cache can never serve scores the data no longer
+    supports."""
+    from sqlalchemy import event
+
+    from app.models import MarketData
+    from app.services.forecasting_service import clear_batch_cache, compute_scores_batch
+
+    with app.app_context():
+        pairs = _seed()
+        clear_batch_cache()
+        first = compute_scores_batch(pairs)
+
+        counter = {"n": 0}
+
+        def count(*_args, **_kwargs):
+            counter["n"] += 1
+
+        event.listen(db.engine, "before_cursor_execute", count)
+        try:
+            again = compute_scores_batch(pairs)
+            cached_queries = counter["n"]
+        finally:
+            event.remove(db.engine, "before_cursor_execute", count)
+
+        assert again == first
+        assert cached_queries <= 2, f"a cached batch still took {cached_queries} queries"
+
+        # Callers get copies: editing one result must not edit the cache.
+        again[0]["saturation_index"] = -1
+        assert compute_scores_batch(pairs)[0]["saturation_index"] == first[0]["saturation_index"]
+
+        industry, location = pairs[0]
+        newest = (MarketData.query.filter_by(industry_type=industry, location=location)
+                  .order_by(MarketData.market_id.desc()).first())
+        db.session.add(MarketData(
+            industry_type=industry, location=location, source=newest.source,
+            competitor_count=(newest.competitor_count or 0) + 40,
+            population_density=newest.population_density, foot_traffic_index=newest.foot_traffic_index,
+            average_rent=newest.average_rent, historical_success_rate=newest.historical_success_rate,
+            date_recorded=newest.date_recorded,
+        ))
+        db.session.commit()
+        moved = compute_scores_batch(pairs)
+        assert moved[0]["competitor_count"] != first[0]["competitor_count"]

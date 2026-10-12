@@ -311,11 +311,31 @@ CSV_COLUMNS = [
 ]
 
 
+_SOURCE_NOTES_CACHE = {}
+
+
 def _parse_source_comments():
     """Returns {barangay_name: {"population_2024_psa", "land_area_ha",
     "land_area_estimated", "source_notes"}} by re-reading this file's own
     source text -- the pop=/land= figures only exist as inline comments
-    next to BARANGAY_PROFILES, not as separate Python data."""
+    next to BARANGAY_PROFILES, not as separate Python data.
+
+    PARSED ONCE PER PROCESS. get_real_population() calls this, and it is
+    called for every barangay on the LGU dashboard, the Diversification
+    Plan, the location ranking and the map panel -- 974 times across one
+    pass of the main pages. Re-reading and regex-scanning this file on
+    each of those calls was 35% of the app's own CPU time on those pages.
+    The file cannot change while the process runs, so one parse is exact.
+    Callers treat the result as read-only."""
+    if _SOURCE_NOTES_CACHE:
+        return _SOURCE_NOTES_CACHE
+    notes = _read_source_comments()
+    if notes:
+        _SOURCE_NOTES_CACHE.update(notes)
+    return _SOURCE_NOTES_CACHE if _SOURCE_NOTES_CACHE else notes
+
+
+def _read_source_comments():
     notes_by_name = {}
     try:
         with open(__file__, "r", encoding="utf-8") as f:

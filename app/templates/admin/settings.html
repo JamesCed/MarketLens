@@ -3,7 +3,13 @@
 
 {% block content %}
 <h4 class="mb-1"><i class="bi bi-gear"></i> System Configuration</h4>
-<p class="text-muted small mb-4">Tune the AI forecasting engine without touching code. See app/models/system_setting.py for defaults.</p>
+{#
+  Descriptions here say what a setting DOES, never how the system is
+  built: no file names, no environment-variable names, no provider
+  fallback order. The IT expert's review asked for exactly that -- a
+  screen anyone might see should not double as a map of the internals.
+#}
+<p class="text-muted small mb-4">Tune the AI forecasting engine without touching code.</p>
 
 <form method="POST" action="{{ url_for('admin.settings') }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -20,7 +26,7 @@
         <label class="form-label">Early-warning threshold (Saturation Index, 0-100)</label>
         <input type="number" step="1" min="0" max="100" name="saturation_alert_threshold" class="form-control"
                value="{{ settings['saturation_alert_threshold'].setting_value if 'saturation_alert_threshold' in settings else 75 }}">
-        <div class="form-text">Cluster cut points (Low/Moderate/High/Saturated) are fixed at {{ cluster_thresholds }} -- see app/ml/constants.py.</div>
+        <div class="form-text">Saturation tiers (Low, Moderate, High, Saturated) are fixed at {{ cluster_thresholds }}.</div>
       </div>
       <div class="col-md-4">
         <label class="form-label">w1 — Competitor Density weight</label>
@@ -83,7 +89,6 @@
       barangay's business count reflects what is really there instead of stopping at the first page.
       Note that Google itself caps Text Search at <strong>60 results per query</strong> (20 per page, 3 pages),
       so a count sitting at exactly 60 means "60 or more".
-      API keys themselves are set in the .env file, not here (see README).
     </div>
   </div>
 
@@ -95,20 +100,9 @@
       <label class="form-check-label" for="llmToggle">Let Gemini write the forecast transcript (and the recommendation text)</label>
     </div>
     <div class="form-text">
-      When on, <strong>Gemini writes the forecast transcript</strong>: it is handed the trained models' whole
-      computation for a plan &mdash; the owner's inputs, the market saturation, the costs and capital runway, the
-      scorecard, the plan model's baseline and driver points, the confidence and the break-even window &mdash; and
-      transcribes it into plain sentences. Gemini is always asked first for this (<code>GEMINI_API_KEY</code>, which
-      falls back to <code>OPENAI_API_KEY</code>; an <code>sk-</code> key there is skipped, since Google would refuse
-      it), then the provider set by <code>LLM_PROVIDER</code> (default <code>gemini</code>), then the remaining one
-      (<code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code>). Other AI text (alerts, location cards) tries the
-      <code>LLM_PROVIDER</code> provider first. Keys are set in the .env file or the host's environment, not here (see
-      README); <code>USE_LLM_RECOMMENDATIONS</code>, when set there, overrides this switch.
-      Every figure comes from the trained models: a transcript that quotes a number the models did not produce is
-      sent back to Gemini once, then the sentences carrying such numbers are dropped, and if too little is left the
-      page shows the rule-based <em>model summary</em> instead, labelled as such. Forecasts that only have the model
-      summary are upgraded to Gemini's transcript in the background the next time their page is opened.
-      When off, or with no usable key, the built-in rule-based text is used &mdash; no error, no API key needed.
+      When on, Gemini turns each forecast&rsquo;s numbers into a short plain-language explanation for the owner.
+      Every figure in it is checked against the trained models&rsquo; own results before it is shown. When off, or
+      when the AI service cannot be reached, the built-in summary is shown instead &mdash; the page never breaks.
     </div>
   </div>
 
@@ -119,7 +113,7 @@
            placeholder="https://discord.gg/yourcode" pattern="https://(discord\.gg|(www\.)?discord\.com/invite)/.+"
            value="{{ settings['community_invite_url'].setting_value if 'community_invite_url' in settings else '' }}">
     <div class="form-text">
-      The <strong>Community Forum</strong> link at the bottom of every dashboard opens this invite in a new tab.
+      The <strong>Community Forum</strong> icon in the top bar of every page opens this invite in a new tab.
       Use an invite that never expires (Discord: Invite People &rarr; Edit invite link &rarr; Expire after: Never).
       Only a <code>discord.gg</code> or <code>discord.com/invite</code> link is accepted.
     </div>

@@ -132,10 +132,10 @@
 // lgu/dashboard.html, and with --dss-yellow / --dss-orange in
 // static/css/style.css.
 const CLUSTER_COLORS = {
-  Low: "#22c55e", // High Opportunity  -- green
-  Moderate: "#fde047", // Low-Moderate  -- light yellow
-  High: "#f97316", // Moderate         -- bright orange
-  Saturated: "#b91c1c", // High Saturation -- deep red
+  Low: "#22c55e", // green  -- room to enter
+  Moderate: "#fde047", // yellow -- caution
+  High: "#f97316", // orange -- crowded
+  Saturated: "#b91c1c", // red    -- saturated
 };
 
 // Tier order used by the legend/filter UI, least to most saturated.
@@ -161,11 +161,16 @@ function densityColorFor(value) {
   return (band || DENSITY_BANDS[DENSITY_BANDS.length - 1]).color;
 }
 
+// ONE vocabulary for the four tiers, everywhere (IT expert review): the
+// plan form, the forecast and the reports said Low / Moderate / High /
+// Saturated while this map said High Opportunity / Low-Moderate /
+// Moderate / High Saturation -- so "Moderate" on the map was the tier the
+// form called "High". The map now uses the engine's own names.
 const CLUSTER_DISPLAY_LABELS = {
-  Low: "High Opportunity",
-  Moderate: "Low-Moderate",
-  High: "Moderate",
-  Saturated: "High Saturation",
+  Low: "Low saturation",
+  Moderate: "Moderate saturation",
+  High: "High saturation",
+  Saturated: "Saturated",
 };
 
 function displayLabelFor(clusterLabel) {
@@ -539,7 +544,7 @@ function renderLocationList(rows) {
         <span><span class="dss-legend-swatch" style="background:${CLUSTER_COLORS[r.cluster_label]}"></span>${r.location}</span>
         <span class="text-end">
           <span class="dss-stat-pill ${pillClass(r.cluster_label)}">${displayLabelFor(r.cluster_label)}</span>
-          <div class="text-muted" style="font-size:.7rem;">${r.competitor_count} businesses</div>
+          <div class="dss-loc-count">${Number(r.competitor_count).toLocaleString()} businesses</div>
         </span>
       </button>`
     )
@@ -603,26 +608,55 @@ function topIndustriesHtml(items) {
     .join("");
 }
 
-// When the timeline shows another month, the panel adds that month's
-// figure under today's -- the details below it (businesses, population)
-// are today's, and say nothing about the chosen month.
-function timelineDetailHtml(location) {
+// THE SELECTED MONTH VS NOW (IT expert review). With the timeline on
+// another month, the panel used to put that month's figure under a
+// heading, tier and "Recommended Actions" that were all TODAY's -- a
+// January 2020 view reading "57% Moderate" beside "79% High Saturation"
+// and today's advice. Now every figure says which period it belongs to,
+// the heading tier is the chosen month's, and the guidance is written
+// for that month: what it showed (history) or what to plan for
+// (prediction). Today's own advice is shown only on the current view.
+function selectedPeriodRow(location) {
   const row = (dssLocationsCache || []).find((r) => r.location === location);
-  const label = periodLabel(row);
-  if (!label) return "";
+  return periodLabel(row) ? row : null;
+}
+
+function monthNameOf(row) {
+  const [year, month] = String(row.as_of).split("-").map(Number);
+  return new Date(year, month - 1, 1).toLocaleString(undefined, { month: "long", year: "numeric" });
+}
+
+const TIER_GUIDANCE = {
+  Low: "there was room to enter: few competitors for the size of the market",
+  Moderate: "the market was competitive but open: a new business needed a clear difference from the ones already there",
+  High: "the market was crowded: a newcomer needed a strong, distinct offer or a niche",
+  Saturated: "the market was saturated: another barangay or a different line of business was the safer choice",
+};
+const TIER_OUTLOOK = {
+  Low: "room to enter is expected to remain -- a good window to plan an opening",
+  Moderate: "the market is expected to stay competitive but open -- plan a clear point of difference",
+  High: "the market is expected to be crowded -- only a strong, distinct offer is likely to work",
+  Saturated: "the market is expected to be saturated -- consider another barangay or a different line of business",
+};
+
+function periodGuidanceHtml(row, industry) {
+  const month = monthNameOf(row);
+  const future = row.basis === "predicted";
+  const text = future
+    ? `By ${month}, ${TIER_OUTLOOK[row.cluster_label] || ""}.`
+    : `In ${month}, ${TIER_GUIDANCE[row.cluster_label] || ""}.`;
   return `
-    <div class="small border rounded px-2 py-1 dss-timeline-detail">
-      <div class="d-flex justify-content-between align-items-start gap-2">
-        <span class="text-muted">Saturation <span class="d-block" style="font-size:.72rem;">${escapeHtml(label)}</span></span>
-        <strong class="text-nowrap">${Number(row.saturation_index).toFixed(1)}%</strong>
-      </div>
-      <div class="text-muted" style="font-size:.72rem;">${Number(row.competitor_count).toLocaleString()} businesses ${row.basis === "predicted" ? "expected" : "at the time"} &middot; ${escapeHtml(displayLabelFor(row.cluster_label))}</div>
+    <div class="alert alert-light border mb-0 mt-3">
+      <strong>${future ? `What to plan for (${escapeHtml(month)})` : `What ${escapeHtml(month)} showed`}</strong>
+      <p class="mb-1 mt-1 small">${escapeHtml(text)} ${industry ? `(${escapeHtml(industry)})` : ""}</p>
+      <p class="mb-0 small text-muted">Press <strong>Current</strong> on the timeline for today&rsquo;s recommended actions.</p>
     </div>`;
 }
 
 function renderDetailPanel(detail) {
   const panel = document.getElementById("detailPanel");
   if (!panel) return;
+  const period = selectedPeriodRow(detail.location);
   const actions = (detail.recommended_actions || [])
     .map((a) => `<li>${escapeHtml(a)}</li>`)
     .join("") || "<li>No recommendation available.</li>";
@@ -632,10 +666,7 @@ function renderDetailPanel(detail) {
   // A FIXED, real people/km2 figure -- must read the same no matter
   // which industry is selected. Shown as its own row, separate from the
   // industry-specific Saturation Score below, so the two are never
-  // mistaken for one another (an earlier version labelled the
-  // industry-dependent saturation_index "Density Score", which made
-  // population density look like it was changing with the industry
-  // dropdown when it never actually did).
+  // mistaken for one another.
   const density = detail.population_density !== null && detail.population_density !== undefined
     ? `${Number(detail.population_density).toLocaleString()} /km²`
     : "Not available";
@@ -644,35 +675,56 @@ function renderDetailPanel(detail) {
     ? `<button type="button" class="btn btn-sm btn-outline-secondary" id="detailIsolateBtn"><i class="bi bi-arrows-fullscreen"></i> Show All</button>`
     : `<button type="button" class="btn btn-sm btn-outline-primary" id="detailIsolateBtn"><i class="bi bi-crosshair"></i> Isolate on Map</button>`;
 
+  const periodName = period ? monthNameOf(period) : "";
+  const basis = period ? (BASIS_LABEL[period.basis] || period.basis) : "";
+  const headerTier = period
+    ? `<span class="dss-stat-pill ${pillClass(period.cluster_label)}">${displayLabelFor(period.cluster_label)}</span>
+       <span class="d-block small text-muted mt-1">${escapeHtml(periodName)} (${escapeHtml(basis)})
+         &middot; now: ${escapeHtml(displayLabelFor(detail.cluster_label))}</span>`
+    : `<span class="dss-stat-pill ${pillClass(detail.cluster_label)}">${displayLabelFor(detail.cluster_label)}</span>`;
+
+  const saturationRows = period
+    ? `<div class="d-flex justify-content-between align-items-start gap-2 py-1 border-bottom dss-period-row">
+         <span class="text-muted">Saturation, ${escapeHtml(periodName)}
+           <span class="d-block" style="font-size:.72rem;">${escapeHtml(basis)} &middot; ${Number(period.competitor_count).toLocaleString()} businesses ${period.basis === "predicted" ? "expected" : "at the time"}</span></span>
+         <strong class="text-nowrap">${Number(period.saturation_index).toFixed(1)}%</strong>
+       </div>
+       <div class="d-flex justify-content-between align-items-start gap-2 py-1">
+         <span class="text-muted">Saturation now
+           <span class="d-block" style="font-size:.72rem;">for ${escapeHtml(detail.industry_type)}</span></span>
+         <strong class="text-nowrap">${Number(detail.saturation_index).toFixed(1)}%</strong>
+       </div>`
+    : `<div class="d-flex justify-content-between align-items-start gap-2 py-1">
+         <span class="text-muted">Saturation Score
+           <span class="d-block" style="font-size:.72rem;">for ${escapeHtml(detail.industry_type)}</span></span>
+         <strong class="text-nowrap">${Number(detail.saturation_index).toFixed(1)}%</strong>
+       </div>`;
+
   panel.innerHTML = `
     <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
       <div class="d-flex align-items-start gap-2">
         <i class="bi bi-geo-alt-fill fs-4 text-primary"></i>
         <div>
           <h5 class="mb-0">${escapeHtml(detail.location)}</h5>
-          <span class="dss-stat-pill ${pillClass(detail.cluster_label)}">${displayLabelFor(detail.cluster_label)}</span>
+          ${headerTier}
         </div>
       </div>
       ${isolateBtn}
     </div>
     <div class="small mb-3">
-      <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Total Businesses</span><strong>${Number(detail.total_businesses || 0).toLocaleString()}</strong></div>
-      <div class="text-muted pt-2 pb-1" style="${SUBHEADING_STYLE}">Top industries here</div>
+      <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">${period ? "Total Businesses (now)" : "Total Businesses"}</span><strong>${Number(detail.total_businesses || 0).toLocaleString()}</strong></div>
+      <div class="text-muted pt-2 pb-1" style="${SUBHEADING_STYLE}">Top industries here${period ? " (now)" : ""}</div>
       ${topIndustriesHtml(detail.top_industries)}
       <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Population</span><strong>${population}</strong></div>
       <div class="d-flex justify-content-between border-bottom py-1"><span class="text-muted">Population Density <span class="text-muted" style="font-weight:400;">(fixed)</span></span><strong>${density}</strong></div>
-      <div class="d-flex justify-content-between align-items-start gap-2 py-1">
-        <span class="text-muted">Saturation Score
-          <span class="d-block" style="font-size:.72rem;">for ${escapeHtml(detail.industry_type)}</span></span>
-        <strong class="text-nowrap">${Number(detail.saturation_index).toFixed(1)}%</strong>
-      </div>
+      ${saturationRows}
     </div>
-    ${timelineDetailHtml(detail.location)}
     ${demandDetailHtml()}
+    ${period ? periodGuidanceHtml(period, detail.industry_type) : `
     <div class="alert alert-light border mb-0 mt-3">
       <strong>Recommended Actions</strong>
       <ul class="mb-0 mt-1">${actions}</ul>
-    </div>
+    </div>`}
   `;
 
   const btn = document.getElementById("detailIsolateBtn");
@@ -1063,7 +1115,6 @@ async function drawChoropleth(rows) {
   hideHoverTooltip();
   dssPolygons.forEach(({ polygon }) => dssMap.removeLayer(polygon));
   dssPolygons = [];
-  const tierCounts = { Low: 0, Moderate: 0, High: 0, Saturated: 0 };
 
   for (const row of rows) {
     const geometry = cellByName[row.location];
@@ -1091,11 +1142,9 @@ async function drawChoropleth(rows) {
     polygon.on("mousemove", (evt) => showHoverTooltip(row, color, isPopulationMode, evt));
     polygon.on("mouseout", hideHoverTooltip);
     dssPolygons.push({ polygon, location: row.location, cluster: row.cluster_label });
-    if (row.cluster_label in tierCounts) tierCounts[row.cluster_label] += 1;
   }
 
   applyTierVisibility();
-  updateTierFilterCounts(tierCounts);
 }
 
 // Show/hide each cell according to: isolation first (if a barangay is
@@ -1131,6 +1180,16 @@ function applyTierVisibility() {
     // part of its bold outline.
     if (outlined && show) polygon.bringToFront();
   });
+
+  // The legend counters follow what the map is showing (IT expert
+  // review): with one barangay isolated they count that one barangay, so
+  // "Showing only Poblacion" never sits beside counts for all 76.
+  const counts = { Low: 0, Moderate: 0, High: 0, Saturated: 0 };
+  dssPolygons.forEach(({ location, cluster }) => {
+    if (dssIsolatedLocation !== null && location !== dssIsolatedLocation) return;
+    if (cluster in counts) counts[cluster] += 1;
+  });
+  updateTierFilterCounts(counts);
 }
 
 function updateTierFilterCounts(tierCounts) {

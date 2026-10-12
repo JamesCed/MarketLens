@@ -141,13 +141,13 @@
       id: "sme-community",
       page: "/home",
       target: '[data-tour="community-link"]',
-      placement: "top",
+      placement: "bottom",
       title: "Our community on Discord",
       what:
         "Want to ask other business owners in Tarlac City? The MarketLens community is a Discord server, " +
         "with a room for each kind of business, permits questions, and tips.",
       how:
-        "Click Community Forum at the bottom of this page. Discord opens in a new tab, so MarketLens stays " +
+        "Click the Discord icon in the top bar. Discord opens in a new tab, so MarketLens stays " +
         "open here. You'll need a free Discord account the first time.",
     },
     {
@@ -467,10 +467,10 @@
       id: "lgu-community",
       page: "/lgu/dashboard",
       target: '[data-tour="community-link"]',
-      placement: "top",
+      placement: "bottom",
       title: "Our community on Discord",
       what: "Business owners ask questions and share tips on the MarketLens Discord server — a good place for the city to answer them.",
-      how: "Click Community Forum at the bottom of the dashboard. Discord opens in a new tab.",
+      how: "Click the Discord icon in the top bar. Discord opens in a new tab.",
     },
     {
       id: "lgu-diversification",

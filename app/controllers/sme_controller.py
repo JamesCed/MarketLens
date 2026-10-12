@@ -457,7 +457,7 @@ def home():
         Notification.query.filter_by(user_id=current_user.user_id, is_read=False)
         .order_by(Notification.created_at.desc()).limit(3).all()
     )
-    unread_count = Notification.query.filter_by(user_id=current_user.user_id, is_read=False).count()
+    unread_count = Notification.unread_count_for(current_user.user_id)
     has_lgu_data = has_active_lgu_data()
 
     return render_template(
@@ -709,7 +709,8 @@ def update_plan(sme_id):
     if not form.get("business_stage"):
         form["business_stage"] = profile.business_stage or "startup"
 
-    data, errors = parse_plan_form(form, keep_industry=profile.industry_type)
+    data, errors = parse_plan_form(form, keep_industry=profile.industry_type, keep_location=profile.location,
+                                   keep_capital=profile.startup_capital)
     if errors:
         if wants_json:
             return jsonify({"success": False, "error": " ".join(errors), "errors": errors}), 400
@@ -881,6 +882,46 @@ def trend_reports():
         selected_month=resolve_as_of_month(request.args.get("as_of")).strftime("%Y-%m"),
         earliest_month=EARLIEST_TREND_MONTH.strftime("%Y-%m"),
         latest_month=date.today().strftime("%Y-%m"),
+    )
+
+
+@sme_bp.route("/trend-reports/print")
+@role_required("SME", "LGU", "Admin")
+def trend_report_print():
+    """The Trend Report as a DOCUMENT: a clean, printable page with a
+    proper header (logo, title, period, who it was prepared for) and a
+    footer with page numbers on every printed page -- then Print / Save
+    as PDF.
+
+    IT expert review: exporting used to print the web page itself --
+    sidebar, buttons and the "Building your report..." loader included.
+    This renders the same figures the page shows (the same cached
+    build_trend_report call) as tables and bars laid out for paper."""
+    from app.services.trend_analytics_service import build_trend_report
+
+    industry_type = request.args.get("industry_type") or None
+    if industry_type and industry_type not in BUSINESS_TYPES:
+        industry_type = None
+    as_of = resolve_as_of_month(request.args.get("as_of"))
+    report = build_trend_report(None, as_of=as_of)
+    quarterly = report.get("market_quarterly") or {}
+    if industry_type:
+        from app.services.trend_analytics_service import get_market_quarterly_performance, TREND_WINDOW_QUARTERS
+
+        quarterly = get_market_quarterly_performance(industry_type, quarters=TREND_WINDOW_QUARTERS, as_of=as_of)
+
+    distribution = report.get("industry_distribution") or []
+    top_share = max((row.get("percent") or 0 for row in distribution), default=0) or 1
+    log_action("export_trend_report", details=f"period={as_of:%Y-%m}" + (f", industry={industry_type}" if industry_type else ""))
+    return render_template(
+        "sme/trend_report_print.html",
+        report=report,
+        quarterly=quarterly,
+        quarterly_industry=industry_type,
+        distribution=distribution,
+        top_share=top_share,
+        generated_at=datetime.utcnow() + DISPLAY_UTC_OFFSET,
+        autoprint=request.args.get("autoprint") == "1",
     )
 
 

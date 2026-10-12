@@ -725,7 +725,12 @@ def has_active_lgu_data():
     permit register. "Which barangays should the city steer investment
     to" is not, and that is the one this switches off.
     """
-    return db.session.query(_real_upload_query(LguData.lgu_id).exists()).scalar() is True
+    from app.utils.request_memo import request_memo
+
+    return request_memo(
+        "has_active_lgu_data",
+        lambda: db.session.query(_real_upload_query(LguData.lgu_id).exists()).scalar() is True,
+    )
 
 
 def _real_upload_query(*entities):
@@ -746,7 +751,16 @@ def _real_upload_query(*entities):
 def active_lgu_dataset_summary():
     """What to tell an LGU user about the data currently in force --
     when it was uploaded, by whom, and how much of the city it covers.
-    Returns None when there is no real upload yet."""
+    Returns None when there is no real upload yet.
+
+    Memoised per request: Home, Planning and the forecast staleness check
+    each ask for it, sometimes once per plan."""
+    from app.utils.request_memo import request_memo
+
+    return request_memo("active_lgu_dataset_summary", _active_lgu_dataset_summary)
+
+
+def _active_lgu_dataset_summary():
     newest = (
         _real_upload_query()
         .order_by(LguData.upload_date.desc(), LguData.lgu_id.desc())

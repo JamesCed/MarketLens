@@ -166,19 +166,29 @@ def _data_fingerprint():
         engine_token = id(db.engine)
     except Exception:  # pragma: no cover -- no app context / no engine
         engine_token = 0
-    count, max_id, max_date, total = db.session.query(
-        db.func.count(MarketData.market_id),
-        db.func.max(MarketData.market_id),
-        db.func.max(MarketData.date_recorded),
-        db.func.sum(MarketData.competitor_count),
-    ).one()
-    return (
-        engine_token,
-        int(count or 0),
-        int(max_id or 0),
-        max_date.isoformat() if max_date else None,
-        int(total or 0),
-    )
+
+    def query():
+        count, max_id, max_date, total = db.session.query(
+            db.func.count(MarketData.market_id),
+            db.func.max(MarketData.market_id),
+            db.func.max(MarketData.date_recorded),
+            db.func.sum(MarketData.competitor_count),
+        ).one()
+        return (
+            engine_token,
+            int(count or 0),
+            int(max_id or 0),
+            max_date.isoformat() if max_date else None,
+            int(total or 0),
+        )
+
+    # Asked up to five times while one page is built (every memoised
+    # trend figure checks it); the memo makes that one round trip. Any
+    # write in the request clears it, so the "after" fingerprint taken
+    # in _cached() still sees rows a sweep has just saved.
+    from app.utils.request_memo import request_memo
+
+    return request_memo(("market_fingerprint", engine_token), query)
 
 
 def _cached(store, name, build):
@@ -219,6 +229,14 @@ def clear_trend_caches(drop_disk=True):
     way it cannot see."""
     _SWEEP_CACHE.clear()
     _SNAPSHOT_CACHE.clear()
+    try:
+        from app.services.diversification_service import clear_diversification_cache
+        from app.services.forecasting_service import clear_batch_cache
+
+        clear_diversification_cache()
+        clear_batch_cache()
+    except ImportError:  # pragma: no cover
+        pass
     if not drop_disk:
         return
     path = _sweep_disk_cache_path()

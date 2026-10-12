@@ -89,6 +89,18 @@ _USER_COLUMNS = {
     "suspended_until": ("DATETIME NULL", "DATETIME NULL"),
     # Archive instead of delete -- see app/models/archive.py.
     **_ARCHIVE_COLUMNS,
+    # Personal information (IT expert review) -- see User. The *_enc
+    # columns hold ciphertext (app/utils/privacy.py), hence TEXT.
+    "first_name": ("VARCHAR(60) NULL", "VARCHAR(60) NULL"),
+    "middle_name": ("VARCHAR(60) NULL", "VARCHAR(60) NULL"),
+    "last_name": ("VARCHAR(60) NULL", "VARCHAR(60) NULL"),
+    "suffix": ("VARCHAR(10) NULL", "VARCHAR(10) NULL"),
+    "contact_number_enc": ("TEXT NULL", "TEXT NULL"),
+    "gender_enc": ("TEXT NULL", "TEXT NULL"),
+    "birthdate_enc": ("TEXT NULL", "TEXT NULL"),
+    "address_line_enc": ("TEXT NULL", "TEXT NULL"),
+    "address_barangay_enc": ("TEXT NULL", "TEXT NULL"),
+    "terms_accepted_at": ("DATETIME NULL", "DATETIME NULL"),
 }
 
 _ADDITIVE_COLUMNS = {
@@ -189,6 +201,65 @@ def _create_missing_tables():
     return [t.name for t in missing]
 
 
+def _encrypt_legacy_contact_numbers():
+    """Move every contact number still sitting in plain text in the
+    original `contact_number` column into the encrypted
+    `contact_number_enc` column, then clear the plain copy. Runs on every
+    start; once nothing is left in the old column it is one cheap query.
+    Returns how many were moved."""
+    from app.models.user import User
+
+    rows = (
+        User.query.execution_options(include_archived=True)
+        .filter(User.legacy_contact_number.isnot(None), User.legacy_contact_number != "")
+        .all()
+    )
+    for user in rows:
+        # A value in the OLD column is always the newer one: once this
+        # version runs, only an older copy of the app (still serving
+        # while a new deploy builds) writes there.
+        user.contact_number = user.legacy_contact_number
+        user.legacy_contact_number = None
+    if rows:
+        db.session.commit()
+    return len(rows)
+
+
+def _hide_personal_details_in_audit_trail():
+    """Profile edits recorded before the personal details were encrypted
+    kept the old and new contact number in plain text in audit_logs.changes
+    (and so in the audit CSV export). Replace those values with "(hidden)"
+    -- the entry still shows THAT the number changed. Runs on every start;
+    once nothing is left to hide it is one cheap query. Returns how many
+    entries were rewritten."""
+    import json
+
+    from app.models.audit_log import AuditLog
+    from app.services.account_params import PII_FIELDS as _PII_FIELDS
+
+    rows = AuditLog.query.filter(AuditLog.action == "update_profile", AuditLog.changes.isnot(None)).all()
+    rewritten = 0
+    for row in rows:
+        try:
+            changes = json.loads(row.changes)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(changes, dict):
+            continue
+        dirty = False
+        for field in _PII_FIELDS:
+            pair = changes.get(field)
+            if isinstance(pair, list) and any(v not in (None, "", "(hidden)") for v in pair):
+                changes[field] = [None if v in (None, "") else "(hidden)" for v in pair]
+                dirty = True
+        if dirty:
+            row.changes = json.dumps(changes)
+            rewritten += 1
+    if rewritten:
+        db.session.commit()
+    return rewritten
+
+
 def _retire_system_theme():
     """'match system' was offered briefly and then dropped, so any row
     still holding it would resolve to light on every page load without
@@ -282,6 +353,20 @@ def run_startup_migrations(app):
 
         try:
             _retire_system_theme()
+        except Exception:  # noqa: BLE001 -- see docstring
+            db.session.rollback()
+
+        try:
+            moved = _encrypt_legacy_contact_numbers()
+            if moved:
+                app.logger.info("Encrypted %s contact number(s) left in plain text", moved)
+        except Exception:  # noqa: BLE001 -- see docstring
+            db.session.rollback()
+
+        try:
+            hidden = _hide_personal_details_in_audit_trail()
+            if hidden:
+                app.logger.info("Hid personal details in %s audit trail entr(ies)", hidden)
         except Exception:  # noqa: BLE001 -- see docstring
             db.session.rollback()
 

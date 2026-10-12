@@ -31,6 +31,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from tests.account_fixtures import PERSONAL, STRONG_PASSWORD
+
 from app import create_app
 from app.extensions import db
 from app.models import SystemSetting
@@ -42,10 +44,10 @@ from app.ml.constants import BUSINESS_TYPES
 # fields the forecasting engine cannot work without have to be here or
 # the form never reaches the code-sending branch.
 REGISTRATION = {
-    "full_name": "Juan Dela Cruz",
+    **PERSONAL,
     "email": "newuser@otp.test",
-    "password": "password123",
-    "confirm_password": "password123",
+    "password": STRONG_PASSWORD,
+    "confirm_password": STRONG_PASSWORD,
     "role": "sme",
     "business_name": "Juan's Coffee",
     "industry_type": BUSINESS_TYPES[0],
@@ -432,14 +434,14 @@ def test_a_known_address_gets_a_code_and_can_reset(app, existing_user, reset_sen
 
     page = client.post("/reset-password", data={
         "code": reset_sent[0]["code"],
-        "password": "brandnewpass",
-        "confirm_password": "brandnewpass",
+        "password": "Brand#New2026",
+        "confirm_password": "Brand#New2026",
     }, follow_redirects=True).get_data(as_text=True)
 
     assert "password has been changed" in page
     with app.app_context():
         user = User.query.filter_by(email=existing_user).first()
-        assert user.check_password("brandnewpass")
+        assert user.check_password("Brand#New2026")
         assert not user.check_password("oldpassword1")
 
 
@@ -469,7 +471,7 @@ def test_a_wrong_reset_code_does_not_change_the_password(app, existing_user, res
 
     wrong = "000000" if reset_sent[0]["code"] != "000000" else "111111"
     client.post("/reset-password", data={
-        "code": wrong, "password": "hackedpass", "confirm_password": "hackedpass",
+        "code": wrong, "password": "Hacked#2026", "confirm_password": "Hacked#2026",
     }, follow_redirects=True)
 
     with app.app_context():
@@ -482,7 +484,7 @@ def test_reset_codes_run_out_too(app, existing_user, reset_sent):
     client.post("/forgot-password", data={"email": existing_user}, follow_redirects=True)
 
     wrong = "000000" if reset_sent[0]["code"] != "000000" else "111111"
-    payload = {"code": wrong, "password": "hackedpass", "confirm_password": "hackedpass"}
+    payload = {"code": wrong, "password": "Hacked#2026", "confirm_password": "Hacked#2026"}
     client.post("/reset-password", data=payload, follow_redirects=True)
     page = client.post("/reset-password", data=payload, follow_redirects=True).get_data(as_text=True)
 
@@ -490,8 +492,8 @@ def test_reset_codes_run_out_too(app, existing_user, reset_sent):
 
     # ...and the real code is dead with it.
     client.post("/reset-password", data={
-        "code": reset_sent[0]["code"], "password": "hackedpass",
-        "confirm_password": "hackedpass",
+        "code": reset_sent[0]["code"], "password": "Hacked#2026",
+        "confirm_password": "Hacked#2026",
     }, follow_redirects=True)
     with app.app_context():
         assert User.query.filter_by(email=existing_user).first().check_password("oldpassword1")
@@ -509,8 +511,8 @@ def test_an_expired_reset_code_is_refused(app, existing_user, reset_sent):
         session[PASSWORD_RESET_SESSION_KEY] = pending
 
     page = client.post("/reset-password", data={
-        "code": reset_sent[0]["code"], "password": "brandnewpass",
-        "confirm_password": "brandnewpass",
+        "code": reset_sent[0]["code"], "password": "Brand#New2026",
+        "confirm_password": "Brand#New2026",
     }, follow_redirects=True).get_data(as_text=True)
 
     assert "expired" in page.lower()
@@ -523,7 +525,7 @@ def test_mismatched_new_passwords_are_refused(app, existing_user, reset_sent):
     client.post("/forgot-password", data={"email": existing_user}, follow_redirects=True)
 
     page = client.post("/reset-password", data={
-        "code": reset_sent[0]["code"], "password": "brandnewpass",
+        "code": reset_sent[0]["code"], "password": "Brand#New2026",
         "confirm_password": "differentpass",
     }, follow_redirects=True).get_data(as_text=True)
 

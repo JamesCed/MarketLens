@@ -200,3 +200,154 @@ document.addEventListener("click", (event) => {
   if (icon) icon.className = show ? "bi bi-eye-slash" : "bi bi-eye";
   button.setAttribute("aria-label", show ? "Hide password" : "Show password");
 });
+
+
+/* =====================================================================
+   PAGE LOADER
+   =====================================================================
+   Shows the rotating circle (shared/_page_loader.html) while the next
+   page is on its way, so a click never looks like it did nothing.
+
+   - Same-site link clicks, normal form submits and script navigations
+     (window.location.assign, form.submit(), the tour moving between
+     pages) all show it. Script navigations are caught by beforeunload.
+   - It appears only after LOADER_DELAY_MS, so a page that arrives
+     quickly never flashes it.
+   - Downloads (CSV exports, dataset templates) do not unload the page,
+     so they never show it; a link can also opt out with data-no-loader.
+   - Coming back with the browser's Back button restores the page from
+     cache with the loader still up, so pageshow hides it; a failsafe
+     hides it if nothing has happened after FAILSAFE_MS. */
+(function () {
+  const loader = document.getElementById("dssPageLoader");
+  if (!loader) return;
+
+  const LOADER_DELAY_MS = 120;
+  const FAILSAFE_MS = 25000;
+  const DOWNLOAD_RE = /\.(csv|xlsx?|pdf|zip)(\?|#|$)|\/export|dataset-template/i;
+  let showTimer = null;
+  let failsafe = null;
+  let suppressUntil = 0;
+
+  function hide() {
+    clearTimeout(showTimer);
+    clearTimeout(failsafe);
+    loader.hidden = true;
+    document.documentElement.removeAttribute("aria-busy");
+  }
+
+  function show() {
+    if (Date.now() < suppressUntil) return;
+    clearTimeout(showTimer);
+    showTimer = setTimeout(() => {
+      loader.hidden = false;
+      document.documentElement.setAttribute("aria-busy", "true");
+    }, LOADER_DELAY_MS);
+    clearTimeout(failsafe);
+    failsafe = setTimeout(hide, FAILSAFE_MS);
+  }
+
+  // A download keeps the page, so the beforeunload it may trigger must
+  // not raise the loader.
+  function suppress() { suppressUntil = Date.now() + 4000; }
+
+  window.dssShowLoader = show;
+  window.dssHideLoader = hide;
+
+  document.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target.closest("a[href]");
+    if (!link) return;
+    const raw = link.getAttribute("href") || "";
+    if (!raw || raw.startsWith("#") || /^(javascript|mailto|tel):/i.test(raw)) return;
+    if (link.target && link.target !== "_self") return;
+    if (link.hasAttribute("download") || link.hasAttribute("data-no-loader")) { suppress(); return; }
+    if (link.hasAttribute("data-bs-toggle")) return;
+    let url;
+    try { url = new URL(link.href, window.location.href); } catch (_e) { return; }
+    if (url.origin !== window.location.origin) return;
+    if (DOWNLOAD_RE.test(url.pathname + url.search)) { suppress(); return; }
+    if (url.pathname === window.location.pathname && url.search === window.location.search && url.hash) return;
+    // Let every other click handler run first; one that cancels the
+    // navigation (a confirm, an in-page tab) cancels the loader too.
+    setTimeout(() => { if (!event.defaultPrevented) show(); }, 0);
+  });
+
+  document.addEventListener("submit", (event) => {
+    setTimeout(() => {
+      if (event.defaultPrevented) return;
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (form.hasAttribute("data-no-loader") || (form.target && form.target !== "_self")) return;
+      if (DOWNLOAD_RE.test(form.getAttribute("action") || "")) { suppress(); return; }
+      show();
+    }, 0);
+  });
+
+  window.addEventListener("beforeunload", show);
+  window.addEventListener("pageshow", hide);
+})();
+
+
+/* =====================================================================
+   PASSWORD CHECKLIST
+   =====================================================================
+   Ticks off each part of the password rule (shared/_password_rules.html)
+   as it is met. The server checks the same five rules regardless. */
+(function () {
+  const TESTS = {
+    length: (p) => p.length >= 8,
+    upper: (p) => /[A-Z]/.test(p),
+    lower: (p) => /[a-z]/.test(p),
+    number: (p) => /\d/.test(p),
+    special: (p) => /[^A-Za-z0-9\s]/.test(p),
+  };
+  document.querySelectorAll("[data-pw-rules-for]").forEach((list) => {
+    const field = document.getElementById(list.dataset.pwRulesFor);
+    if (!field) return;
+    const update = () => {
+      const value = field.value || "";
+      let allMet = true;
+      list.querySelectorAll("[data-rule]").forEach((item) => {
+        const met = (TESTS[item.dataset.rule] || (() => true))(value);
+        allMet = allMet && met;
+        item.classList.toggle("is-met", met);
+        const icon = item.querySelector("i");
+        if (icon) icon.className = met ? "bi bi-check-circle-fill" : "bi bi-circle";
+      });
+      // Lets the browser block the submit with a message, before the
+      // round trip, when the rule is not met yet.
+      field.setCustomValidity(value && !allMet ? "Your password does not meet every rule listed below it." : "");
+    };
+    field.addEventListener("input", update);
+    update();
+  });
+})();
+
+
+/* =====================================================================
+   REQUIRED FIELDS GET A RED ASTERISK
+   =====================================================================
+   IT expert review: "always put a red * on required fields". Every
+   label whose control is `required` gets .is-required (style.css draws
+   the asterisk), and it follows the attribute when a script toggles it
+   -- the sign-up wizard marks fields required step by step. */
+(function () {
+  function labelsFor(control) {
+    const found = control.labels ? [...control.labels] : [];
+    return found.filter((label) => !label.classList.contains("btn"));
+  }
+  function sync(control) {
+    labelsFor(control).forEach((label) => label.classList.toggle("is-required", control.required));
+  }
+  function syncAll(root) {
+    root.querySelectorAll("input, select, textarea").forEach(sync);
+  }
+  syncAll(document);
+  new MutationObserver((mutations) => {
+    mutations.forEach((m) => {
+      if (m.type === "attributes" && m.target.matches && m.target.matches("input, select, textarea")) sync(m.target);
+      if (m.type === "childList") m.addedNodes.forEach((n) => { if (n.querySelectorAll) syncAll(n); });
+    });
+  }).observe(document.body, { attributes: true, attributeFilter: ["required"], childList: true, subtree: true });
+})();

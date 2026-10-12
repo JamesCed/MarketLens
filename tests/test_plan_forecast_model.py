@@ -573,10 +573,16 @@ def test_the_admin_settings_page_edits_the_plan_assumptions(app):
 
 def test_the_admin_settings_page_says_gemini_narrates_the_forecast(app):
     """The AI-text switch describes what it actually does now: Gemini
-    first for the forecast narration, figures from the trained models."""
+    first for the forecast narration, figures from the trained models.
+
+    And it says so WITHOUT naming the environment variables or the
+    provider fallback order (IT expert review): the Settings screen is
+    not a map of how the system is configured inside."""
     page = _admin_client(app).get("/admin/settings").get_data(as_text=True)
     assert "GPT or Claude" not in page
-    assert "Gemini" in page and "GEMINI_API_KEY" in page and "LLM_PROVIDER" in page
+    assert "Gemini" in page
+    for internal in ("GEMINI_API_KEY", "LLM_PROVIDER", "OPENAI_API_KEY", "USE_LLM_RECOMMENDATIONS", ".env", ".py"):
+        assert internal not in page, f"{internal} is shown on the admin Settings page"
     assert 'max="100000"' in page          # the wage input carries its upper bound too
 
     from app.models.system_setting import DEFAULT_SETTINGS

@@ -76,9 +76,25 @@ class SystemSetting(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     @staticmethod
+    def all_values():
+        """Every setting as {key: value}, read in ONE query per request.
+
+        Pages ask for several settings each (Admin > System Settings
+        asked for 16 one at a time); a single SELECT of a table this small
+        is cheaper than even two primary-key lookups over the network.
+        Any write clears the per-request memo, so set() followed by get()
+        in the same request still reads the new value."""
+        from app.utils.request_memo import request_memo
+
+        return request_memo(
+            "system_settings",
+            lambda: {row.setting_key: row.setting_value for row in SystemSetting.query.all()},
+        )
+
+    @staticmethod
     def get(key, default=None):
-        row = SystemSetting.query.get(key)
-        return row.setting_value if row else default
+        value = SystemSetting.all_values().get(key)
+        return value if value is not None else default
 
     @staticmethod
     def get_float(key, default=0.0):
@@ -139,8 +155,12 @@ class SystemSetting(db.Model):
         are still sitting on a superseded default. Safe to call every
         startup."""
         changed = False
+        # One SELECT for the whole (small) table instead of one per
+        # default -- this runs at every boot and on every visit to
+        # Admin > System Settings, where it was 13 round trips.
+        existing = {row.setting_key: row for row in SystemSetting.query.all()}
         for key, (value, description) in DEFAULT_SETTINGS.items():
-            row = SystemSetting.query.get(key)
+            row = existing.get(key)
             if row is None:
                 db.session.add(SystemSetting(setting_key=key, setting_value=value, description=description))
                 changed = True

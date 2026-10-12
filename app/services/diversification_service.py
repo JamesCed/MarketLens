@@ -100,8 +100,45 @@ def diversity_score(counts, n_industries=None):
     return round(max(0.0, min(100.0, (1 - hhi) / (1 - 1 / n) * 100)), 1)
 
 
+_PLAN_CACHE = {}
+_PLAN_CACHE_TTL_SECONDS = 300
+
+
 def build_diversification_plan():
-    """The whole plan as one JSON-safe dict -- see the module docstring."""
+    """The whole plan as one JSON-safe dict -- see the module docstring.
+
+    Memoised on the market_data AND lgu_data fingerprints, for five
+    minutes at most, and dropped by clear_trend_caches(): the LGU dashboard and the
+    Diversification Plan page both build it, and nothing in it can
+    change until a market_data row does. A deep copy is handed out so no
+    caller can edit the shared result."""
+    import copy
+    import time
+
+    from app.services.forecasting_service import _scoring_inputs_fingerprint
+
+    # Keyed on BOTH tables the plan reads -- market_data for the counts
+    # and lgu_data for the scoring rows behind each saturation -- the
+    # same key the batch scores use, so the plan and the figures beside
+    # it can never disagree about which data they describe.
+    try:
+        key = _scoring_inputs_fingerprint()
+    except Exception:  # noqa: BLE001 -- no key, no cache; the plan is still right
+        return _build_diversification_plan()
+    hit = _PLAN_CACHE.get("plan")
+    if hit is not None and hit[0] == key and time.monotonic() - hit[1] <= _PLAN_CACHE_TTL_SECONDS:
+        return copy.deepcopy(hit[2])
+    plan = _build_diversification_plan()
+    if _scoring_inputs_fingerprint() == key:  # nothing was written while building it
+        _PLAN_CACHE["plan"] = (key, time.monotonic(), copy.deepcopy(plan))
+    return plan
+
+
+def clear_diversification_cache():
+    _PLAN_CACHE.clear()
+
+
+def _build_diversification_plan():
     from app.services.forecasting_service import saturation_for_counts
     from app.services.trend_analytics_service import latest_market_data_by_key
 

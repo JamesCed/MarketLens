@@ -1739,3 +1739,45 @@ The short version of what production needs:
 - **Never commit your real `.env`** — or `.env.example`, which in this
   project holds real keys. Both are already in `.gitignore`; verify with
   `git status` before your first push.
+
+## 11. October 2026 revisions (IT expert review) and speed work
+
+What changed in answer to the IT experts' evaluation (Manzanero, Suliva
+and the separate suggestions file), and where it lives:
+
+| Comment | What the system does now | Where |
+|---|---|---|
+| Admin panel and Datasets describe the internals (env var names, file paths, function names) | Descriptions say what a setting does, never how it is built; HTML comments are no longer sent to the browser | `templates/admin/settings.html`, `templates/admin/datasets.html` |
+| "Hash or encrypt what we display" | Birthday, gender, address and contact number are encrypted at rest (Fernet); emails are masked on admin screens (`ju•••@gmail.com`) with a reveal button; the audit trail records masked values | `app/utils/privacy.py` |
+| Password change reloads on error | Checked in place with an inline message, no reload | `shared/settings.html`, `profile_controller._change_password` |
+| Password rule | At least 8 characters with an uppercase letter, a lowercase letter, a number and a special character, everywhere a password is set, with a live checklist | `app/services/account_params.py` |
+| Full personal information at sign-up | First/middle/last name, suffix, gender, birthday (age computed), contact number, address (barangay dropdown) for SME and LGU; older accounts complete it in Settings | `templates/auth/register.html` |
+| Terms and Conditions | Required checkbox; the Data Privacy Notice (RA 10173) at `/terms` and in a dialog | `shared/_terms_content.html` |
+| Barangay dropdown | Plan location and address are dropdowns of the 76 barangays; the server refuses anything else | `plan_params.parse_plan_form` |
+| ₱1 capital accepted | Minimum capital ₱5,000 (`MIN_PLAN_CAPITAL`) | `plan_params._capital` |
+| Red `*` on required fields | Every label of a required control gets a red asterisk | `static/js/main.js` |
+| Loading spinner between pages | A rotating circle shows while the next page loads | `shared/_page_loader.html` |
+| Footer looks random | PSA, DTI, Community and Contact Us are icons in the top bar of every page | `shared/_quick_links.html` |
+| Legend colours not indicated | The quarterly chart's legend uses the series' own colours; the two series are clearly different hues | `templates/sme/trend_reports.html` |
+| Explanation below the chart is missed | "How to read" opens a dialog beside the chart; Top Industries shows 5 with "View all" | same |
+| Export prints the web page | Export opens a proper document with the logo letterhead and page numbers | `/trend-reports/print` |
+| Map counters ignore "Showing only" | Legend counts follow the isolated barangay; the count style is consistent | `static/js/map.js` |
+| 3.30/10 shown in green | One colour rule for every score: green ≥ 6.5, amber 4–6.4, red < 4 | `score_tone` in `app/__init__.py` |
+| Information too scattered | Each recommendation opens with an "In brief" (strength, biggest risk, next step); the full analysis and location cards are folded | `templates/sme/recommendations.html` |
+| Historical map view mixes in today's figures | The panel labels the chosen month vs now, and the guidance matches the month | `map.js renderDetailPanel` |
+| Two tier vocabularies | One set everywhere: Low, Moderate, High, Saturated | map, legends |
+| "77 barangays on file" | Counted against the official 76; unmatched names are listed separately | `lgu_controller.dashboard` |
+| Landing page overstates real data | Says which figures are estimates | `templates/auth/login.html` |
+
+**Speed.** Models load, templates compile and reference data is parsed at
+boot (`app/services/warmup.py`), so no visitor pays for them; static files
+carry a content hash and are cached for a year; HTML/CSS/JS/JSON are
+gzipped; repeated questions within one request are asked once
+(`app/utils/request_memo.py`); the population figures are parsed once
+instead of on every lookup; the diversification plan and batch scores are
+cached on the data fingerprint; Chart.js loads only on pages with charts.
+
+**New settings** (all optional): `PII_ENCRYPTION_KEY` (set once, never
+change), `MIN_PLAN_CAPITAL`, `WARM_ON_BOOT`, `COMPRESS_RESPONSES`. The new
+`user` columns are added automatically at start-up; see
+`sql/2026-10_personal_info_and_privacy.sql`.

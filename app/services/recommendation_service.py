@@ -473,8 +473,8 @@ def _risks_for(context):
             )
     risks.extend(_capital_and_pricing_lines(context)[1])
     if context["competitor_simulated"]:
-        risks.append("competitor count for this area is a simulated estimate -- connect a live Google "
-                      "Places API key for exact figures")
+        risks.append("competitor count for this area is an estimate, not a live count -- "
+                      "treat it as a guide until live business counts are available")
     return risks
 
 

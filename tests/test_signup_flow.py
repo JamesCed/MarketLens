@@ -16,6 +16,8 @@ and creates it with the account. Three things need pinning down:
 
 import pytest
 
+from tests.account_fixtures import PERSONAL, STRONG_PASSWORD, account_fields
+
 from app import create_app
 from app.extensions import db
 from app.models import User, SmeProfile, SystemSetting
@@ -48,11 +50,10 @@ SME_SIGNUP = {
     "subcategory": "coffee_shop",
     "product_offering": "Brewed coffee and pastries",
     "innovation_idea": "Kapampangan-style tsokolate batirol on the menu",
-    "full_name": "Juan Dela Cruz",
+    **PERSONAL,
     "email": "juan@example.com",
-    "password": "password123",
-    "confirm_password": "password123",
-    "contact_number": "09171234567",
+    "password": STRONG_PASSWORD,
+    "confirm_password": STRONG_PASSWORD,
 }
 
 
@@ -219,13 +220,7 @@ def test_an_existing_business_gets_a_registration_date(app, client):
 def test_lgu_signup_needs_no_business_fields(app, client):
     response = client.post(
         "/register",
-        data={
-            "role": "lgu",
-            "full_name": "Maria Santos",
-            "email": "maria@lgu.gov.ph",
-            "password": "password123",
-            "confirm_password": "password123",
-        },
+        data={"role": "lgu", **account_fields("maria@lgu.gov.ph", first_name="Maria", last_name="Santos")},
         follow_redirects=True,
     )
     assert response.status_code == 200
@@ -282,8 +277,7 @@ def test_the_legacy_capital_field_name_still_signs_up(app, client):
 
 def test_an_lgu_signup_needs_no_capital(app, client):
     client.post("/register", data={
-        "role": "lgu", "full_name": "Ana Reyes", "email": "ana@lgu.gov.ph",
-        "password": "password123", "confirm_password": "password123",
+        "role": "lgu", **account_fields("ana@lgu.gov.ph", first_name="Ana", last_name="Reyes"),
     }, follow_redirects=True)
     with app.app_context():
         assert User.query.filter_by(email="ana@lgu.gov.ph").count() == 1

@@ -103,6 +103,12 @@ import os
 import secrets
 import sys
 
+# This script prepares the database and trains models; it serves no pages,
+# so the boot-time warm-up (loading models, compiling templates -- see
+# app/services/warmup.py) would only slow it down. Must be set before the
+# app's config is imported.
+os.environ.setdefault("WARM_ON_BOOT", "false")
+
 from app import create_app
 from app.extensions import db
 from app.models import User, SystemSetting

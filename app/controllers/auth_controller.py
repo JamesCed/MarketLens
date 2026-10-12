@@ -57,6 +57,7 @@ produce "verification is broken", it produced "verification quietly
 stopped happening", on a deployment that looked healthy.
 """
 
+import json
 import secrets
 from datetime import date, datetime, timedelta
 
@@ -64,8 +65,11 @@ from flask import Blueprint, render_template, redirect, url_for, request, flash,
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash
 
+import re
+
 from app.extensions import db
 from app.models import User, SmeProfile
+from app.services.account_params import compose_full_name
 from app.ml.constants import BUSINESS_TYPES
 from app.ml.seed_data import BARANGAY_NAMES
 from app.utils.audit import log_action
@@ -105,12 +109,24 @@ def _create_user_from_pending(pending):
     parameters given during sign-up, so the new account arrives with
     something in "My Plans" instead of an empty Home page.
     """
+    from app.services.account_params import apply_personal_info
+    from app.utils.privacy import decrypt_value
+
     user = User(
         name=pending["full_name"],
         email=pending["email"],
         role=pending["role"],
-        contact_number=pending["contact_number"],
     )
+    # The personal details travel through the session ENCRYPTED (the
+    # session is a signed cookie, readable by whoever holds the browser)
+    # and land in encrypted columns -- see app/utils/privacy.py.
+    personal = json.loads(decrypt_value(pending["personal"]) or "{}") if pending.get("personal") else None
+    if personal:
+        apply_personal_info(user, personal)
+    elif pending.get("contact_number"):
+        user.contact_number = pending["contact_number"]
+    if pending.get("terms_accepted_at"):
+        user.terms_accepted_at = datetime.fromisoformat(pending["terms_accepted_at"])
     user.password = pending["password_hash"]
     db.session.add(user)
     db.session.commit()
@@ -162,14 +178,26 @@ def _register_form_context(form=None):
         for i, name in enumerate(form.getlist("offering_item")):
             if (name or "").strip():
                 offering_items.append({"item": name, "price": prices[i] if i < len(prices) else ""})
+    from app.services.account_params import GENDERS, MIN_AGE, PASSWORD_HINT, PASSWORD_RULES, SUFFIXES
+
+    today = date.today()
+    try:
+        latest_birthdate = today.replace(year=today.year - MIN_AGE)
+    except ValueError:  # 29 February
+        latest_birthdate = today.replace(year=today.year - MIN_AGE, day=28)
     return {
         "form": form if form is not None else {},
         "business_types": BUSINESS_TYPES,
         "locations": BARANGAY_NAMES,
         "business_stages": BUSINESS_STAGES,
-        "today": date.today().isoformat(),
+        "today": today.isoformat(),
         "subcategories": as_client_payload(),
         "offering_items": offering_items,
+        "suffixes": SUFFIXES,
+        "genders": GENDERS,
+        "latest_birthdate": latest_birthdate.isoformat(),
+        "password_rules": [label for _key, label, _test in PASSWORD_RULES],
+        "password_hint": PASSWORD_HINT,
     }
 
 
@@ -190,24 +218,34 @@ def register():
         return redirect(url_for("auth.index"))
 
     if request.method == "POST":
-        full_name = request.form.get("full_name", "").strip()
+        from app.services.account_params import parse_personal_info, password_problems
+        from app.utils.privacy import encrypt_value
+
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password", "")
-        contact_number = request.form.get("contact_number", "").strip()
         role = ROLE_MAP.get(request.form.get("role", "sme").strip().lower())
 
         errors = []
-        if not full_name or not email or not password:
-            errors.append("Full name, email and password are required.")
+        # Personal information, in full, for every self-registering
+        # account (SME and LGU) -- see app/services/account_params.py.
+        personal, personal_errors = parse_personal_info(request.form)
+        errors.extend(personal_errors)
+        if not email or not password:
+            errors.append("Email and password are required.")
+        elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            errors.append("Enter a valid email address.")
+        errors.extend(password_problems(password))
         if password != confirm_password:
             errors.append("Passwords do not match.")
-        if len(password) < 6:
-            errors.append("Password must be at least 6 characters.")
+        if not request.form.get("accept_terms"):
+            errors.append("Please read and accept the Terms and Conditions and the Data Privacy Notice.")
         if role is None:
             errors.append("Invalid account type.")
         if User.query.filter_by(email=email).first():
             errors.append("An account with that email already exists.")
+        full_name = compose_full_name(personal["first_name"], personal["middle_name"],
+                                      personal["last_name"], personal["suffix"])
 
         # The first business plan, for SME sign-ups only. Validated in the
         # same pass as the account fields so the visitor sees everything
@@ -227,7 +265,8 @@ def register():
             "email": email,
             "password_hash": generate_password_hash(password),
             "role": role,
-            "contact_number": contact_number or None,
+            "personal": encrypt_value(json.dumps(personal)),
+            "terms_accepted_at": datetime.utcnow().isoformat(),
             "business": business,
         }
 
@@ -290,6 +329,14 @@ def register():
         return redirect(url_for("auth.login"))
 
     return render_template("auth/register.html", **_register_form_context())
+
+
+@auth_bp.route("/terms")
+def terms():
+    """The Terms and Conditions and Data Privacy Notice -- public, so it
+    can be read before signing up (the sign-up form links here and opens
+    the same text in a dialog)."""
+    return render_template("auth/terms.html")
 
 
 @auth_bp.route("/register/verify", methods=["GET", "POST"])
@@ -567,8 +614,12 @@ def reset_password():
             flash("That code expired. Please request a new one.", "danger")
             return redirect(url_for("auth.forgot_password"))
 
-        if len(password) < 6:
-            flash("Your new password must be at least 6 characters.", "danger")
+        from app.services.account_params import password_problems
+
+        problems = password_problems(password)
+        if problems:
+            for problem in problems:
+                flash(problem, "danger")
             return render_template("auth/reset_password.html", email=pending["email"])
         if password != confirm:
             flash("The two passwords do not match.", "danger")

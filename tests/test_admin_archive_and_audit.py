@@ -301,7 +301,12 @@ def test_the_users_page_splits_current_and_archived(app, admin_client, sme, admi
     assert sme.email not in current
     assert sme.email in archived
     assert "Closed the business" in archived
-    assert admin.email in archived, "the Archived tab must say who archived the account"
+    # Who archived it: the administrator's name, with the email masked
+    # on screen (IT expert review: confidential values are not displayed).
+    from app.utils.privacy import mask_email
+
+    assert admin.name in archived and mask_email(admin.email) in archived, (
+        "the Archived tab must say who archived the account")
     assert f"/admin/users/{sme.user_id}/restore" in archived
 
 
@@ -439,7 +444,9 @@ def test_the_datasets_page_lists_archived_records_with_restore(app, admin_client
     live_part = body[:body.index('id="archived-records"')]
 
     assert "Duplicate snapshot" in archived
-    assert admin.email in archived
+    from app.utils.privacy import mask_email
+
+    assert mask_email(admin.email) in archived
     assert f"/admin/datasets/market/{gone.market_id}/restore" in archived
     assert f"/admin/datasets/market/{gone.market_id}/archive" not in live_part
     assert f"/admin/datasets/market/{live.market_id}/archive" in live_part

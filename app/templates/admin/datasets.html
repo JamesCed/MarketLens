@@ -21,28 +21,24 @@
   <div class="dss-meta mt-1">The seed data download is the 76-barangay reference set the AI model was trained on, not the rows below.</div>
 </div>
 
+{#
+  Kept short on purpose. This used to explain the data pipeline in full --
+  file paths, function names, the name of the API key variable -- which
+  told anyone who saw the screen how the system works inside. An
+  administrator needs to know what the rows ARE and how trustworthy they
+  are; how they are fetched belongs in the project documentation.
+#}
 <div class="dss-card mb-4">
-  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
-    <h6 class="mb-0">Market Data -- Real Competitor Density (Google Places API, live)</h6>
-  </div>
+  <h6 class="mb-1">About the market data</h6>
   <p class="text-muted small mb-0">
-    There's no separate seeding step here on purpose -- <code>competitor_count</code> on every row below
-    comes straight from a real Google Places API (New) Text Search targeted at that exact industry in that
-    exact barangay (see app/services/places_service.py), restricted to Tarlac City only, fetched
-    automatically the moment the AI engine needs it: an SME viewing the Saturation Map, generating a
-    forecast, or an LGU/Admin opening Trend Reports all trigger a real, live lookup for whatever
-    industry+barangay combos they touch (cached for 30 days after that, see
-    <code>find_or_create_market_data()</code>).
-    {% if not places_api_key_configured %}
-      <span class="text-warning"><i class="bi bi-exclamation-triangle"></i> GOOGLE_PLACES_API_KEY isn't set
-      in this deployment's .env yet -- every lookup falls back to a clearly-flagged simulated estimate
-      instead of a real competitor count until a key is added.</span>
+    Each row is the number of competing businesses recorded for one industry in one barangay.
+    {% if places_api_key_configured %}
+      <strong>{{ market_real_count }}</strong> of <strong>{{ market_total }}</strong> rows are live business counts;
+      the rest are estimates or records uploaded by the LGU.
     {% else %}
-      {{ market_real_count }} of {{ market_total }} market_data rows on file are real Google Places API
-      results (the rest are simulated fallback rows from before the key was set, or manual/PSA/DTI rows
-      from a Gov't Data Upload). Only <code>competitor_count</code> comes from Places -- population density
-      and the other socio-demographic figures below are the separate reference dataset described in
-      app/ml/seed_data.py, never fetched from Google.
+      <span class="text-warning-emphasis"><i class="bi bi-exclamation-triangle"></i>
+      Live business counts are not switched on for this server, so new rows are estimates (they are labelled as such
+      wherever they appear).</span>
     {% endif %}
   </p>
 </div>
@@ -60,7 +56,12 @@
           <td>{{ d.permit_count if d.permit_count is not none else '—' }}</td>
           <td>{{ d.closure_records if d.closure_records is not none else '—' }}</td>
           <td>{{ d.business_density if d.business_density is not none else '—' }}</td>
-          <td class="text-break">{{ d.uploader.email if d.uploader else '—' }}</td>
+          {# Who uploaded it, without publishing their address: the name, and the email masked. #}
+          <td class="text-break">
+            {% if d.uploader and d.uploader.email == system_email %}<span class="dss-meta">System (automatic)</span>
+            {% elif d.uploader %}{{ d.uploader.name }}<div class="dss-meta">{{ d.uploader.email|mask_email }}</div>
+            {% else %}&mdash;{% endif %}
+          </td>
           <td class="dss-meta">{{ d.upload_date.strftime('%b %d, %Y') if d.upload_date else '—' }}</td>
           <td class="text-end">
             <button type="button" class="btn btn-sm btn-outline-secondary"
@@ -133,7 +134,7 @@
             <div class="dss-meta">{{ archived_local.strftime('%I:%M %p') }} {{ tz_label }}</div>
           </td>
           <td>
-            {% if r.archived_by %}{{ r.archived_by.name }}<div class="dss-meta text-break">{{ r.archived_by.email }}</div>
+            {% if r.archived_by %}{{ r.archived_by.name }}<div class="dss-meta text-break">{{ r.archived_by.email|mask_email }}</div>
             {% else %}<span class="dss-meta">&mdash;</span>{% endif %}
           </td>
           <td class="text-break">{{ r.reason or '—' }}</td>

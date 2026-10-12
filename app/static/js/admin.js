@@ -55,3 +55,19 @@ document.addEventListener("DOMContentLoaded", function () {
     submit.disabled = false;
   });
 });
+
+// Masked values (emails in Manage Users): shown as ju•••@gmail.com and
+// revealed only when the administrator clicks the eye -- the screen does
+// not display confidential details by default (IT expert review).
+document.addEventListener("click", (event) => {
+  const button = event.target.closest(".dss-unmask");
+  if (!button) return;
+  const value = button.previousElementSibling;
+  if (!value || !value.classList.contains("dss-masked")) return;
+  const showing = value.dataset.shown === "1";
+  value.textContent = showing ? value.dataset.masked : value.dataset.full;
+  value.dataset.shown = showing ? "0" : "1";
+  button.setAttribute("aria-label", showing ? "Show email" : "Hide email");
+  const icon = button.querySelector("i");
+  if (icon) icon.className = showing ? "bi bi-eye" : "bi bi-eye-slash";
+});

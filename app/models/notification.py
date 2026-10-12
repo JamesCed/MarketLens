@@ -28,3 +28,15 @@ class Notification(db.Model):
 
     def __repr__(self):
         return f"<Notification {self.type} user={self.user_id}>"
+
+    @staticmethod
+    def unread_count_for(user_id):
+        """How many unread notifications `user_id` has -- counted once
+        per request. The topbar bell (context processor, every page) and
+        Home's alerts card both need it."""
+        from app.utils.request_memo import request_memo
+
+        return request_memo(
+            ("unread_notifications", user_id),
+            lambda: Notification.query.filter_by(user_id=user_id, is_read=False).count(),
+        )

@@ -15,11 +15,11 @@
     <a href="{{ url_for('sme.planning') }}?new_plan=1" class="btn btn-primary">Create your first plan in Planning</a>
   </div>
 {% else %}
-  <!-- Summary cards. High/Moderate are the two tiers the AI actually
+  {# Summary cards. High/Moderate are the two tiers the AI actually
        recommends; the third card is their total, i.e. how many
        locations it would put forward -- NOT every barangay it scored,
        and not the SME's own saved plans. See RECOMMENDABLE_TIERS in
-       app/services/location_opportunity_service.py. -->
+       app/services/location_opportunity_service.py. #}
   <div class="row g-3 mb-4" data-tour="rec-summary">
     <div class="col-md-4">
       <div class="dss-rec-stat-card dss-rec-stat-high">
@@ -107,10 +107,10 @@
         <div class="text-end">
           {% if rec.forecast %}
             <div class="text-muted small">Plan Viability</div>
-            <div class="fs-2 text-success">{{ f.viability_score }}<span class="fs-6 text-muted">/10</span></div>
+            <div class="fs-2 dss-score-text-{{ score_tone(f.viability_score) }}">{{ f.viability_score }}<span class="fs-6 text-muted">/10</span></div>
           {% else %}
             <div class="text-muted small">Market Score</div>
-            <div class="fs-2 text-success">{{ f.viability_score }}<span class="fs-6 text-muted">/10</span></div>
+            <div class="fs-2 dss-score-text-{{ score_tone(f.viability_score) }}">{{ f.viability_score }}<span class="fs-6 text-muted">/10</span></div>
             <a class="small" href="{{ url_for('sme.planning', plan=profile.sme_id) }}"
                title="Scored before the plan viability model: the market alone, not your capital, staff or prices">
               Open in Planning to update
@@ -127,26 +127,33 @@
         {% if rec.summary %}<p class="text-muted small mb-3">{{ rec.summary }}</p>{% endif %}
         {{ ai_writing_status(rec, f) }}
       </div>
-      {# The forecast transcript: the trained models' computation put
-         into words -- by Gemini when the AI is on and its wording passed
-         the number check, else the rule-based model summary, which the
-         page then upgrades to Gemini's transcript when it can (forecast=f
-         gives the macro the row to ask about). The badge says which. #}
-      {{ explanation_paragraph(rec, forecast=f) }}
-      {# The full competitor insight -- the Planning page shows its short
-         form and links here. #}
-      <div data-ai-region="{{ f.forecast_id }}" data-ai-part="insight">
-        {{ competitor_insight_panel(rec, full=True) }}
+      {#
+        IN BRIEF (IT expert review: "the information is too scattered --
+        have the AI explain it briefly so it is easier to understand").
+        Three lines -- the main strength, the biggest risk and the next
+        step -- drawn from the same forecast (Gemini's wording when it
+        wrote the recommendation). The full analysis is folded away below.
+      #}
+      {% set tone = score_tone(f.viability_score) %}
+      {% set next_step = (rec.innovation.suggestions[0] if rec.innovation and rec.innovation.suggestions else
+          ('Plan a clear point of difference before opening -- what will make customers choose you over the ones already there?'
+           if tone != 'good' else 'Prepare your permits and opening budget; the market has room for this plan.')) %}
+      <div class="dss-brief dss-brief-{{ tone }} mb-3" data-ai-region="{{ f.forecast_id }}" data-ai-part="brief">
+        <div class="dss-brief-title"><i class="bi bi-stars" aria-hidden="true"></i> In brief</div>
+        <ul class="mb-0">
+          {% if rec.reasons %}{% set r0 = rec.reasons[0].rstrip('. ') %}<li><strong>Strength:</strong> {{ r0[:1]|upper ~ r0[1:] }}.</li>{% endif %}
+          {% if rec.risks %}{% set k0 = rec.risks[0].rstrip('. ') %}<li><strong>Biggest risk:</strong> {{ k0[:1]|upper ~ k0[1:] }}.</li>{% endif %}
+          <li><strong>Next step:</strong> {{ next_step }}</li>
+        </ul>
       </div>
-      {{ subcategory_compare(rec) }}
 
-      <!-- Key Metrics -- real, derived figures (no fabricated ranges):
+      {# Key Metrics -- real, derived figures (no fabricated ranges):
            your own capital, the plan's break-even window, this
            barangay's real PSA population, and a competition level
            derived from the actual (Places API or seeded) competitor
            count. Break-even comes from the plan model's stored payload
            (it carries the capital, staff and prices); a forecast written
-           before that model falls back to the market-only estimate. -->
+           before that model falls back to the market-only estimate. #}
       {% set plan_fin = rec.forecast.financials if rec.forecast and rec.forecast.financials else {} %}
       {% set break_even = plan_fin.break_even.label if plan_fin.break_even and plan_fin.break_even.label else item.roi.label %}
       <div class="row row-cols-2 row-cols-md-4 g-3 mb-4 p-3 bg-light rounded">
@@ -168,7 +175,27 @@
         </div>
       </div>
 
-      <!-- Why This Works / Considerations -->
+      {# Everything else, folded: the forecast transcript, competitors,
+         reasons and ideas. Closed by default so the page is not one long
+         scroll (IT expert review); one click opens it. #}
+      <details class="dss-full-analysis mt-3">
+        <summary><i class="bi bi-chevron-right dss-chevron" aria-hidden="true"></i>
+          See the full analysis <span class="text-muted fw-normal">&mdash; forecast transcript, competitors, reasons and ideas</span></summary>
+        <div class="pt-3">
+      {# The forecast transcript: the trained models' computation put
+         into words -- by Gemini when the AI is on and its wording passed
+         the number check, else the rule-based model summary, which the
+         page then upgrades to Gemini's transcript when it can (forecast=f
+         gives the macro the row to ask about). The badge says which. #}
+      {{ explanation_paragraph(rec, forecast=f) }}
+      {# The full competitor insight -- the Planning page shows its short
+         form and links here. #}
+      <div data-ai-region="{{ f.forecast_id }}" data-ai-part="insight">
+        {{ competitor_insight_panel(rec, full=True) }}
+      </div>
+      {{ subcategory_compare(rec) }}
+
+      {# Why This Works / Considerations #}
       <div class="row g-4" data-ai-region="{{ f.forecast_id }}" data-ai-part="reasons">
         <div class="col-md-6 dss-rec-why">
           <h6 class="fw-bold d-flex align-items-center gap-2"><i class="bi bi-graph-up"></i> Why This Works</h6>
@@ -208,6 +235,9 @@
         </details>
       {% endif %}
 
+        </div>
+      </details>
+
       <div class="d-flex gap-2 border-top pt-3 mt-4">
         <a class="btn btn-outline-primary flex-fill" href="{{ url_for('sme.saturation_map') }}?industry_type={{ profile.industry_type|urlencode }}">
           <i class="bi bi-map"></i> View on Map
@@ -232,7 +262,7 @@
   </div>
   {% endfor %}
 
-  <!-- ==============================================================
+  {# ==============================================================
        WHERE ELSE COULD I OPEN THIS? -- the storyboard's "15+ additional
        opportunities". One card per barangay, ranked by the model's own
        viability score for THIS plan's industry. Every figure and every
@@ -241,7 +271,7 @@
        population/density and the model's saturation output, compared
        against the city median for the same industry -- see
        app/services/location_opportunity_service.py.
-       =============================================================== -->
+       =============================================================== #}
   {% if opportunities %}
   <div class="dss-card mb-4" data-tour="rec-other-locations">
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
@@ -285,42 +315,56 @@
 
   {% for opp in opportunities %}
   <div class="dss-card mb-3 p-0 overflow-hidden">
-    <div class="p-4">
-      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
-        <div>
-          <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
-            <span class="badge bg-secondary-subtle text-secondary-emphasis">#{{ opp.rank }}</span>
-            <h6 class="mb-0">{{ opp.title }}</h6>
-            {% if opp.is_current_plan_location %}
-              <span class="badge bg-info-subtle text-info-emphasis">your plan's barangay</span>
-            {% endif %}
-            {% if opp.generated_by and opp.generated_by.startswith('llm:') %}
-              <span class="badge dss-rec-badge-ai" title="Write-up generated by {{ opp.generated_by }} from this barangay's real figures"><i class="bi bi-stars"></i> AI-written</span>
-            {% endif %}
-            {% if opp.competitor_is_live %}
-              <span class="badge bg-success-subtle text-success-emphasis" title="Competitor count came from a live Google Places API lookup">
-                <i class="bi bi-broadcast"></i> live data
-              </span>
-            {% else %}
-              <span class="badge bg-warning-subtle text-warning-emphasis" title="No live Google Places count on file for this barangay yet">
-                simulated estimate
-              </span>
-            {% endif %}
+    {#
+      Folded to one summary line per barangay (IT expert review: the cards
+      made the page a very long scroll). The first -- the top-ranked -- is
+      open; the rest open with a click. A native <details>, so it works
+      without JavaScript.
+    #}
+    <details class="dss-opp-card" {{ 'open' if loop.first }}>
+      <summary class="p-4">
+        <div class="d-flex align-items-start gap-2">
+          <i class="bi bi-chevron-right dss-chevron mt-1" aria-hidden="true"></i>
+          <div class="flex-grow-1">
+          <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+            <div>
+              <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                <span class="badge bg-secondary-subtle text-secondary-emphasis">#{{ opp.rank }}</span>
+                <h6 class="mb-0">{{ opp.title }}</h6>
+                {% if opp.is_current_plan_location %}
+                  <span class="badge bg-info-subtle text-info-emphasis">your plan's barangay</span>
+                {% endif %}
+                {% if opp.generated_by and opp.generated_by.startswith('llm:') %}
+                  <span class="badge dss-rec-badge-ai" title="Write-up generated by {{ opp.generated_by }} from this barangay's real figures"><i class="bi bi-stars"></i> AI-written</span>
+                {% endif %}
+                {% if opp.competitor_is_live %}
+                  <span class="badge bg-success-subtle text-success-emphasis" title="Competitor count came from a live Google Places API lookup">
+                    <i class="bi bi-broadcast"></i> live data
+                  </span>
+                {% else %}
+                  <span class="badge bg-warning-subtle text-warning-emphasis" title="No live count on file for this barangay yet">
+                    estimate
+                  </span>
+                {% endif %}
+              </div>
+              <div class="d-flex gap-3 small text-muted flex-wrap">
+                <span><i class="bi bi-geo-alt"></i> {{ opp.location }}</span>
+                <span><i class="bi bi-shop"></i> {{ opp.competitor_count }} competitor(s)</span>
+                <span><i class="bi bi-speedometer2"></i> {{ opp.saturation_index }}% saturation</span>
+                <span><i class="bi bi-graph-up-arrow"></i> ROI {{ opp.roi_timeframe }}</span>
+              </div>
+            </div>
+            <div class="text-end">
+              <div class="text-muted small">Viability Score</div>
+              <div class="fs-3 dss-score-text-{{ score_tone(opp.viability_score) }} mb-0">{{ opp.viability_score }}<span class="fs-6 text-muted">/10</span></div>
+            </div>
           </div>
-          <div class="d-flex gap-3 small text-muted flex-wrap">
-            <span><i class="bi bi-geo-alt"></i> {{ opp.location }}</span>
-            <span><i class="bi bi-shop"></i> {{ opp.competitor_count }} competitor(s)</span>
-            <span><i class="bi bi-speedometer2"></i> {{ opp.saturation_index }}% saturation</span>
           </div>
         </div>
-        <div class="text-end">
-          <div class="text-muted small">Viability Score</div>
-          <div class="fs-3 text-success mb-0">{{ opp.viability_score }}<span class="fs-6 text-muted">/10</span></div>
-        </div>
-      </div>
-
-      <!-- Key metrics: real figures only. "Your Capital" comes from the
-           SME's own plan rather than a made-up investment range. -->
+      </summary>
+      <div class="px-4 pb-4">
+      {# Key metrics: real figures only. "Your Capital" comes from the
+           SME's own plan rather than a made-up investment range. #}
       <div class="row row-cols-2 row-cols-md-4 g-3 mb-3 p-3 bg-light rounded">
         <div>
           <div class="text-muted small mb-1"><i class="bi bi-currency-exchange"></i> Your Capital</div>
@@ -362,9 +406,9 @@
         </div>
       </div>
 
-      <!-- Why it ranked here: the three real measures the ordering
+      {# Why it ranked here: the three real measures the ordering
            blends, as this barangay's percentile among all scored. See
-           RANK_WEIGHTS in location_opportunity_service.py. -->
+           RANK_WEIGHTS in location_opportunity_service.py. #}
       <div class="small text-muted mt-3 pt-3 border-top">
         <i class="bi bi-bar-chart-steps"></i> Ranked on
         viability <strong>{{ opp.percentiles.viability }}th pct</strong> (50%) ·
@@ -377,9 +421,9 @@
            href="{{ url_for('sme.saturation_map') }}?location={{ opp.location|urlencode }}&industry_type={{ opp.industry_type|urlencode }}">
           <i class="bi bi-map"></i> View {{ opp.location }} on Map
         </a>
-        <!-- Saving an AI recommendation CREATES the plan it describes:
+        {# Saving an AI recommendation CREATES the plan it describes:
              a real SmeProfile for this industry+barangay, forecast with
-             the same parameters the card was scored against. -->
+             the same parameters the card was scored against. #}
         {% if (opp.industry_type, opp.location) in saved_locations %}
           <button class="btn btn-success btn-sm flex-fill" disabled>
             <i class="bi bi-check2"></i> Saved to My Plans
@@ -396,7 +440,8 @@
           </form>
         {% endif %}
       </div>
-    </div>
+      </div>
+    </details>
 
     <div class="dss-rec-footer {{ footer_class.get(opp.opportunity_type, 'dss-rec-footer-moderate') }}">
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 small">
@@ -412,10 +457,10 @@
   </div>
   {% endfor %}
 
-  <!-- "Explore more recommendations". Nothing is hidden behind it that
+  {# "Explore more recommendations". Nothing is hidden behind it that
        the AI didn't already recommend: the page shows at least 5, and
        this lifts the cap to every recommended location. It only appears
-       when there actually are more. -->
+       when there actually are more. #}
   {% if has_more or show_all %}
   <div class="dss-card text-center">
     {% if show_all %}

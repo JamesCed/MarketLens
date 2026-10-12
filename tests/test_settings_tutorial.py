@@ -31,6 +31,8 @@ import re
 
 import pytest
 
+from tests.account_fixtures import STRONG_PASSWORD, account_fields
+
 from app import create_app
 from app.controllers.onboarding_controller import describe_walkthrough
 from app.extensions import db
@@ -336,14 +338,14 @@ def test_a_brand_new_account_gets_the_first_time_prompt(app, signup):
     window.DSS_ONBOARDING with state null and the prompt -- whatever the
     Settings page now holds."""
     email = f"brand-new-{signup['role']}@tutorial.test"
-    data = {"full_name": "Brand New", "email": email,
-            "password": "password123", "confirm_password": "password123", **signup}
+    data = {**account_fields(email, first_name="Brand", last_name="New"), **signup}
     app.test_client().post("/register", data=data, follow_redirects=True)
 
     user = User.query.filter_by(email=email).one()
     assert user.onboarding_state is None
 
-    client = _login(app, email)
+    client = app.test_client()
+    client.post("/login", data={"email": email, "password": STRONG_PASSWORD})
     for path in ("/trend-reports", "/settings"):
         body = client.get(path).get_data(as_text=True)
         config = _config(body)

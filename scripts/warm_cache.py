@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
+os.environ.setdefault("WARM_ON_BOOT", "false")  # a one-off script, not a server
 
 
 def main():
