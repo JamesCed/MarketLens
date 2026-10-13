@@ -85,14 +85,14 @@ def diversity_score(counts, n_industries=None):
 
 
 _PLAN_CACHE = {}
-_PLAN_CACHE_TTL_SECONDS = 300
+_PLAN_CACHE_TTL_SECONDS = 1800
 
 
 def build_diversification_plan():
     """The whole plan as one JSON-safe dict -- see the module docstring.
 
-    Memoised on the market_data AND lgu_data fingerprints, for five
-    minutes at most, and dropped by clear_trend_caches(): the LGU dashboard and the
+    Memoised on the market_data AND lgu_data fingerprints, for half an
+    hour at most, and dropped by clear_trend_caches(): the LGU dashboard and the
     Diversification Plan page both build it, and nothing in it can
     change until a market_data row does. A deep copy is handed out so no
     caller can edit the shared result."""

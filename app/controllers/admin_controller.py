@@ -1029,6 +1029,8 @@ def settings():
         changed = diff_fields(before, after)
         changed.pop("places_calls_today", None)
         changed.pop("places_calls_day", None)
+        if changed:
+            _refresh_figures()
         log_action("admin_update_settings",
                    details=("changed " + ", ".join(changed)) if changed else "saved with no changes",
                    changes=changed)

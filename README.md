@@ -1824,3 +1824,23 @@ wake.
 developer's request; docstrings remain. The barangay population and land
 area notes that used to sit in comments in `app/ml/seed_data.py` are now
 data (`BARANGAY_SOURCE_NOTES`), with identical results.
+
+## 13. V3.2: unmatched barangay warning, faster page changes
+
+**"1 uploaded name(s) not matched to a barangay".** The LGU dashboard used
+to check every name in `lgu_data`, including the placeholder rows the app
+writes for itself whenever a plan names a location (older plans could be
+saved with any typed location). It now checks only names an LGU actually
+uploaded, and shows the name itself. Uploaded rows left over from before
+the importer refused unknown names are archived at start-up with the
+reason "Not one of Tarlac City's 76 barangays"; restore any of them from
+Admin > Datasets > Archived records.
+
+**Moving between pages.**
+
+| Cause | Fix |
+|---|---|
+| Signing in redirected to `/`, which redirected again to the user's page | One redirect, straight to the user's page |
+| Every page looked up the system account and re-read the settings table, and Home/Planning re-checked whether an LGU upload exists | Kept across requests (settings for a minute, cleared the moment a setting is saved; the upload check until `lgu_data` changes) |
+| Saturation scores, trend sweeps, the outlook and the diversification plan were recomputed every 2 to 5 minutes even when no data had changed | They are keyed on the data, so they now last 30 minutes; any upload, archive or settings save still refreshes them at once |
+| Nothing happened until the click | Sidebar pages start downloading while the pointer rests on the link (Chrome and Edge) |

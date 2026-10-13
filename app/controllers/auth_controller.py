@@ -179,21 +179,28 @@ def _register_form_context(form=None):
     }
 
 
+def _home_url():
+    """The signed-in user's own start page. Redirecting straight there,
+    rather than to "/" which then redirects again, saves the browser a
+    whole extra round trip after signing in."""
+    if not current_user.is_authenticated:
+        return url_for("auth.login")
+    if current_user.is_sme():
+        return url_for("sme.home")
+    if current_user.is_lgu():
+        return url_for("lgu.dashboard")
+    return url_for("admin.dashboard")
+
+
 @auth_bp.route("/")
 def index():
-    if current_user.is_authenticated:
-        return redirect(
-            url_for("sme.home") if current_user.is_sme()
-            else url_for("lgu.dashboard") if current_user.is_lgu()
-            else url_for("admin.dashboard")
-        )
-    return redirect(url_for("auth.login"))
+    return redirect(_home_url())
 
 
 @auth_bp.route("/register", methods=["GET", "POST"])
 def register():
     if current_user.is_authenticated:
-        return redirect(url_for("auth.index"))
+        return redirect(_home_url())
 
     if request.method == "POST":
         from app.services.account_params import parse_personal_info, password_problems
@@ -390,7 +397,7 @@ def resend_verification_code():
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for("auth.index"))
+        return redirect(_home_url())
 
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
@@ -422,7 +429,7 @@ def login():
         db.session.commit()
         log_action("login", details=f"role={user.role}")
         flash(f"Welcome back, {user.name.split(' ')[0]}!", "success")
-        return redirect(url_for("auth.index"))
+        return redirect(_home_url())
 
     return render_template("auth/login.html", email="")
 
@@ -442,7 +449,7 @@ PASSWORD_RESET_SESSION_KEY = "pending_password_reset"
 @auth_bp.route("/forgot-password", methods=["GET", "POST"])
 def forgot_password():
     if current_user.is_authenticated:
-        return redirect(url_for("auth.index"))
+        return redirect(_home_url())
 
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
@@ -488,7 +495,7 @@ def forgot_password():
 @auth_bp.route("/reset-password", methods=["GET", "POST"])
 def reset_password():
     if current_user.is_authenticated:
-        return redirect(url_for("auth.index"))
+        return redirect(_home_url())
 
     pending = session.get(PASSWORD_RESET_SESSION_KEY)
 

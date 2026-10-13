@@ -132,6 +132,13 @@
      once it has been built (see whenReady() in tour.js). #}
 <script src="{{ url_for('static', filename='js/tour_steps.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tour.js') }}"></script>
+{# Start fetching a sidebar page while the pointer rests on its link
+     (Chrome and Edge; other browsers ignore this), so the click usually
+     finds the page already downloaded. Only the sidebar's own page links,
+     never the one already open: nothing that signs out or changes data. #}
+<script type="speculationrules">
+{% raw %}{"prefetch": [{"where": {"and": [{"selector_matches": ".dss-nav-link"}, {"not": {"selector_matches": ".active"}}]}, "eagerness": "moderate"}]}{% endraw %}
+</script>
 {% endif %}
 </body>
 </html>

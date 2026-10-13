@@ -65,12 +65,17 @@ class SystemSetting(db.Model):
         asked for 16 one at a time); a single SELECT of a table this small
         is cheaper than even two primary-key lookups over the network.
         Any write clears the per-request memo, so set() followed by get()
-        in the same request still reads the new value."""
-        from app.utils.request_memo import request_memo
+        in the same request still reads the new value. The table is also
+        kept across requests for up to a minute; writing a setting through
+        the ORM clears that copy too (request_memo.install_flush_invalidation)."""
+        from app.utils.request_memo import process_memo, request_memo
+
+        def load():
+            return {row.setting_key: row.setting_value for row in SystemSetting.query.all()}
 
         return request_memo(
             "system_settings",
-            lambda: {row.setting_key: row.setting_value for row in SystemSetting.query.all()},
+            lambda: dict(process_memo("system_settings", load, ttl=60)),
         )
 
     @staticmethod

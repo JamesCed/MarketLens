@@ -87,12 +87,20 @@ def dashboard():
 
     from app.ml.seed_data import canonical_barangay
 
+    from app.services.data_import_service import _system_user_id_or_none
+    from app.services.forecasting_service import PLACEHOLDER_ZONING_NOTE
+
+    system_user_id = _system_user_id_or_none()
     on_file, unrecognised = set(), set()
-    for (raw_name,) in db.session.query(LguData.barangay).distinct().all():
+    names = db.session.query(LguData.barangay, LguData.uploaded_by, LguData.zoning_info).distinct()
+    for raw_name, uploaded_by, zoning_info in names.all():
         official = canonical_barangay(raw_name)
-        (on_file if official else unrecognised).add(official or (raw_name or "").strip())
+        if official:
+            on_file.add(official)
+        elif (raw_name or "").strip() and uploaded_by != system_user_id and zoning_info != PLACEHOLDER_ZONING_NOTE:
+            unrecognised.add(raw_name.strip())
     barangays_on_file = sorted(on_file)
-    unrecognised_barangays = sorted(n for n in unrecognised if n)
+    unrecognised_barangays = sorted(unrecognised)
 
     latest_market = latest_market_data_by_key()
     barangay_rows = get_barangay_business_table(latest_market)

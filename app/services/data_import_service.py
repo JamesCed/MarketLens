@@ -780,12 +780,17 @@ def has_active_lgu_data():
     permit register. "Which barangays should the city steer investment
     to" is not, and that is the one this switches off.
     """
-    from app.utils.request_memo import request_memo
+    from app.services.forecasting_service import lgu_data_fingerprint
+    from app.utils.request_memo import process_memo, request_memo
 
-    return request_memo(
-        "has_active_lgu_data",
-        lambda: db.session.query(_real_upload_query(LguData.lgu_id).exists()).scalar() is True,
-    )
+    def compute():
+        return process_memo(
+            ("has_active_lgu_data", lgu_data_fingerprint()),
+            lambda: db.session.query(_real_upload_query(LguData.lgu_id).exists()).scalar() is True,
+            ttl=1800,
+        )
+
+    return request_memo("has_active_lgu_data", compute)
 
 
 def _real_upload_query(*entities):
@@ -839,13 +844,16 @@ def _system_user_id_or_none():
     does NOT create it -- a read-only question must not write a row."""
     from app.models.user import User
     from app.services.forecasting_service import SYSTEM_USER_EMAIL
-    from app.utils.request_memo import request_memo
+    from app.utils.request_memo import process_memo, request_memo
 
     def lookup():
         row = db.session.query(User.user_id).filter_by(email=SYSTEM_USER_EMAIL).first()
         return row[0] if row else None
 
-    return request_memo("system_user_id", lookup)
+    return request_memo(
+        "system_user_id",
+        lambda: process_memo("system_user_id", lookup, keep=lambda value: value is not None),
+    )
 
 
 def _clear_analytics_caches():

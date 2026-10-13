@@ -324,6 +324,32 @@ def _backfill_permit_row_features():
     return filled
 
 
+UNMATCHED_BARANGAY_REASON = "Not one of Tarlac City's 76 barangays (archived automatically at start-up)"
+
+
+def _archive_unmatched_uploaded_barangays():
+    """Archive LGU-uploaded rows whose barangay is not one of the 76 and
+    is not a known way of writing one. The importer has refused such names
+    for a while, so these are left over from older uploads: no score ever
+    reads them, and they only showed up as "uploaded name(s) not matched
+    to a barangay" on the LGU dashboard. Archived, not deleted, so an
+    administrator can restore any of them from Admin > Datasets. Rows the
+    app created for itself (placeholders) are left alone. Runs on every
+    start; with nothing to archive it is one cheap query. Returns how many
+    rows were archived."""
+    from app.ml.seed_data import canonical_barangay
+    from app.services.data_import_service import _real_upload_query, _system_user_id_or_none
+
+    rows = [row for row in _real_upload_query().all() if not canonical_barangay(row.barangay)]
+    if not rows:
+        return 0
+    archived_by = _system_user_id_or_none()
+    for row in rows:
+        row.archive(archived_by, UNMATCHED_BARANGAY_REASON)
+    db.session.commit()
+    return len(rows)
+
+
 def run_startup_migrations(app):
     """Called from create_app(). Never raises: a fresh checkout whose
     tables don't exist yet, or a database that happens to be down at
@@ -376,6 +402,13 @@ def run_startup_migrations(app):
 
                 clear_trend_caches(drop_disk=True)
                 clear_response_cache()
+        except Exception:
+            db.session.rollback()
+
+        try:
+            archived = _archive_unmatched_uploaded_barangays()
+            if archived:
+                app.logger.info("Archived %s uploaded lgu_data row(s) whose barangay is not one of the 76", archived)
         except Exception:
             db.session.rollback()
 

@@ -127,7 +127,7 @@
       <div class="text-muted" style="font-size:.7rem;">{{ totals.barangays_with_businesses }} with businesses recorded</div>
       {% if unrecognised_barangays %}
         <div class="text-warning-emphasis mt-1" style="font-size:.7rem;" title="{{ unrecognised_barangays|join(', ') }}">
-          <i class="bi bi-exclamation-triangle"></i> {{ unrecognised_barangays|length }} uploaded name(s) not matched to a barangay
+          <i class="bi bi-exclamation-triangle"></i> {{ unrecognised_barangays|length }} uploaded name(s) not matched to a barangay: {{ unrecognised_barangays|join(', ') }}
         </div>
       {% endif %}
     </div>

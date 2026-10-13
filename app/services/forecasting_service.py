@@ -645,7 +645,7 @@ def compute_scores(industry_type, location, years_in_operation=0):
 
 
 _BATCH_CACHE = {}
-_BATCH_CACHE_TTL_SECONDS = 120
+_BATCH_CACHE_TTL_SECONDS = 1800
 _BATCH_CACHE_MAX_ENTRIES = 64
 _BATCH_CACHE_LOCK = threading.Lock()
 
@@ -655,20 +655,28 @@ def _scoring_inputs_fingerprint():
     plus lgu_data's -- everything compute_scores_batch() reads from the
     database. Both are memoised per request."""
     from app.services.trend_analytics_service import _data_fingerprint
+
+    return _data_fingerprint(), lgu_data_fingerprint()
+
+
+def lgu_data_fingerprint():
+    """lgu_data's state in one cheap query -- row count, newest id and
+    newest upload date -- memoised per request. Any insert or archive
+    moves it."""
     from app.utils.request_memo import request_memo
 
-    def lgu_fingerprint():
+    def query():
         count, max_id, newest = db.session.query(
             func.count(LguData.lgu_id), func.max(LguData.lgu_id), func.max(LguData.upload_date),
         ).one()
         return int(count or 0), int(max_id or 0), str(newest) if newest else None
 
-    return _data_fingerprint(), request_memo("lgu_fingerprint", lgu_fingerprint)
+    return request_memo("lgu_fingerprint", query)
 
 
 def compute_scores_batch(pairs, years_in_operation=0):
     """compute_scores() for many (industry_type, location) pairs, with
-    the result remembered for two minutes.
+    the result remembered for up to half an hour.
 
     The same batches recur on every visit -- the Planning slider scores
     all twenty sections in the plan's barangay, the LGU dashboard 120

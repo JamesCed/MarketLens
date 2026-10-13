@@ -57,6 +57,55 @@ def clear_request_memo():
         request.environ.pop(_ENV_KEY, None)
 
 
+_PROCESS_KEY = "dss.process_memo"
+
+
+def _process_store():
+    from flask import current_app, has_app_context
+
+    if not has_app_context():
+        return None
+    return current_app.extensions.setdefault(_PROCESS_KEY, {})
+
+
+def process_memo(key, compute, ttl=None, keep=lambda value: True):
+    """compute() once for `key` and keep the answer across requests, for
+    `ttl` seconds (None: until cleared). For lookups every page repeats
+    whose answer almost never changes -- the system account's id, the
+    settings table -- so a page does not pay a database round trip for
+    them each time. Held per application, so two apps (the tests) never
+    share it. Skipped while the session holds unflushed writes, like the
+    request memo; `keep` decides whether an answer is worth keeping."""
+    import time
+
+    store = _process_store()
+    if store is None or _session_has_pending_writes():
+        return compute()
+    hit = store.get(key)
+    now = time.monotonic()
+    if hit is not None and (ttl is None or now - hit[0] <= ttl):
+        return hit[1]
+    value = compute()
+    if keep(value):
+        store[key] = (now, value)
+    return value
+
+
+def clear_process_memo(prefix=None):
+    """Forget every process memo entry, or only those whose key starts
+    with `prefix` (keys are tuples or strings)."""
+    store = _process_store()
+    if not store:
+        return
+    if prefix is None:
+        store.clear()
+        return
+    for key in list(store):
+        head = key[0] if isinstance(key, tuple) else key
+        if head == prefix:
+            store.pop(key, None)
+
+
 def install_flush_invalidation(session_class):
     """Forget everything memoised whenever the session writes or its
     transaction ends: a flush, a commit, a rollback (which can undo a
@@ -73,6 +122,16 @@ def install_flush_invalidation(session_class):
 
     for name in ("after_flush", "after_commit", "after_rollback", "after_soft_rollback"):
         event.listen(session_class, name, _forget)
+
+    @event.listens_for(session_class, "after_flush")
+    def _forget_settings(session, _context):
+        from app.models.system_setting import SystemSetting
+
+        if any(isinstance(obj, SystemSetting) for obj in (*session.new, *session.dirty, *session.deleted)):
+            try:
+                clear_process_memo("system_settings")
+            except Exception:
+                pass
 
     @event.listens_for(session_class, "do_orm_execute")
     def _forget_on_bulk_write(state):
