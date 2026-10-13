@@ -61,27 +61,12 @@ from app.ml.constants import (
     STAFF_FULL_CAPACITY,
 )
 
-# File name inside MODEL_DIR (next to stage 1's rf_model.pkl).
 PLAN_MODEL_FILENAME = "plan_model.pkl"
 
-# Version strings. The trained forest and the formula fallback are
-# labelled differently everywhere they appear, so a forecast made
-# without the trained model can never pass for one made with it.
 PLAN_MODEL_VERSION = "plan_rf_v1"
 PLAN_FORMULA_VERSION = "plan_formula_v1"
 PAYLOAD_VERSION = "plan_v1"
 
-
-# =====================================================================
-# 1. RAMP-UP -- one formula, two users
-# =====================================================================
-# The ROI window on the Recommendations page and the ramp-up period in
-# the plan forecast are the same question ("how long until this business
-# pays for itself?"), so they are answered by the same arithmetic. It
-# used to live only inside location_opportunity_service; it lives here
-# now so the training script can use it without importing a Flask
-# service, and estimate_roi_timeframe() calls it -- with results
-# unchanged to the last bit (tests/test_trends_and_roi.py).
 
 def clamp(value, low, high):
     return max(low, min(high, value))
@@ -124,10 +109,6 @@ def ramp_up_months(viability_score, saturation_index):
     the yardstick capital runway is measured against."""
     return max(float(MINIMUM_RAMP_MONTHS), ramp_midpoint_months(viability_score, saturation_index))
 
-
-# =====================================================================
-# 2. INPUTS -> DERIVED QUANTITIES
-# =====================================================================
 
 @lru_cache(maxsize=1)
 def fallback_population():
@@ -201,7 +182,6 @@ def price_list_summary(items):
             price = float(item.get("price")) if item.get("price") is not None else None
         except (TypeError, ValueError, OverflowError):
             price = None
-        # NaN fails both comparisons, so it is skipped with the rest.
         if price is not None and low <= price <= high:
             prices.append(price)
     if not prices:
@@ -248,9 +228,6 @@ def derive_quantities(inputs):
     priced = max(0, int(finite_input(inputs.get("priced_item_count"))))
     average_price = max(0.0, finite_input(inputs.get("average_price")))
     if priced <= 0 or average_price < ITEM_PRICE_RANGE_PHP[0]:
-        # A count without a price, or a price without a count, is not a
-        # price list the arithmetic below can use. (Nor is an average
-        # below a centavo: see ITEM_PRICE_RANGE_PHP.)
         priced, average_price = 0, 0.0
 
     residents_per_business = population / (competitors + 1.0)
@@ -269,7 +246,7 @@ def derive_quantities(inputs):
 
     return {
         "saturation_index": saturation,
-        "market_saturation": saturation,   # the feature's name for the same number
+        "market_saturation": saturation,
         "competitor_count": competitors,
         "population": population,
         "residents_per_business": residents_per_business,
@@ -290,8 +267,6 @@ def derive_quantities(inputs):
         "average_price": average_price,
         "required_daily_sales": required_daily_sales,
         "daily_sales_ceiling": daily_sales_ceiling,
-        # Any price-list item (priced or not) counts as a described
-        # offering, as does the free-text description.
         "has_offering_description": 1.0 if (inputs.get("has_offering_description") or priced > 0) else 0.0,
         "has_innovation_idea": 1.0 if inputs.get("has_innovation_idea") else 0.0,
     }
@@ -304,12 +279,6 @@ def plan_feature_vector(inputs, derived=None):
     return [float(derived[name]) for name in PLAN_FEATURE_NAMES]
 
 
-# =====================================================================
-# 3. THE SCORECARD -- the formula the training labels come from
-# =====================================================================
-# Seven components, each 0-1, grouped by the four aspects a feasibility
-# study covers. (label, aspect, which inputs feed it, which explanation
-# driver it is reported under when the formula fallback is used.)
 COMPONENT_META = {
     "market_opportunity": ("Market opportunity", "Market",
                            "industry, sub-category, location", "market"),
@@ -402,31 +371,6 @@ def plan_components(inputs, derived=None):
     return rows
 
 
-# =====================================================================
-# 4. EXPLAINING ONE PREDICTION -- exact path decomposition
-# =====================================================================
-# A random forest's prediction for x is the average, over its trees, of
-# the value stored at the leaf x lands in. Walk any one tree from the
-# root to that leaf: the root's value is the training-set mean, and
-# every split along the way moves the running value from the parent
-# node's mean to the child's. Crediting each such move to the feature
-# the split tested gives, for that tree,
-#
-#     leaf value = root value + sum over splits (child - parent)
-#
-# exactly -- it is a telescoping sum. Averaging over the trees:
-#
-#     PVI = baseline + sum over features of contribution_f
-#
-# where baseline is the mean root value. This is the Saabas method (the
-# "treeinterpreter" decomposition). It is not an approximation, so the
-# self-check below holds to floating-point precision, and it describes
-# THIS model's actual decision paths -- not a separate story about them.
-#
-# The fourteen feature contributions are then summed into eight
-# plain-language drivers. FEATURE_GROUPS is the one place that mapping
-# is defined.
-
 FEATURE_GROUPS = {
     "market_saturation": "market",
     "residents_per_business": "depth",
@@ -456,8 +400,6 @@ DRIVER_LABELS = {
     "differentiation": "Differentiation (your idea)",
 }
 
-# Largest |baseline + sum - prediction| the decomposition may show
-# before it is treated as broken rather than as float rounding.
 DECOMPOSITION_TOLERANCE = 1e-6
 
 
@@ -535,8 +477,6 @@ def path_contributions(forest, feature_vector):
     for tree in forest.estimators_:
         structure = tree.tree_
         values = structure.value[:, 0, 0]
-        # Node ids on x's root-to-leaf path. sklearn numbers a child
-        # after its parent, so ascending id order IS path order.
         path = np.sort(structure.decision_path(x_tree).indices)
         baseline += float(values[path[0]])
         tree_predictions.append(float(values[path[-1]]))

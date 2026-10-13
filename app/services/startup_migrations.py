@@ -22,11 +22,6 @@ database that is already up to date.
 from app.extensions import db
 from app.models import MarketData, SystemSetting
 
-# Marks the point in market_data's history BEFORE which every Google
-# Places row was fetched under the old 20-result cap. Rows at or below
-# this market_id get one free re-fetch (see
-# forecasting_service.find_or_create_market_data), after which their
-# replacement row sits above the watermark and is cached normally.
 PLACES_RECAP_WATERMARK_KEY = "places_recap_watermark_market_id"
 
 
@@ -55,20 +50,6 @@ def get_places_recap_watermark():
         return 0
 
 
-# Additive columns that a database created by an older version will not
-# have. db.create_all() adds them to a NEW database but never alters an
-# existing table, so without this an upgraded install dies on the first
-# query with "Unknown column 'user.theme'" (or 'lgu_data.archived_at',
-# or 'sme_profile.subcategory', ...).
-#
-# {table: {column: (SQLite DDL, MySQL DDL)}} -- the two backends this
-# project targets. The syntax happens to match for most of these, but
-# keeping the pair explicit gives a column that DOES need to differ
-# somewhere to go.
-#
-# Every entry is NULLable or has a DEFAULT, deliberately: adding a NOT
-# NULL column with no default to a table that already has rows fails on
-# MySQL and is meaningless on SQLite.
 _ARCHIVE_COLUMNS = {
     "archived_at": ("DATETIME NULL", "DATETIME NULL"),
     "archived_by": ("INTEGER NULL", "INT NULL"),
@@ -82,15 +63,10 @@ _USER_COLUMNS = {
     "notify_weekly_trends": ("BOOLEAN NOT NULL DEFAULT 0", "TINYINT(1) NOT NULL DEFAULT 0"),
     "notify_saturation_change": ("BOOLEAN NOT NULL DEFAULT 1", "TINYINT(1) NOT NULL DEFAULT 1"),
     "notify_newsletter": ("BOOLEAN NOT NULL DEFAULT 0", "TINYINT(1) NOT NULL DEFAULT 0"),
-    # First-time walkthrough state -- see User.onboarding_state.
     "onboarding_state": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
-    # Admin monitoring -- see User.last_seen_at / suspended_until.
     "last_seen_at": ("DATETIME NULL", "DATETIME NULL"),
     "suspended_until": ("DATETIME NULL", "DATETIME NULL"),
-    # Archive instead of delete -- see app/models/archive.py.
     **_ARCHIVE_COLUMNS,
-    # Personal information (IT expert review) -- see User. The *_enc
-    # columns hold ciphertext (app/utils/privacy.py), hence TEXT.
     "first_name": ("VARCHAR(60) NULL", "VARCHAR(60) NULL"),
     "middle_name": ("VARCHAR(60) NULL", "VARCHAR(60) NULL"),
     "last_name": ("VARCHAR(60) NULL", "VARCHAR(60) NULL"),
@@ -107,19 +83,13 @@ _ADDITIVE_COLUMNS = {
     "user": _USER_COLUMNS,
     "lgu_data": dict(_ARCHIVE_COLUMNS),
     "market_data": dict(_ARCHIVE_COLUMNS),
-    # Broader business parameters -- see app/models/sme_profile.py.
     "sme_profile": {
         "subcategory": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
         "product_offering": ("TEXT NULL", "TEXT NULL"),
         "innovation_idea": ("TEXT NULL", "TEXT NULL"),
         "offering_details": ("TEXT NULL", "TEXT NULL"),
-        # The plan Trash: removing a plan from Home archives it instead
-        # of deleting it -- see app/models/sme_profile.py. Without these
-        # an upgraded install would fail every plan query the moment
-        # SmeProfile gained the archive filter.
         **_ARCHIVE_COLUMNS,
     },
-    # The five W's -- see app/models/audit_log.py.
     "audit_logs": {
         "actor_name": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
         "actor_role": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
@@ -130,15 +100,12 @@ _ADDITIVE_COLUMNS = {
         "route": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
         "user_agent": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
         "reason": ("VARCHAR(255) NULL", "VARCHAR(255) NULL"),
-        # The full before/after record behind an entry's "Details" button.
         "changes": ("TEXT NULL", "TEXT NULL"),
     },
 }
 
 
 def _quote(table, dialect):
-    # `user` is a reserved word on both backends, so every table name is
-    # quoted rather than special-casing that one.
     return f"`{table}`" if dialect == "mysql" else f'"{table}"'
 
 
@@ -156,13 +123,13 @@ def _add_missing_columns():
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
     if "user" not in tables:
-        return {}          # brand-new database -- create_all() handles it
+        return {}
 
     dialect = db.engine.dialect.name
     added = {}
     for table, columns in _ADDITIVE_COLUMNS.items():
         if table not in tables:
-            continue       # created whole by _create_missing_tables()
+            continue
         existing = {col["name"] for col in inspector.get_columns(table)}
         for column, (sqlite_ddl, mysql_ddl) in columns.items():
             if column in existing:
@@ -215,9 +182,6 @@ def _encrypt_legacy_contact_numbers():
         .all()
     )
     for user in rows:
-        # A value in the OLD column is always the newer one: once this
-        # version runs, only an older copy of the app (still serving
-        # while a new deploy builds) writes there.
         user.contact_number = user.legacy_contact_number
         user.legacy_contact_number = None
     if rows:
@@ -279,8 +243,6 @@ def _retire_system_theme():
     return result.rowcount or 0
 
 
-# Where a barangay name is stored, per table. Used by
-# _merge_barangay_aliases() below.
 _BARANGAY_COLUMNS = (
     ("market_data", "location"),
     ("lgu_data", "barangay"),
@@ -331,6 +293,37 @@ def _merge_barangay_aliases():
     return merged
 
 
+def _backfill_permit_row_features():
+    """Permit-derived market rows written before they carried the area
+    figures (see data_import_service.area_features_for) have an empty
+    population density, foot traffic, rent and success rate, and being the
+    newest row for their pair they fed zeros into the model. Fill them in
+    once. Runs on every start; with nothing left to fill it is one cheap
+    query. Returns how many rows were filled."""
+    from app.services.data_import_service import AREA_FEATURE_FIELDS, area_features_for
+
+    rows = (
+        MarketData.query.execution_options(include_archived=True)
+        .filter(MarketData.source == "DTI", MarketData.population_density.is_(None))
+        .all()
+    )
+    if not rows:
+        return 0
+    features = area_features_for((row.industry_type, row.location) for row in rows)
+    filled = 0
+    for row in rows:
+        values = features.get((row.industry_type, row.location))
+        if not values:
+            continue
+        for field in AREA_FEATURE_FIELDS:
+            if getattr(row, field) is None:
+                setattr(row, field, values[field])
+        filled += 1
+    if filled:
+        db.session.commit()
+    return filled
+
+
 def run_startup_migrations(app):
     """Called from create_app(). Never raises: a fresh checkout whose
     tables don't exist yet, or a database that happens to be down at
@@ -341,33 +334,33 @@ def run_startup_migrations(app):
             created = _create_missing_tables()
             if created:
                 app.logger.info("Created missing tables: %s", ", ".join(created))
-        except Exception:  # noqa: BLE001 -- see docstring
+        except Exception:
             db.session.rollback()
 
         try:
             added = _add_missing_columns()
             for table, columns in added.items():
                 app.logger.info("Added missing %s columns: %s", table, ", ".join(columns))
-        except Exception:  # noqa: BLE001 -- see docstring
+        except Exception:
             db.session.rollback()
 
         try:
             _retire_system_theme()
-        except Exception:  # noqa: BLE001 -- see docstring
+        except Exception:
             db.session.rollback()
 
         try:
             moved = _encrypt_legacy_contact_numbers()
             if moved:
                 app.logger.info("Encrypted %s contact number(s) left in plain text", moved)
-        except Exception:  # noqa: BLE001 -- see docstring
+        except Exception:
             db.session.rollback()
 
         try:
             hidden = _hide_personal_details_in_audit_trail()
             if hidden:
                 app.logger.info("Hid personal details in %s audit trail entr(ies)", hidden)
-        except Exception:  # noqa: BLE001 -- see docstring
+        except Exception:
             db.session.rollback()
 
         try:
@@ -378,27 +371,32 @@ def run_startup_migrations(app):
                         "Merged barangay names in %s: %s", table,
                         ", ".join(f"{old!r} -> {new!r}" for old, new in renames.items()),
                     )
-                # Renaming does not move the data fingerprint the trend
-                # caches key on, so they are dropped explicitly.
                 from app.services.response_cache import clear_response_cache
                 from app.services.trend_analytics_service import clear_trend_caches
 
                 clear_trend_caches(drop_disk=True)
                 clear_response_cache()
-        except Exception:  # noqa: BLE001 -- see docstring
+        except Exception:
+            db.session.rollback()
+
+        try:
+            filled = _backfill_permit_row_features()
+            if filled:
+                app.logger.info("Filled area figures on %s permit-derived market row(s)", filled)
+                from app.services.response_cache import clear_response_cache
+                from app.services.trend_analytics_service import clear_trend_caches
+
+                clear_trend_caches(drop_disk=True)
+                clear_response_cache()
+        except Exception:
             db.session.rollback()
 
         try:
             SystemSetting.ensure_defaults()
             _set_places_recap_watermark()
-        except Exception:  # noqa: BLE001 -- see docstring; boot must survive any DB state
+        except Exception:
             db.session.rollback()
 
-        # One-time move of every stored industry_type onto the PSIC
-        # sections, plus removal of the micro-business rows this system
-        # (SME-scoped) no longer counts. Guarded, logged and reversible
-        # -- see app/services/industry_migration.py. Kept in its own
-        # try/except so a failure here can never take down boot either.
         try:
             from app.services.industry_migration import migrate as migrate_industries
 
@@ -411,5 +409,5 @@ def run_startup_migrations(app):
                     summary["remapped"], summary["deleted_micro"], summary["deleted_duplicate"],
                     summary["profiles_remapped"], summary["forecasts_remapped"],
                 )
-        except Exception:  # noqa: BLE001 -- see docstring
+        except Exception:
             db.session.rollback()

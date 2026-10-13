@@ -66,16 +66,10 @@ SEARCH_TEXT_URL = "https://places.googleapis.com/v1/places:searchText"
 CACHE_FILENAME = "barangay_coords_cache.json"
 STATIC_SEED_RELPATH = os.path.join("static", "data", "barangay_coords.json")
 
-# One process-wide lock so two simultaneous requests can't interleave a
-# read-modify-write of the cache file and lose each other's results.
 _CACHE_LOCK = threading.Lock()
 
 _HTTP_TIMEOUT = 8
 
-
-# ---------------------------------------------------------------------
-# Bounds check -- the accuracy guard rail
-# ---------------------------------------------------------------------
 
 def _is_in_tarlac_city_bounds(lat, lng):
     """True only if (lat, lng) sits inside the same Tarlac City rectangle
@@ -91,10 +85,6 @@ def _query_for(barangay_name):
     return f"Barangay {barangay_name}, Tarlac City, Tarlac, Philippines"
 
 
-# ---------------------------------------------------------------------
-# The two Google lookups -- fallback path only (see module docstring)
-# ---------------------------------------------------------------------
-
 def _geocode_via_geocoding_api(barangay_name, api_key):
     """Google Geocoding API. Returns ({'lat','lng'} or None, status_text).
     Typical status values: OK, ZERO_RESULTS, REQUEST_DENIED ("Geocoding
@@ -105,9 +95,6 @@ def _geocode_via_geocoding_api(barangay_name, api_key):
     high = TARLAC_CITY_BOUNDS["high"]
     params = {
         "address": _query_for(barangay_name),
-        # country + a bounds hint -- NOT administrative_area, which is
-        # brittle (Google matches that against its own admin-area naming
-        # and a mismatch turns every lookup into ZERO_RESULTS).
         "components": "country:PH",
         "bounds": f"{low['latitude']},{low['longitude']}|{high['latitude']},{high['longitude']}",
         "key": api_key,
@@ -129,8 +116,6 @@ def _geocode_via_geocoding_api(barangay_name, api_key):
             continue
         if _is_in_tarlac_city_bounds(float(lat), float(lng)):
             return {"lat": round(float(lat), 6), "lng": round(float(lng), 6)}, "OK"
-    # Google answered, but every candidate sat outside Tarlac City --
-    # the classic wrong-"San Isidro" case. Refuse rather than plot it.
     return None, "OUT_OF_BOUNDS"
 
 
@@ -220,12 +205,6 @@ def geocode_barangay_verbose(barangay_name, api_key, geocoding_key=None):
     if not (api_key or geocoding_key):
         return None, None, "no API key configured"
 
-    # Geocoding is a second billable Google API, so it honours the same
-    # switch as the Places lookups: a deployment with PLACES_LIVE_FETCH
-    # =false calls neither. Nothing is lost by this -- every one of the 76
-    # barangays already has a real coordinate on file (see
-    # precompute_barangay_coords.py and load_seed_coords()), and this
-    # function only ever ran for a name that was missing from that cache.
     from app.services.places_service import live_fetch_enabled
 
     if not live_fetch_enabled():
@@ -253,10 +232,6 @@ def geocode_barangay_verbose(barangay_name, api_key, geocoding_key=None):
         notes.append(f"{label}: {status}")
     return None, None, " | ".join(notes)
 
-
-# ---------------------------------------------------------------------
-# Cache (instance/barangay_coords_cache.json) -- fallback names only
-# ---------------------------------------------------------------------
 
 def _cache_path(app):
     os.makedirs(app.instance_path, exist_ok=True)
@@ -293,7 +268,7 @@ def _save_cache(app, barangays):
     tmp_path = path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
-    os.replace(tmp_path, path)  # atomic -- never leaves a half-written cache
+    os.replace(tmp_path, path)
 
 
 def load_seed_coords(app):
@@ -309,10 +284,6 @@ def load_seed_coords(app):
     except (OSError, ValueError):
         return {}
 
-
-# ---------------------------------------------------------------------
-# Public entry point used by the /api/barangay-coords endpoint
-# ---------------------------------------------------------------------
 
 def resolve_missing(app, names, api_key, limit=20, geocoding_key=None):
     """Geocode up to `limit` of `names` that are neither in the shipped
@@ -349,7 +320,7 @@ def resolve_missing(app, names, api_key, limit=20, geocoding_key=None):
             try:
                 _save_cache(app, cache)
             except OSError:
-                pass  # in-memory result is still usable for this request
+                pass
 
         still_pending = len([n for n in names if n not in seed and n not in cache])
         return cache, resolved_now, still_pending

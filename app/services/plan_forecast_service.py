@@ -66,32 +66,19 @@ from app.ml.constants import (
     PLAN_FEATURE_NAMES,
 )
 
-# Admin-editable assumptions (System Settings > Plan forecast
-# assumptions). Defaults and their sources: app/ml/constants.py.
 WAGE_SETTING_KEY = "plan_daily_wage_php"
 MARGIN_SETTING_KEY = "plan_gross_margin"
 
-# Confidence reported for the formula fallback -- the same 50 stage 1's
-# formula fallback reports: "computed, but not by a trained model".
 FORMULA_CONFIDENCE = 50.0
 
-# Short codes for the combined model_version stored on forecast_result
-# (VARCHAR(20)): "<stage 1>+<stage 2>", e.g. "rf_v1+plan_rf_v1".
 _STAGE1_SHORT = {"rf_v1": "rf_v1", "formula_v1": "fx_v1"}
 _STAGE2_SHORT = {pm.PLAN_MODEL_VERSION: "plan_rf_v1", pm.PLAN_FORMULA_VERSION: "plan_fx_v1"}
 MODEL_VERSION_MAX_LENGTH = 20
 
 _PLAN_MODEL_CACHE = {"model": None, "loaded": False}
 
-# Guards the one-time load. gunicorn runs this app with --threads 4, and
-# reading plan_model.pkl (~12 MB) takes long enough for a second request
-# to arrive mid-load. See _load_plan_model for what that used to cost.
 _PLAN_MODEL_LOCK = threading.Lock()
 
-
-# ---------------------------------------------------------------------
-# Loading -- once per process, like stage 1
-# ---------------------------------------------------------------------
 
 def _model_dir():
     from flask import current_app
@@ -139,7 +126,7 @@ def _read_plan_model():
         return None
     try:
         bundle = joblib.load(path)
-    except Exception:  # noqa: BLE001 -- a corrupt file must not take the forecast down
+    except Exception:
         current_app.logger.warning("plan_model.pkl could not be loaded; using the formula", exc_info=True)
         return None
 
@@ -148,9 +135,6 @@ def _read_plan_model():
     else:
         model, names = bundle, None
 
-    # A forest fed a row in the wrong order does not raise -- it answers
-    # a different question. So a mismatch is refused, loudly, and the
-    # documented formula stands in until the model is retrained.
     if model is None or (names is not None and list(names) != list(PLAN_FEATURE_NAMES)) \
             or getattr(model, "n_features_in_", len(PLAN_FEATURE_NAMES)) != len(PLAN_FEATURE_NAMES):
         current_app.logger.warning(
@@ -161,7 +145,7 @@ def _read_plan_model():
 
     try:
         model.n_jobs = 1
-    except Exception:  # pragma: no cover - a model that refuses is still usable
+    except Exception:
         current_app.logger.warning("could not pin the plan forest to one thread", exc_info=True)
     return model
 
@@ -178,22 +162,13 @@ def plan_model_is_trained():
     return _load_plan_model() is not None
 
 
-# ---------------------------------------------------------------------
-# Inputs
-# ---------------------------------------------------------------------
-
-# The precision the two assumptions are used AND stored at (the payload's
-# financials.daily_wage / gross_margin). Rounding them before use, not
-# just for display, is what lets a reader -- or the quarterly outlook,
-# which re-runs this plan later -- take them back out of a stored
-# forecast and get the very numbers it was computed with.
-WAGE_DECIMALS = 2      # centavos
+WAGE_DECIMALS = 2
 MARGIN_DECIMALS = 4
 
 
 def _valid_wage(value):
     low, high = DAILY_WAGE_RANGE
-    return value is not None and low <= value <= high      # NaN fails both
+    return value is not None and low <= value <= high
 
 
 def _valid_margin(value):
@@ -294,13 +269,10 @@ def build_plan_inputs(sme_profile, scores, market_row, population, subcategory_a
     stage = getattr(sme_profile, "business_stage", None) or "startup"
 
     return {
-        # stage 1
         "saturation_index": float(scores["saturation_index"]),
         "competitor_count": plan_competitor_count(scores, subcategory_analysis),
-        # location
         "population": pm.resolve_population(population),
         "monthly_rent": _monthly_rent(market_row, sme_profile.location),
-        # the owner's own parameters
         "capital": _profile_capital(sme_profile),
         "employee_count": max(0, int(getattr(sme_profile, "employee_count", None) or 0)),
         "is_existing": stage == "existing",
@@ -309,20 +281,14 @@ def build_plan_inputs(sme_profile, scores, market_row, population, subcategory_a
         "average_price": average_price,
         "has_offering_description": bool(offering_text) or bool(items),
         "has_innovation_idea": bool(idea_text),
-        # assumptions
         "daily_wage": wage,
         "gross_margin": margin,
-        # descriptive, for the payload only
         "business_stage": stage,
         "industry_type": sme_profile.industry_type,
         "subcategory_label": getattr(sme_profile, "subcategory_label", None),
         "location": sme_profile.location,
     }
 
-
-# ---------------------------------------------------------------------
-# Prediction
-# ---------------------------------------------------------------------
 
 def _confidence_from_spread(tree_predictions):
     """Exactly stage 1's mapping: 0 spread across the trees = 100%,
@@ -340,10 +306,6 @@ def _predict(inputs, explain=True):
 
     vector = pm.plan_feature_vector(inputs, derived)
     if model is not None and not pm.tree_safe(vector):
-        # derive_quantities() keeps every feature finite and inside
-        # float32, so this should never happen; if a future feature
-        # breaks that, the plan gets the labelled formula and a log
-        # line, not a ValueError out of predict() and a 500 on Home.
         from flask import current_app
 
         current_app.logger.warning(
@@ -365,9 +327,6 @@ def _predict(inputs, explain=True):
     if explain:
         baseline, contributions, prediction, tree_predictions = pm.path_contributions(model, vector)
     else:
-        # No explanation wanted (the quarterly outlook): the trees' leaf
-        # values give both the prediction (bit-identical to
-        # model.predict, see plan_model.forest_mean) and the spread.
         tree_predictions = pm.tree_leaf_values(model, vector)
         prediction = pm.forest_mean(tree_predictions)
         baseline, contributions = None, None
@@ -404,10 +363,6 @@ def plan_viability_for(inputs, saturation_index, competitor_count):
     }
 
 
-# ---------------------------------------------------------------------
-# The payload
-# ---------------------------------------------------------------------
-
 def _r(value, ndigits=1):
     """A plain, JSON-safe Python float. Every number in the payload goes
     through here or int(), so no numpy scalar ever reaches json.dumps."""
@@ -424,17 +379,12 @@ def _drivers(prediction):
         baseline = float(prediction["baseline"])
         grouped = pm.grouped_drivers(prediction["feature_contributions"])
     else:
-        # Formula fallback: the scorecard's own component points, from a
-        # baseline of 0. They add up to S, which IS the index here.
         baseline = 0.0
         grouped = {key: 0.0 for key in pm.DRIVER_LABELS}
         components = pm.component_scores(None, prediction["derived"])
         for key, weight in PLAN_COMPONENT_WEIGHTS.items():
             grouped[pm.COMPONENT_META[key][3]] += 100.0 * weight * components[key]
 
-    # The baseline is the same for every plan (the forest's training
-    # mean), so it is rounded on its own and stays put; any rounding
-    # slack is absorbed by the drivers, never by the baseline.
     baseline = _r(baseline)
     keys = list(pm.DRIVER_LABELS)
     rounded = pm.round_preserving_sum([grouped[k] for k in keys], index - baseline, 1)
@@ -493,15 +443,6 @@ def forecast_plan(sme_profile, scores, market_row, population, subcategory_analy
     viability_score = _r(viability_index / 10.0)
     saturation = float(scores["saturation_index"])
 
-    # The break-even window is the ROI formula the Recommendations page
-    # already uses, driven by the PLAN's viability rather than the
-    # market's -- which is how capital, staffing and pricing reach it.
-    # It is fed the model's own PVI / 10, unrounded, as the formula
-    # (Reference/FORECAST_MODEL.md) states -- not the 1-dp score shown.
-    # The window's ends are whole months, so feeding it a twice-rounded
-    # score moved one end by a month for about 8% of plans. (MSI* goes
-    # in unrounded too, so the window was never meant to be recomputed
-    # from the displayed figures.)
     roi = estimate_roi_timeframe(float(prediction["viability_index"]) / 10.0, saturation, None, None)
     baseline, drivers = _drivers({**prediction, "viability_index": viability_index})
 
@@ -523,9 +464,6 @@ def forecast_plan(sme_profile, scores, market_row, population, subcategory_analy
             "scorecard_index": _r(prediction["scorecard_index"]),
         },
         "inputs": {
-            # derived[...] is the figure the model read
-            # (plan_model.finite_input) -- the owner's own number for
-            # any capital or headcount a plan can hold.
             "capital": _r(derived["capital"], 2),
             "employee_count": int(derived["employee_count"]),
             "business_stage": inputs["business_stage"],
@@ -548,13 +486,8 @@ def forecast_plan(sme_profile, scores, market_row, population, subcategory_analy
             "capital_runway_months": _r(derived["capital_runway_months"]),
             "ramp_up_months": _r(derived["ramp_up_months"]),
             "capital_adequacy": _r(derived["capital_adequacy"], 2),
-            # Both assumptions at the precision they were USED at
-            # (plan_assumptions), so assumptions_from_payload() can hand
-            # them back exactly -- see the quarterly outlook.
             "gross_margin": _r(derived["gross_margin"], MARGIN_DECIMALS),
             "operating_days": int(OPERATING_DAYS_PER_MONTH),
-            # 0 when the plan lists no prices (inputs.priced_item_count
-            # is then 0 too) -- "not computable", not "zero sales needed".
             "required_daily_sales": _r(derived["required_daily_sales"]),
             "daily_sales_ceiling": _r(derived["daily_sales_ceiling"]),
             "break_even": {

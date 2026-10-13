@@ -37,8 +37,6 @@ from app.models import MarketData
 from app.ml.constants import BUSINESS_TYPES, FEATURED_BUSINESS_TYPES
 from app.ml.seed_data import BARANGAY_NAMES, get_real_population
 
-# Ceiling on one HTTP request's worth of work, so a batch can't run long
-# enough to hit a proxy/gateway timeout. The UI loops instead.
 MAX_BATCH = 25
 
 
@@ -55,8 +53,6 @@ def _real_combo_keys():
     )
     done = set()
     for industry, location, market_id in rows:
-        # Rows at/below the watermark were fetched under the old
-        # 20-result cap, so they are NOT done -- they need re-fetching.
         if market_id is not None and market_id <= watermark:
             continue
         done.add((industry, location))
@@ -97,8 +93,6 @@ def refresh_batch(limit=MAX_BATCH):
 
     limit = max(1, min(int(limit or MAX_BATCH), MAX_BATCH))
 
-    # This endpoint is the one place allowed to spend an unbounded
-    # number of live lookups -- that is its entire purpose.
     set_places_refresh_budget(None)
 
     done_keys = _real_combo_keys()
@@ -108,7 +102,7 @@ def refresh_batch(limit=MAX_BATCH):
     for industry, location in todo:
         try:
             row = find_or_create_market_data(industry, location)
-        except Exception:  # noqa: BLE001 -- one bad combo must not abort the batch
+        except Exception:
             db.session.rollback()
             failed += 1
             continue
@@ -117,21 +111,12 @@ def refresh_batch(limit=MAX_BATCH):
         else:
             failed += 1
 
-    # Real competitor counts just replaced estimated ones, which is the
-    # other way the market "moves" without anybody uploading a file. The
-    # sweep has its own cooldown, so the UI looping through batch after
-    # batch produces one alert for the whole refresh rather than one per
-    # batch of 25.
-    #
-    # Only when something actually landed: a batch where every
-    # combination fell back to a simulated count has changed nothing
-    # worth telling anyone about.
     if refreshed:
         try:
             from app.services.market_alert_service import run_all_alert_sweeps
 
             run_all_alert_sweeps()
-        except Exception:  # pragma: no cover - defensive
+        except Exception:
             from flask import current_app
 
             current_app.logger.warning(

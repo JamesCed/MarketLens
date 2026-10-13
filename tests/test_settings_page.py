@@ -58,10 +58,6 @@ def _client(app, email="sme@example.com"):
     return client
 
 
-# ---------------------------------------------------------------------
-# 1. Routing and the panes
-# ---------------------------------------------------------------------
-
 def test_settings_lives_at_slash_settings(app):
     with app.app_context():
         _user(app)
@@ -129,10 +125,6 @@ def test_an_unknown_section_falls_back_rather_than_erroring(app):
         assert _active_pane(response.get_data(as_text=True)) == "profile"
 
 
-# ---------------------------------------------------------------------
-# 2. Preferences cost no rows
-# ---------------------------------------------------------------------
-
 def test_saving_preferences_adds_no_rows(app):
     """They are columns on the user row. Saving must not create a
     preferences record, a settings record, or anything else."""
@@ -149,8 +141,6 @@ def test_saving_preferences_adds_no_rows(app):
         client.post("/settings", data={"form_type": "notifications"}, follow_redirects=True)
         after = row_counts()
 
-        # audit_logs is expected to grow -- that is the point of an audit
-        # trail. Nothing else may.
         after.pop("audit_logs", None)
         before.pop("audit_logs", None)
         assert after == before
@@ -207,10 +197,6 @@ def test_a_legacy_system_row_resolves_to_light(app):
         assert 'data-bs-theme="light"' in body
 
 
-# ---------------------------------------------------------------------
-# 3. Dark mode actually renders
-# ---------------------------------------------------------------------
-
 def test_dark_mode_reaches_the_html_element(app):
     """Server-rendered, not applied by script after paint -- otherwise
     every page flashes white first."""
@@ -242,10 +228,6 @@ def test_the_theme_is_rendered_server_side_not_applied_by_script(app):
         assert 'data-bs-theme="dark"' in body[: body.index("<head>")]
         assert "prefers-color-scheme" not in head, "no system-preference sniffing should remain"
 
-
-# ---------------------------------------------------------------------
-# 4. The notification switch does something
-# ---------------------------------------------------------------------
 
 def _forecast_for(user, saturation):
     """A saturated forecast for this user, via the real engine path."""
@@ -353,15 +335,8 @@ def test_the_page_says_which_preferences_nothing_sends_yet(app):
                       "Monthly newsletter"]:
             assert label in body, label
 
-        # Exactly one carries the caveat: the monthly newsletter, which
-        # needs a person to write it. The other three now send.
         assert body.count("not sending yet") == 1
 
-        # And it is attached to the newsletter specifically, not merely
-        # present somewhere on the page. Counting alone would pass if the
-        # badge moved to the wrong switch.
-        # The badge is rendered immediately after its own label, so the
-        # newsletter's label must be the one just before it.
         newsletter_at = body.index("Monthly newsletter")
         badge_at = body.index("not sending yet")
         assert 0 < badge_at - newsletter_at < 400, \
@@ -424,10 +399,6 @@ def test_clearing_read_notifications_leaves_unread_ones_alone(app):
         assert remaining[0].message == "unseen"
 
 
-# ---------------------------------------------------------------------
-# 5. Every role gets the page
-# ---------------------------------------------------------------------
-
 @pytest.mark.parametrize("role,email", [("SME", "s@x.com"), ("LGU", "l@x.com"), ("Admin", "a@x.com")])
 def test_every_role_can_open_settings(app, role, email):
     with app.app_context():
@@ -436,19 +407,6 @@ def test_every_role_can_open_settings(app, role, email):
         assert response.status_code == 200
         assert "Appearance" in response.get_data(as_text=True)
 
-
-# ---------------------------------------------------------------------
-# 6. Business Preferences is gone -- the plans are managed on Home
-# ---------------------------------------------------------------------
-# The plans first lived in a "My Plans" modal in shared/_topbar.html
-# (on every authenticated page), then in a Settings pane called Business
-# Preferences. They are now managed on the Home page, next to the plan
-# itself: a pencil edits, a bin moves the plan to Trash, Trash restores.
-# These pin down that the Settings side of that move is complete -- no
-# pane, no tab, no plan forms or script left behind -- and that an old
-# link still lands somewhere useful. The plan routes themselves (update,
-# trash, restore, the legacy /delete alias) are tested in
-# tests/test_plan_trash.py.
 
 def _plan(user, name="Carinderia ni Nena", industry="Food and Beverage",
           location="San Nicolas", stage="startup"):
@@ -567,7 +525,6 @@ def test_a_plan_in_trash_drops_out_of_both_profile_counts(app):
 
         assert client.post(f"/home/plans/{sme_id}/trash").status_code == 302
         assert _profile_counts(client) == {"Saved Plans": 0, "Forecasts Run": 0}
-        # Kept, not deleted: the bookmark row is still there to come back.
         assert PlanSave.query.filter_by(user_id=user.user_id).count() == 1
 
         assert client.post(f"/home/plans/{sme_id}/restore").status_code == 302

@@ -121,7 +121,7 @@ def check_llm(env):
         print("            this provider. The site still works; every")
         print("            recommendation is just the rule-based text.")
         return False
-    except Exception as err:  # network, DNS, TLS, timeout
+    except Exception as err:
         print(f"\n   FAILED: {type(err).__name__}: {err}")
         print("\n   VERDICT: NO -- could not reach the API at all.")
         return False

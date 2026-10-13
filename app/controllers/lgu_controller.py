@@ -67,28 +67,24 @@ def dashboard():
     from app.extensions import db
     from app.ml.constants import BUSINESS_TYPES, FEATURED_BUSINESS_TYPES, INDUSTRY_DISPLAY, DEFAULT_INDUSTRY_DISPLAY
     from app.ml.seed_data import BARANGAY_NAMES, get_real_population
-    from app.services.forecasting_service import compute_scores_batch
+    from app.services.forecasting_service import _scoring_inputs_fingerprint, compute_scores_batch
     from app.services.trend_analytics_service import (
         get_barangay_business_table,
         latest_market_data_by_key,
         live_plan_forecasts,
     )
 
-    # Forecasts of LIVE plans only: a plan an SME moved to Trash keeps its
-    # forecast rows (so it can be restored), and without the join to
-    # sme_profile inside live_plan_forecasts() it went on counting here
-    # -- an SME's "removed" plan still tallied as a saturated zone.
-    total_forecasts = live_plan_forecasts().count()
-    # No stored cluster_label column -- Low/Saturated cut points come
-    # straight from app/ml/constants.py CLUSTER_THRESHOLDS ([25, 50, 75, 100]).
-    saturated_count = live_plan_forecasts().filter(ForecastResult.saturation_index > CLUSTER_THRESHOLDS[2]).count()
-    opportunity_count = live_plan_forecasts().filter(ForecastResult.saturation_index <= CLUSTER_THRESHOLDS[0]).count()
+    from sqlalchemy import case, func
 
-    # Counted against the official 76 (IT expert review: the dashboard
-    # showed "77 barangays on file" beside 76-barangay coverage). A name
-    # written another way ("Baras" for Baras-baras) is folded into the
-    # official one, and a name that is not a Tarlac City barangay at all
-    # is listed separately instead of inflating the count.
+    total_forecasts, saturated_count, opportunity_count = live_plan_forecasts().with_entities(
+        func.count(ForecastResult.forecast_id),
+        func.sum(case((ForecastResult.saturation_index > CLUSTER_THRESHOLDS[2], 1), else_=0)),
+        func.sum(case((ForecastResult.saturation_index <= CLUSTER_THRESHOLDS[0], 1), else_=0)),
+    ).one()
+    total_forecasts = int(total_forecasts or 0)
+    saturated_count = int(saturated_count or 0)
+    opportunity_count = int(opportunity_count or 0)
+
     from app.ml.seed_data import canonical_barangay
 
     on_file, unrecognised = set(), set()
@@ -101,14 +97,6 @@ def dashboard():
     latest_market = latest_market_data_by_key()
     barangay_rows = get_barangay_business_table(latest_market)
 
-    # ---- City-wide industry cards -------------------------------------
-    # Mirrors the SME Home page's card row, but scored city-wide. Running
-    # the AI on all 8 featured industries x 76 barangays would be 608
-    # model calls on a dashboard, so each industry is instead SAMPLED
-    # across the city's most populous barangays -- a small, fixed,
-    # deterministic sample that still reflects the built-up core where
-    # competition actually concentrates. The full sweep still happens on
-    # Trend Reports, which is the page built for it.
     sample_barangays = sorted(BARANGAY_NAMES, key=lambda b: -(get_real_population(b) or 0))[:6]
 
     businesses_by_industry = {}
@@ -117,11 +105,6 @@ def dashboard():
             row.competitor_count or 0
         )
 
-    # Every industry x sample-barangay combination in ONE batch. This
-    # was a nested loop calling compute_scores() per cell: 8 featured
-    # industries x 6 barangays is 48 calls, ~96 SELECTs and 48 separate
-    # trips through the forest to fill eight cards on the page an LGU
-    # officer lands on. Same fix as SME Home and Recommendations.
     pairs = [(industry_type, barangay)
              for industry_type in BUSINESS_TYPES
              for barangay in sample_barangays]
@@ -129,10 +112,6 @@ def dashboard():
     for (industry_type, _barangay), score in zip(pairs, compute_scores_batch(pairs)):
         scores_by_industry.setdefault(industry_type, []).append(score)
 
-    # The same industry slider the SME Planning page shows (shared
-    # partial, same icons and bands), scored city-wide for ALL twenty
-    # sections -- the LGU dashboard used to keep the old eight emoji
-    # cards after the SME side moved on.
     industry_cards = []
     for industry_type in BUSINESS_TYPES:
         scores = scores_by_industry.get(industry_type, [])
@@ -173,8 +152,8 @@ def dashboard():
         barangays_on_file=barangays_on_file,
         unrecognised_barangays=unrecognised_barangays,
         barangay_total=len(BARANGAY_NAMES),
-        lgu_data_count=LguData.query.count(),
-        market_data_count=MarketData.query.count(),
+        lgu_data_count=_scoring_inputs_fingerprint()[1][0],
+        market_data_count=_scoring_inputs_fingerprint()[0][1],
         industry_cards=industry_cards,
         barangay_rows=barangay_rows,
         totals=totals,
@@ -182,15 +161,8 @@ def dashboard():
         locations=BARANGAY_NAMES,
         sample_barangays=sample_barangays,
         saturated_threshold=CLUSTER_THRESHOLDS[2],
-        # Same cold start as the SME Home panel: the city-wide
-        # recommendation is a claim about the city's own records, so it
-        # is not made until an LGU account has uploaded some. This is
-        # the page that account actually lands on, so it is also where
-        # the "Upload Dataset" way out belongs.
         has_lgu_data=has_active_lgu_data(),
         lgu_dataset=active_lgu_dataset_summary(),
-        # The headline of the Diversification Plan, so the dashboard can
-        # summarise it and link to the full page.
         plan=build_diversification_plan(),
         default_industry=FEATURED_BUSINESS_TYPES[0],
     )
@@ -234,10 +206,6 @@ def diversification_csv():
                     headers={"Content-Disposition": "attachment; filename=diversification_plan.csv"})
 
 
-# The column reference shown on the upload page AND used to build the
-# downloadable templates, so the guidance and the file can never
-# disagree about what a column is called. Each entry is
-# (column, required, what it means, example).
 UPLOAD_COLUMNS = {
     "LGU_DATA": [
         ("barangay", True,
@@ -353,8 +321,6 @@ def government_upload():
                 dataset_type, absolute_path, source, current_user.user_id
             )
         finally:
-            # No file-metadata table to keep a reference to this path in
-            # -- only the parsed rows survive, so the temp file goes now.
             if os.path.exists(absolute_path):
                 os.remove(absolute_path)
 

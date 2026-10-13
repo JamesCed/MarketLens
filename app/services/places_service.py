@@ -58,41 +58,17 @@ import requests
 
 SEARCH_TEXT_URL = "https://places.googleapis.com/v1/places:searchText"
 
-# Approximate bounding rectangle around Tarlac City, Philippines -- see
-# module docstring. {low, high} are the SOUTHWEST / NORTHEAST corners.
 TARLAC_CITY_BOUNDS = {
     "low": {"latitude": 15.38, "longitude": 120.48},
     "high": {"latitude": 15.60, "longitude": 120.70},
 }
 
-# Only request the fields this app actually uses -- Places API (New)
-# bills by which fields you ask for, and a smaller field mask keeps
-# every request on the cheaper "Text Search Essentials" tier rather
-# than the more expensive "Pro"/"Enterprise" tiers that extra fields
-# (photos, opening hours, etc.) would trigger.
 FIELD_MASK = "places.id,places.displayName,places.formattedAddress,places.types"
 
-# Text Search paging limits, set by Google (not by this app):
-# 20 places per page, and no nextPageToken past the 3rd page -- so 60
-# results per query is the hard ceiling even when max_results is
-# "unlimited". See search_competitors()'s docstring.
 PAGE_SIZE = 20
 MAX_PAGES = 3
-HARD_RESULT_CEILING = PAGE_SIZE * MAX_PAGES  # 60
+HARD_RESULT_CEILING = PAGE_SIZE * MAX_PAGES
 
-# Maps our internal industry_type values (app/ml/constants.py
-# BUSINESS_TYPES -- the PSIC top-level sections) to a natural-language
-# search term Google Places understands. An industry_type typed outside
-# this list still works -- it's just used verbatim as the search term.
-#
-# These terms deliberately name SME-SCALE establishment types. This
-# system plans for small and medium enterprises, so a section's term
-# asks Google for the kind of registered establishment an SME actually
-# competes with ("grocery store OR hardware store OR auto repair shop"),
-# not the micro end of the same section ("sari-sari store"). Anything
-# micro that still slips through -- Google's text search is fuzzy, and a
-# sari-sari store will occasionally rank for "grocery store" -- is caught
-# afterwards by the MICRO_BUSINESS_PATTERNS filter below.
 SEARCH_TERM_MAP = {
     "Agriculture, Forestry, and Fishing":
         "farm OR agricultural producer OR poultry farm OR fishery OR agri-processing",
@@ -136,56 +112,20 @@ SEARCH_TERM_MAP = {
         "household staffing agency OR domestic helper agency OR household services",
 }
 
-# ---------------------------------------------------------------------
-# MICRO-BUSINESS EXCLUSION -- why it exists and exactly what it drops
-# ---------------------------------------------------------------------
-# This DSS plans for SMEs. Under the Philippine MSME definition (RA 9501
-# / DTI, by asset size) a MICRO enterprise holds up to PHP 3,000,000 in
-# assets -- in practice the sari-sari store operating out of a front
-# window, the carinderia with four tables, the market stall, the food
-# cart, the piso-wifi box on a wall. Those are real businesses, but they
-# are NOT the competition an SME planning a PHP 500k-5M entry is sizing
-# itself against, and counting them made every barangay look saturated
-# for reasons that had nothing to do with SME-scale competition.
-#
-# Google Places has no "micro enterprise" flag, and it has no reliable
-# place TYPE for this either (a sari-sari store and a 7-Eleven can both
-# come back as `convenience_store`, and dropping that whole type would
-# throw away genuine SME retailers). So the filter works on the place's
-# own NAME, matching the vocabulary these establishments actually label
-# themselves with. That is a deliberately CONSERVATIVE rule: a pattern
-# only goes in this list if a match is near-certain to be micro. The
-# cost of that choice is that some micro businesses with a generic name
-# ("JM Store") are still counted; the benefit is that a real SME is
-# essentially never dropped by mistake.
-#
-# Every exclusion is recorded (see search_competitors' return value and
-# the `excluded_micro` list it carries) so the figure is auditable --
-# you can show a panel exactly which establishments were left out and
-# why, instead of asserting the filter works.
 MICRO_BUSINESS_PATTERNS = [
-    # Neighborhood retail counters
     "sari-sari", "sari sari", "sarisari", "tindahan", "variety store",
-    # Street-level food
     "carinderia", "karinderia", "karinderya", "turo-turo", "turo turo",
     "food cart", "foodcart", "street food", "fishball", "kwek-kwek",
     "kwek kwek", "isawan", "banana cue", "bananacue", "lugawan",
     "silogan", "eatery stall",
-    # Market stalls / informal trading
     "tiangge", "talipapa", "puesto", "market stall", "public market stall",
     "sidewalk", "ambulant",
-    # Coin-operated / micro digital
     "piso wifi", "pisowifi", "piso-wifi", "pisonet", "piso net", "piso-net",
     "piso print", "pisoprint",
-    # Roadside micro services
     "vulcanizing", "bulcanizing", "vulcanize",
-    # Backyard production
     "backyard", "home-based", "home based",
 ]
 
-# Google place `types` that are micro-only in practice. Kept very short
-# on purpose -- see the note above about why type-based filtering is
-# mostly unsafe here.
 MICRO_BUSINESS_TYPES = set()
 
 
@@ -229,7 +169,7 @@ def _is_in_tarlac_city(formatted_address):
     "Tarlac City only" even for a place that happens to sit inside the
     rectangle but just across the city line."""
     if not formatted_address:
-        return True  # don't punish a place for a missing address field
+        return True
     return "tarlac city" in formatted_address.lower()
 
 
@@ -262,7 +202,7 @@ def live_fetch_enabled():
         if not has_app_context():
             return True
         return bool(current_app.config.get("PLACES_LIVE_FETCH", True))
-    except (ImportError, RuntimeError):  # pragma: no cover
+    except (ImportError, RuntimeError):
         return True
 
 
@@ -325,16 +265,10 @@ def search_competitors_detailed(location, industry_type, api_key=None, max_resul
     limit = int(max_results or 0)
     unlimited = limit <= 0
 
-    # search_term overrides the section-level term: the sub-category
-    # direct-competitor count asks for "bakery OR bakeshop" rather than
-    # every food business (see app/services/subcategory_service.py).
     query = f"{search_term or _search_term_for(industry_type)} in {location}, Tarlac City"
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": api_key,
-        # nextPageToken must be requested explicitly -- it is not one of
-        # the place fields, and leaving it out silently caps every
-        # search at a single page of 20.
         "X-Goog-FieldMask": f"{FIELD_MASK},nextPageToken",
     }
 
@@ -356,8 +290,6 @@ def search_competitors_detailed(location, industry_type, api_key=None, max_resul
 
             response = requests.post(SEARCH_TEXT_URL, json=body, headers=headers, timeout=10)
             if response.status_code != 200:
-                # A later page failing must not throw away the pages we
-                # already collected -- those are real results.
                 if results:
                     break
                 return {
@@ -371,8 +303,6 @@ def search_competitors_detailed(location, industry_type, api_key=None, max_resul
                 address = place.get("formattedAddress")
                 if not _is_in_tarlac_city(address):
                     continue
-                # Paging can repeat a place across page boundaries; count
-                # each distinct business once so the total stays honest.
                 place_id = place.get("id") or (place.get("displayName") or {}).get("text")
                 if place_id and place_id in seen_ids:
                     continue
@@ -382,9 +312,6 @@ def search_competitors_detailed(location, industry_type, api_key=None, max_resul
                 name = (place.get("displayName") or {}).get("text")
                 types = place.get("types", [])
 
-                # SME scope: a micro establishment is recorded but never
-                # counted as an SME's competitor -- see the note above
-                # MICRO_BUSINESS_PATTERNS.
                 if exclude_micro and is_micro_business(name, types):
                     excluded_micro.append({"name": name, "address": address, "types": types})
                     continue

@@ -131,7 +131,7 @@ def _live_count(industry_type, entry, location):
         ))
         db.session.commit()
         return count
-    except Exception:  # noqa: BLE001 -- a failed lookup falls back to the estimate
+    except Exception:
         db.session.rollback()
         return None
 
@@ -190,9 +190,6 @@ def direct_competition(industry_type, subcategory, location, industry_count, all
             count, source = live, "Google Places API"
 
     if count is None:
-        # Nothing measured: the estimate IS the expectation, so the ratio
-        # is exactly 1 and the score is left alone. Saying "we estimate"
-        # while quietly changing the number would be the worst of both.
         return {
             "subcategory": subcategory,
             "label": entry["label"],

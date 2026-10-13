@@ -72,7 +72,6 @@ def seeded(app):
             _market_row("Retail", "Poblacion", 30, "PSA"),
             _market_row("Food & Beverage", "San Vicente", 20, "Manual"),
             _market_row("Repair & Maintenance Services", "Tibag", 10, "Google Places API"),
-            # Stale duplicate of the first row -- must be collapsed away.
             _market_row("Food & Beverage", "Poblacion", 999, "Manual", date(2020, 1, 1)),
         ]
     )
@@ -80,13 +79,11 @@ def seeded(app):
     return app
 
 
-# ------------------------------------------------------------------ 1.
 def test_distribution_counts_every_source_not_just_places(seeded):
     from app.services.trend_analytics_service import get_industry_distribution
 
     dist = {d["name"]: d for d in get_industry_distribution()}
 
-    # The bug: only "Repair & Maintenance Services" survived -> one slice.
     assert len(dist) == 3, "pie must show every industry on file, not one slice"
     assert dist["Food & Beverage"]["count"] == 60, "summed across both barangays"
     assert dist["Retail"]["count"] == 30, "a PSA-sourced row is still real businesses on file"
@@ -130,7 +127,6 @@ def test_places_verification_table_lists_only_google_rows(seeded):
     assert rows[0]["competitor_count"] == 10
 
 
-# ------------------------------------------------------------------ 2.
 def test_barangay_table_rolls_up_per_barangay(seeded):
     from app.services.trend_analytics_service import get_barangay_business_table
 
@@ -152,7 +148,6 @@ def test_barangay_table_includes_barangays_with_no_data(seeded):
     assert not missing, "the LGU dashboard must list every barangay, even empty ones"
 
 
-# --------------------------------------------- unverified location names
 @pytest.fixture
 def seeded_with_junk_location(app):
     """"Baras" is not one of the 76 real barangays (the real one is
@@ -172,7 +167,6 @@ def test_locations_without_real_population_are_dropped_from_tables(seeded_with_j
 
     assert "Baras" not in {r["location"] for r in get_places_api_rows()}
     assert "Baras" not in {r["location"] for r in get_barangay_business_table()}
-    # ...but the real barangay with a similar name is untouched.
     assert "Baras-baras" in {r["location"] for r in get_barangay_business_table()}
 
 
@@ -192,15 +186,14 @@ def test_dropping_junk_locations_does_not_change_the_totals(seeded_with_junk_loc
     assert stats["total_businesses"] == 19, "12 (Tibag) + 7 (Baras) still counted"
 
 
-# ------------------------------------------------------------------ 3.
 @pytest.mark.parametrize(
     "lat,lng,inside",
     [
-        (15.4869, 120.5900, True),   # Tarlac City centre
-        (14.5995, 120.9842, False),  # Manila
-        (13.5000, 121.0000, False),  # a "San Isidro" in another province
-        (15.6100, 120.5900, False),  # just past the northern edge
-        (0.0, 0.0, False),           # null island -- a classic bad geocode
+        (15.4869, 120.5900, True),
+        (14.5995, 120.9842, False),
+        (13.5000, 121.0000, False),
+        (15.6100, 120.5900, False),
+        (0.0, 0.0, False),
     ],
 )
 def test_geocode_results_outside_tarlac_city_are_rejected(lat, lng, inside):
@@ -235,7 +228,7 @@ def test_geocoding_is_a_no_op_without_an_api_key(app, tmp_path):
     """
     from app.services.geocoding_service import resolve_missing
 
-    app.instance_path = str(tmp_path)  # isolated cache file -- see above
+    app.instance_path = str(tmp_path)
 
     names = ["Not A Real Barangay", "Also Fake"]
     cache, resolved, pending = resolve_missing(app, names, api_key="", limit=20)
@@ -244,15 +237,9 @@ def test_geocoding_is_a_no_op_without_an_api_key(app, tmp_path):
     assert pending == 2
     assert cache == {}
 
-    # The claim that actually matters, asserted about the names this
-    # call was given rather than about the cache as a whole: nothing was
-    # invented for either of them. This survives the cache being
-    # non-empty for unrelated reasons, which the assertion above does
-    # not.
     assert all(name not in cache for name in names)
 
 
-# --------------------------------------------- startup data migration
 def test_places_cap_migration_runs_and_lifts_the_old_default(app):
     """The regression that made every barangay report exactly 20.
 
@@ -311,10 +298,8 @@ def test_rows_captured_under_the_old_cap_are_re_fetched(app, monkeypatch):
     app.config["GOOGLE_PLACES_API_KEY"] = "test-key"
     db.session.add(_market_row("Retail", "Tibag", 20, "Google Places API"))
     db.session.commit()
-    run_startup_migrations(app)  # records the watermark above that row
+    run_startup_migrations(app)
 
-    # find_or_create_market_data imports this inside the function body,
-    # so patching the module attribute is what takes effect.
     monkeypatch.setattr(places_service, "get_competitor_count", lambda *a, **k: (47, False))
 
     row = forecasting_service.find_or_create_market_data("Retail", "Tibag")
@@ -329,7 +314,7 @@ def test_uncapped_rows_are_not_re_fetched(app, monkeypatch):
     from app.services.startup_migrations import run_startup_migrations
 
     app.config["GOOGLE_PLACES_API_KEY"] = "test-key"
-    run_startup_migrations(app)  # watermark = 0, table is empty
+    run_startup_migrations(app)
     db.session.add(_market_row("Retail", "Tibag", 47, "Google Places API"))
     db.session.commit()
 
@@ -346,7 +331,6 @@ def test_uncapped_rows_are_not_re_fetched(app, monkeypatch):
     assert not calls, "an already-uncapped row must not trigger another Google call"
 
 
-# ------------------------------------ uncapped Google Places paging
 class _FakeResponse:
     def __init__(self, payload, status=200):
         self._payload = payload
@@ -450,7 +434,6 @@ def test_places_search_keeps_earlier_pages_when_a_later_one_fails(monkeypatch):
     assert simulated is False, "real data already fetched must not be relabelled as simulated"
 
 
-# ------------------------------- geocoding: results and diagnostics
 class _GeoResponse:
     def __init__(self, payload, status=200):
         self._payload = payload
@@ -499,7 +482,6 @@ def test_geocoding_surfaces_request_denied_instead_of_failing_silently(app, monk
 def test_geocoding_refuses_an_answer_outside_tarlac_city(app, monkeypatch):
     from app.services import geocoding_service as geo
 
-    # Manila -- a plausible-looking but wrong match.
     monkeypatch.setattr(
         geo.requests, "get", lambda *a, **k: _GeoResponse(_geocode_payload(14.5995, 120.9842))
     )
@@ -640,11 +622,9 @@ def test_coords_pipeline_resolves_and_caches_names_outside_the_shipped_76(app, m
     """
     from app.services import geocoding_service as geo
 
-    app.instance_path = str(tmp_path)  # isolated cache file
+    app.instance_path = str(tmp_path)
     app.config["GOOGLE_GEOCODING_API_KEY"] = "geo-key"
 
-    # Distinct, in-bounds coordinate per name, so we can prove each one
-    # lands on its OWN point rather than a shared spot.
     calls = []
 
     def fake_get(url, params=None, timeout=None):
@@ -663,12 +643,9 @@ def test_coords_pipeline_resolves_and_caches_names_outside_the_shipped_76(app, m
     for name in names:
         assert coords[name]["source"] == "google_geocoding"
 
-    # Distinct positions -- the original bug drew several barangays on
-    # top of each other / in the wrong place entirely.
     positions = {(c["lat"], c["lng"]) for c in coords.values()}
     assert len(positions) == 3
 
-    # Cached: a second pass must not call Google again.
     before = len(calls)
     coords2, resolved2, pending2 = geo.merged_coords(app, names, api_key="", limit=10, geocoding_key="geo-key")
     assert len(calls) == before, "cached coordinates must not be re-geocoded"
@@ -687,6 +664,5 @@ def test_barangay_coords_endpoint_never_invents_a_location(app):
 
     assert "Definitely Not A Barangay" not in coords
     assert coords["Poblacion"]["source"] == "real"
-    # Whatever it does return must be flagged with where it came from.
     for entry in coords.values():
         assert entry["source"] in {"real", "google_geocoding", "google_places", "google_maps_js"}

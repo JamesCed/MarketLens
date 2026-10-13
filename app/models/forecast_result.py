@@ -43,12 +43,12 @@ class ForecastResult(db.Model):
     market_id = db.Column(db.Integer, db.ForeignKey("market_data.market_id", ondelete="CASCADE"), nullable=False)
     lgu_id = db.Column(db.Integer, db.ForeignKey("lgu_data.lgu_id", ondelete="CASCADE"), nullable=False)
 
-    viability_score = db.Column(db.Numeric(5, 2))          # 0-10 scale, shown to users
+    viability_score = db.Column(db.Numeric(5, 2))
     input_industry_type = db.Column(db.String(100))
     input_location = db.Column(db.String(150))
-    saturation_index = db.Column(db.Numeric(5, 2))          # 0-100 percentage
+    saturation_index = db.Column(db.Numeric(5, 2))
     recommendation = db.Column(db.Text)
-    confidence_level = db.Column(db.Numeric(5, 2))          # 0-100, from RF tree agreement
+    confidence_level = db.Column(db.Numeric(5, 2))
     model_version = db.Column(db.String(20))
     forecast_date = db.Column(db.Date, nullable=False, default=date.today)
 
@@ -76,10 +76,6 @@ class ForecastResult(db.Model):
         return CLUSTER_LABELS_ORDERED[-1]
 
     def to_dict(self):
-        # Local import -- recommendation_service.py itself imports from
-        # app.models (SystemSetting), so importing it at module load
-        # time here would risk a circular import; importing it lazily,
-        # only when to_dict() actually runs, avoids that entirely.
         from app.services.recommendation_service import parse_recommendation
 
         return {
@@ -93,10 +89,6 @@ class ForecastResult(db.Model):
             "viability_score": float(self.viability_score or 0),
             "confidence_level": float(self.confidence_level or 0),
             "cluster_label": self.cluster_label,
-            # Structured -- {headline, opportunity_type, summary,
-            # reasons, risks, generated_by} -- not the raw JSON/legacy
-            # text stored in the recommendation column. See
-            # recommendation_service.py.
             "recommendation": parse_recommendation(self.recommendation),
             "model_version": self.model_version,
             "forecast_date": self.forecast_date.isoformat() if self.forecast_date else None,

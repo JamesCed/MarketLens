@@ -60,17 +60,10 @@ from app.services.choropleth_service import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Shared geometry helpers (plain ray-casting -- no shapely/geopandas
-# dependency; this project's own dev sandbox couldn't install either
-# to test against, see choropleth_service.py's docstring).
-# ---------------------------------------------------------------------------
-
-
 def _point_in_ring(x, y, ring):
     inside = False
     n = len(ring)
-    for i in range(n - 1):  # ring is closed (first == last)
+    for i in range(n - 1):
         x1, y1 = ring[i]
         x2, y2 = ring[i + 1]
         if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1) + x1):
@@ -109,11 +102,6 @@ def real_coords(flask_app):
         return load_seed_coords(flask_app)
 
 
-# ---------------------------------------------------------------------------
-# app/static/data/tarlac_city_boundary.json -- the real OSM boundary itself.
-# ---------------------------------------------------------------------------
-
-
 def test_city_boundary_file_is_a_real_osm_export(flask_app):
     path = os.path.join(flask_app.root_path, "static", "data", "tarlac_city_boundary.json")
     with open(path, "r", encoding="utf-8") as f:
@@ -127,8 +115,8 @@ def test_city_boundary_file_is_a_real_osm_export(flask_app):
     assert feature["geometry"]["type"] == "Polygon"
 
     ring = feature["geometry"]["coordinates"][0]
-    assert len(ring) > 50  # a real municipal boundary, not a 4-point rectangle
-    assert ring[0] == ring[-1]  # closed linear ring
+    assert len(ring) > 50
+    assert ring[0] == ring[-1]
 
 
 def test_every_real_barangay_point_falls_inside_the_real_city_boundary(city_ring, real_coords):
@@ -138,11 +126,6 @@ def test_every_real_barangay_point_falls_inside_the_real_city_boundary(city_ring
         if not _point_in_ring(pt["lng"], pt["lat"], city_ring)
     ]
     assert outside == [], f"real barangay coordinate(s) outside the real city boundary: {outside}"
-
-
-# ---------------------------------------------------------------------------
-# compute_choropleth_geojson()
-# ---------------------------------------------------------------------------
 
 
 def test_compute_choropleth_returns_one_cell_per_barangay(city_ring, real_coords):
@@ -181,9 +164,7 @@ def test_cell_vertices_stay_within_the_real_city_boundary(city_ring, real_coords
 
     xs = [p[0] for p in city_ring]
     ys = [p[1] for p in city_ring]
-    # A generous but finite tolerance -- a real bounding-rectangle bug
-    # (the old behavior) overshoots by tens of kilometers, not a grid cell.
-    tol = 0.01  # ~1.1km at this latitude
+    tol = 0.01
 
     for feature in geojson["features"]:
         for ring in _rings_of(feature):
@@ -200,8 +181,6 @@ def test_cell_areas_sum_to_the_real_city_areas(city_ring, real_coords):
         _ring_area(np.array(ring)) for f in geojson["features"] for ring in _rings_of(f)
     )
     city_area = _ring_area(np.array(city_ring))
-    # Cells tile the real city polygon almost exactly; the shortfall is
-    # ordinary raster/marching-squares rounding at the grid resolution.
     assert total / city_area > 0.999
 
 
@@ -218,15 +197,12 @@ def test_a_cell_the_real_boundary_splits_becomes_a_valid_multipolygon():
     region, splitting it into two disconnected pieces -- and confirm
     compute_choropleth_geojson() reports that as a MultiPolygon (both
     pieces present) instead of silently keeping only one."""
-    # A 10x10 square with a notch cut from the top-middle down to y=4,
-    # splitting anything centered around x=5 into a left and right half
-    # once the notch reaches deep enough into the shape.
     boundary = [
         [0, 0], [10, 0], [10, 10], [6, 10], [6, 4], [4, 4], [4, 10], [0, 10], [0, 0],
     ]
     coords = {
         "Left": {"lat": 5, "lng": 2},
-        "Middle": {"lat": 8, "lng": 5},  # sits right under the notch
+        "Middle": {"lat": 8, "lng": 5},
         "Right": {"lat": 5, "lng": 8},
     }
     geojson = compute_choropleth_geojson(
@@ -248,19 +224,11 @@ def test_force_bypasses_the_cache():
     cached = compute_choropleth_geojson(
         coords, city_boundary_ring=boundary, resolution=(200, 200)
     )
-    # Same (coords) cache key, so the second call returns the cached
-    # low-res result even though resolution looks different here...
     assert cached == low_res
-    # ...until force=True actually recomputes at the new resolution.
     high_res = compute_choropleth_geojson(
         coords, city_boundary_ring=boundary, resolution=(200, 200), force=True
     )
     assert high_res != low_res
-
-
-# ---------------------------------------------------------------------------
-# GET /api/barangay-choropleth and GET /api/tarlac-city-boundary
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -320,8 +288,6 @@ def test_barangay_choropleth_endpoint_shape(client, app, city_ring):
         assert len(ring) >= 4
         assert ring[0] == ring[-1]
         for lng, lat in ring:
-            # Every vertex must fall within Tarlac City's real boundary
-            # bounding box -- not just "somewhere in Luzon".
             assert min(p[0] for p in city_ring) - 0.01 <= lng <= max(p[0] for p in city_ring) + 0.01
             assert min(p[1] for p in city_ring) - 0.01 <= lat <= max(p[1] for p in city_ring) + 0.01
 

@@ -19,13 +19,6 @@ DEFAULT_SETTINGS = {
     "msi_weight_sociodemographic": ("0.20", "MSI weight w3 for Socio-Demographic Score"),
     "saturation_alert_threshold": ("75", "Saturation Index (0-100) above which an early-warning notification fires"),
     "places_max_results": ("0", "Max competitor results kept per Google Places text search (0 = unlimited)"),
-    # The day-scoped cap on live Google Places lookups. Places API
-    # (New) bills per call, and with PLACES_LIVE_FETCH=true on a public
-    # URL every signed-in visitor can trigger them -- so the
-    # per-request cap in forecasting_service bounds the wrong quantity
-    # on its own. 0 means unlimited. This bounds what the APP spends; a
-    # quota set in the Google Cloud Console bounds what the KEY can
-    # spend, which also covers anything using it outside this app.
     "places_daily_call_budget": (
         "500",
         "Maximum live Google Places lookups per day (0 = unlimited). Reaching it is not an error: "
@@ -33,9 +26,6 @@ DEFAULT_SETTINGS = {
     ),
     "places_calls_today": ("0", "Live Google Places lookups spent so far today (maintained by the app)"),
     "places_calls_day": ("", "The date places_calls_today refers to (maintained by the app)"),
-    # The community is the project's Discord server; the footer's
-    # "Community Forum" link opens this invite. See
-    # app/controllers/community_controller.py.
     "community_invite_url": (
         "https://discord.gg/4EBtST2Bk",
         "Invite link to the MarketLens Discord community (opened by the footer's Community Forum link)",
@@ -46,14 +36,6 @@ DEFAULT_SETTINGS = {
         "then LLM_PROVIDER, then the other; keys in .env), false = the built-in rule-based generator. "
         "Figures always come from the trained models.",
     ),
-    # The two ASSUMPTIONS the Plan Viability Model (stage 2 of the
-    # forecast, app/services/plan_forecast_service.py) needs that no plan
-    # form collects. Defaults and their sources are in app/ml/constants.py;
-    # they are editable here so the next wage order does not need a
-    # redeploy. Neither requires retraining: the model sees the wage only
-    # through monthly fixed cost / capital runway, and the margin only
-    # through required daily sales. Descriptions stay under 255
-    # characters (the column's width).
     "plan_daily_wage_php": (
         "590",
         "Daily wage per employee (PHP) used for plan payroll = employees x wage x 26 days. Default: DOLE "
@@ -124,29 +106,8 @@ class SystemSetting(db.Model):
         db.session.commit()
         return row
 
-    # One-off upgrades for installs created before a default changed
-    # meaning. Each entry is key -> (old_default, new_default): the
-    # stored value is rewritten ONLY if it is still byte-for-byte the
-    # old default, i.e. nobody has deliberately tuned it. A value an
-    # Admin actually chose is never touched.
     _DEFAULT_UPGRADES = {
-        # "20" used to mean "keep the first 20 results"; Places lookups
-        # are now unpaged-and-unlimited (0), so a barangay reports the
-        # businesses it really has instead of flat-lining at 20. An
-        # install that still carries the old default gets the new one.
         "places_max_results": ("20", "0"),
-        # use_llm_recommendations used to be here too ("false" -> "true",
-        # from when the LLM recommendation became the default). It was
-        # removed because, on a two-valued switch, "still the old
-        # default" and "the Admin turned it off" are the same string.
-        # ensure_defaults() runs at every boot AND on every visit to
-        # Admin > System Settings, so unticking "Use an LLM..." was
-        # undone by the redirect that followed the save. The switch
-        # could not be turned off, although the page and
-        # Reference/FORECAST_MODEL.md promise rule-based text when it
-        # is. Every install that booted since the default changed has
-        # already been upgraded, so the entry had nothing left to do
-        # except that.
     }
 
     @staticmethod
@@ -155,9 +116,6 @@ class SystemSetting(db.Model):
         are still sitting on a superseded default. Safe to call every
         startup."""
         changed = False
-        # One SELECT for the whole (small) table instead of one per
-        # default -- this runs at every boot and on every visit to
-        # Admin > System Settings, where it was 13 round trips.
         existing = {row.setting_key: row for row in SystemSetting.query.all()}
         for key, (value, description) in DEFAULT_SETTINGS.items():
             row = existing.get(key)
@@ -172,14 +130,6 @@ class SystemSetting(db.Model):
                 row.description = description
                 changed = True
 
-            # The DESCRIPTION is the code's own note on what a setting
-            # does -- no screen edits it, and nothing passes one to set()
-            # -- so an install created before a setting's meaning changed
-            # gets the current note, while its VALUE (the Admin's choice)
-            # is left alone. Without this, use_llm_recommendations kept
-            # saying "GPT-4o-mini via OpenRouter, or Claude" on every
-            # existing install after the forecast narration went Gemini
-            # first.
             if row.description != description:
                 row.description = description
                 changed = True

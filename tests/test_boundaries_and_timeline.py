@@ -71,10 +71,6 @@ def _point_in_ring(x, y, ring):
     return inside
 
 
-# ---------------------------------------------------------------------
-# 1. Official boundaries
-# ---------------------------------------------------------------------
-
 def test_the_boundaries_file_holds_all_76_official_barangays():
     with open(BOUNDARIES, encoding="utf-8") as handle:
         data = json.load(handle)
@@ -85,7 +81,6 @@ def test_the_boundaries_file_holds_all_76_official_barangays():
         assert feature["properties"]["psgc"].startswith("PH0306916")
         ring = feature["geometry"]["coordinates"][0]
         assert ring[0] == ring[-1] and len(ring) >= 8, feature["properties"]["name"]
-    # Real boundaries, not a handful of straight lines per barangay.
     assert sum(len(f["geometry"]["coordinates"][0]) for f in data["features"]) > 3000
 
 
@@ -117,10 +112,6 @@ def test_the_computed_cells_remain_as_a_fallback(app, monkeypatch):
     monkeypatch.setitem(cs._official_cache, "loaded", True)
     monkeypatch.setitem(cs._official_cache, "value", None)
     with app.app_context():
-        # The endpoint's response cache lives on disk and outlives one
-        # test's app: without this, a test that ran earlier and cached the
-        # official polygons answers here instead (the order-dependent
-        # failure this test used to have).
         from app.services.response_cache import clear_response_cache
 
         clear_response_cache()
@@ -135,10 +126,6 @@ def test_the_page_credits_the_boundary_source(app):
     assert "PSA &amp; NAMRIA (2023)" in body
     assert "approximations" not in body
 
-
-# ---------------------------------------------------------------------
-# 1b. "Baras" is Baras-baras
-# ---------------------------------------------------------------------
 
 @pytest.mark.parametrize("raw,expected", [
     ("Baras", "Baras-baras"),
@@ -170,7 +157,7 @@ def test_startup_folds_aliases_into_the_official_name(app):
 
     with app.app_context():
         _market("Baras", 5, date.today())
-        _market("Capas", 3, date.today())            # not a Tarlac City barangay: left alone
+        _market("Capas", 3, date.today())
         db.session.add(SmeProfile(user_id=1, business_name="x", industry_type=FOOD, location="BARAS"))
         db.session.commit()
 
@@ -179,7 +166,6 @@ def test_startup_folds_aliases_into_the_official_name(app):
         assert merged["sme_profile"] == {"BARAS": "Baras-baras"}
         locations = {row.location for row in MarketData.query.all()}
         assert "Baras" not in locations and "Baras-baras" in locations and "Capas" in locations
-        # Idempotent.
         assert _merge_barangay_aliases() == {}
 
 
@@ -206,10 +192,6 @@ def test_an_upload_accepts_an_alias(app):
         assert _resolve_barangay("Baras", 2, errors) == "Baras-baras"
     assert errors == []
 
-
-# ---------------------------------------------------------------------
-# 2. The month timeline
-# ---------------------------------------------------------------------
 
 def test_periods_are_resolved_and_clamped():
     from app.services.saturation_timeline_service import resolve_period, timeline_bounds
@@ -243,12 +225,10 @@ def test_history_uses_counts_on_file_and_joins_up_with_them(app):
         assert recorded["basis"] == "recorded" and recorded["competitor_count"] == 10
         before = at("2024-02")
         assert before["basis"] == "back-projected"
-        # Anchored on the first real count (10), not today's (20).
         assert 8 <= before["competitor_count"] <= 11
         assert at("2021-01")["competitor_count"] <= before["competitor_count"]
         now = at(None)
         assert now["basis"] == "current" and now["competitor_count"] == 20
-        # Fewer businesses then -> a lower score then.
         assert recorded["scores"]["saturation_index"] <= now["scores"]["saturation_index"]
 
 
@@ -264,7 +244,6 @@ def test_the_future_is_a_model_prediction_with_falling_confidence(app):
         near = saturation_map_at(FOOD, ["Poblacion"], as_of=month(3))[0]
         far = saturation_map_at(FOOD, ["Poblacion"], as_of=month(11))[0]
         assert near["basis"] == far["basis"] == "predicted"
-        # Its own recorded trend is upward, so the count keeps rising.
         assert now["competitor_count"] < near["competitor_count"] < far["competitor_count"]
         assert far["scores"]["confidence_level"] < near["scores"]["confidence_level"] < now["scores"]["confidence_level"]
 
@@ -299,8 +278,6 @@ def test_map_js_passes_the_month_and_labels_it():
     assert "&as_of=${encodeURIComponent(asOf)}" in js
     assert "window.dssReloadMap = function" in js
     assert '"dss:locations-loaded"' in js
-    # The panel labels the chosen month's figures and guidance as that
-    # month's (IT expert review), not today's.
     assert "selectedPeriodRow(detail.location)" in js and "periodGuidanceHtml(period" in js
     with open(os.path.join(ROOT, "app", "static", "js", "map_timeline.js"), encoding="utf-8") as handle:
         timeline = handle.read()

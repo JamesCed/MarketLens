@@ -112,10 +112,6 @@ def _fake_post(monkeypatch, answer):
     return prompts
 
 
-# ---------------------------------------------------------------------
-# 1. The send: temporary failures are retried, permanent ones are not
-# ---------------------------------------------------------------------
-
 @pytest.mark.parametrize("first", [_busy(503), _busy(429), _busy(500)])
 def test_a_busy_answer_is_sent_again(app, monkeypatch, first):
     with app.app_context():
@@ -182,7 +178,7 @@ def test_no_send_starts_once_the_time_budget_is_spent(app, monkeypatch):
         _gemini_on(app, monkeypatch)
 
         def answer(prompt, n):
-            clock["now"] += 35  # each busy answer takes 35 s
+            clock["now"] += 35
             return _busy(503)
 
         prompts = _fake_post(monkeypatch, answer)
@@ -214,10 +210,6 @@ def test_one_call_never_holds_a_page_past_its_own_ceiling(app, monkeypatch):
     assert len(timeouts) == 2
     assert clock["now"] - started <= llm_service.GEMINI_CALL_BUDGET_SECONDS + llm_service.GEMINI_TIMEOUT_SECONDS
 
-
-# ---------------------------------------------------------------------
-# 2. A NEW plan: everything Gemini, even when Gemini struggles at first
-# ---------------------------------------------------------------------
 
 def _user(email, role="SME"):
     user = User(name=email.split("@")[0], email=email, role=role)
@@ -311,10 +303,6 @@ def test_a_new_plan_that_gemini_could_not_write_is_stamped_for_the_page(app, mon
     assert rec["explanation"]["transcript_failed_version"] == rec_service.TRANSCRIPT_REQUEST_VERSION
 
 
-# ---------------------------------------------------------------------
-# 3. A stored forecast still holding the template: upgraded by the page
-# ---------------------------------------------------------------------
-
 @pytest.fixture
 def all_template(app, monkeypatch):
     """A plan whose stored forecast is the template throughout -- the
@@ -354,7 +342,6 @@ def test_the_page_upgrades_the_recommendation_and_the_transcript(app, all_templa
     assert after["generated_by"] == "llm:gemini" and after["headline"] == ONE_CALL["headline"]
     assert after["explanation"] == TRANSCRIPT
     assert after["competitor_insight"]["generated_by"].startswith("llm:gemini")
-    # Measurements are never the AI's: the payload and analysis are as read.
     assert after["forecast"] == before["forecast"]
     assert after["subcategory_analysis"] == before["subcategory_analysis"]
 
@@ -409,10 +396,6 @@ def test_a_gemini_written_plan_says_so_and_asks_for_nothing(app, all_template, m
     assert "data-forecast-transcript" not in planning
 
 
-# ---------------------------------------------------------------------
-# 4. The competitor insight and the innovation read
-# ---------------------------------------------------------------------
-
 def _insight_context():
     return {"subcategory_analysis": None, "competitor_count": 7, "industry_type": "Food and Beverage",
             "location": "Tibag", "forecast": None}
@@ -444,10 +427,6 @@ def test_the_prompt_asks_for_suggestions_when_there_is_no_idea(app):
     assert "has not said yet what makes the business different" in prompt
     assert '"innovation"' in prompt and '"suggestions"' in prompt
 
-
-# ---------------------------------------------------------------------
-# 5. The page script
-# ---------------------------------------------------------------------
 
 def test_the_script_repaints_and_asks_again_by_itself():
     with open(os.path.join(ROOT, "app", "static", "js", "forecast_transcript.js"), encoding="utf-8") as f:

@@ -37,10 +37,6 @@ from app.models.user import User
 from app.services import market_alert_service as alerts
 
 
-# ---------------------------------------------------------------------
-# FIXTURES
-# ---------------------------------------------------------------------
-
 @pytest.fixture
 def app():
     app = create_app("testing")
@@ -192,10 +188,6 @@ def no_llm(monkeypatch):
     monkeypatch.setattr(recommendation_service, "llm_recommendations_enabled", lambda: False)
 
 
-# ---------------------------------------------------------------------
-# DETECTION
-# ---------------------------------------------------------------------
-
 def test_a_big_move_with_more_competitors_is_detected(app):
     with app.app_context():
         _market_history("Food and Beverage", "San Roque", [4, 40])
@@ -253,21 +245,10 @@ def test_saturation_drift_with_no_competitor_change_is_not_reported(app):
 
 def test_a_small_move_within_the_same_tier_is_not_reported(app):
     with app.app_context():
-        # One extra competitor out of fifty cannot shift the index ten
-        # points, and it cannot cross a tier boundary either.
         _market_history("Food and Beverage", "San Roque", [50, 51])
 
         assert alerts.detect_fluctuations() == []
 
-
-# ---------------------------------------------------------------------
-# THE REPORTING RULE ITSELF
-# ---------------------------------------------------------------------
-# Tested directly rather than through the detector. Going through the
-# detector meant the boundary cases were never actually reached -- the
-# model's output for a given pair of competitor counts never landed
-# near a tier edge, so the assertions passed whether or not the rule
-# was right. Deleting the tier floor entirely left every test green.
 
 def test_a_big_move_is_reportable_even_inside_one_tier():
     assert alerts.is_reportable(12.0, "High", "High") is True
@@ -311,16 +292,11 @@ def test_moves_are_ordered_biggest_first(app):
         assert deltas == sorted(deltas, reverse=True)
 
 
-# ---------------------------------------------------------------------
-# SCOPING: WHO HEARS WHAT
-# ---------------------------------------------------------------------
-
 def test_an_sme_is_warned_only_about_their_own_barangay_and_industry(app, sent):
     with app.app_context():
         mine = _user("SME", "mine@example.com", notify_saturation_change=True)
         _plan(mine, "Food and Beverage", "San Roque")
 
-        # A move in their plan, and two that are none of their business.
         _market_history("Food and Beverage", "San Roque", [4, 40])
         _market_history("Construction", "Matatalaib", [3, 30])
         _market_history("Food and Beverage", "Maliwalo", [3, 30])
@@ -349,7 +325,6 @@ def test_an_opportunity_reaches_their_industry_anywhere_in_the_city(app, sent):
                      notify_saturation_change=False, notify_recommendations=True)
         _plan(user, "Food and Beverage", "San Roque")
 
-        # Their trade, a barangay they have no plan in, getting better.
         _market_history("Food and Beverage", "Maliwalo", [40, 4])
         db.session.commit()
 
@@ -369,7 +344,7 @@ def test_a_worsening_market_is_not_offered_as_a_recommendation(app, sent):
                      notify_saturation_change=False, notify_recommendations=True)
         _plan(user, "Food and Beverage", "San Roque")
 
-        _market_history("Food and Beverage", "Maliwalo", [4, 40])  # got worse
+        _market_history("Food and Beverage", "Maliwalo", [4, 40])
         db.session.commit()
 
         result = alerts.run_market_alert_sweep(force=True)
@@ -408,10 +383,6 @@ def test_an_inactive_account_is_not_notified(app, sent):
         assert Notification.query.filter_by(user_id=user.user_id).count() == 0
         assert sent == []
 
-
-# ---------------------------------------------------------------------
-# THE SWITCHES
-# ---------------------------------------------------------------------
 
 def test_a_switch_that_is_off_sends_nothing_at_all(app, sent):
     """Not "no email but still a bell notification".
@@ -481,10 +452,6 @@ def test_the_defaults_table_matches_the_column_defaults(app):
             assert bool(column.default.arg) is expected, field
 
 
-# ---------------------------------------------------------------------
-# THE COOLDOWN
-# ---------------------------------------------------------------------
-
 def test_the_second_sweep_in_the_hour_does_nothing(app, sent):
     """Importing three files in a row is one event to a person, and a
     free mail tier is measured in hundreds of messages a day."""
@@ -522,10 +489,6 @@ def test_an_unreadable_cooldown_stamp_does_not_wedge_alerting(app):
         assert alerts._may_sweep_now() is True
 
 
-# ---------------------------------------------------------------------
-# THE WEEKLY DIGEST
-# ---------------------------------------------------------------------
-
 def test_the_digest_is_due_on_a_fresh_install(app):
     with app.app_context():
         assert alerts.digest_is_due() is True
@@ -555,7 +518,7 @@ def test_a_quiet_week_sends_no_digest_and_keeps_the_clock_running(app, sent):
     """
     with app.app_context():
         _user("LGU", "quietweek@example.com", notify_weekly_trends=True)
-        _market_history("Food and Beverage", "San Roque", [15, 15])  # no real move
+        _market_history("Food and Beverage", "San Roque", [15, 15])
         db.session.commit()
 
         result = alerts.run_weekly_trend_digest()
@@ -578,10 +541,6 @@ def test_the_digest_respects_its_own_switch_not_the_saturation_one(app, sent):
         assert result["notified"] == 0
         assert sent == []
 
-
-# ---------------------------------------------------------------------
-# THE AI WORDING
-# ---------------------------------------------------------------------
 
 def test_the_ai_writes_the_wording_when_it_is_enabled(app, monkeypatch):
     with app.app_context():
@@ -692,8 +651,8 @@ def test_the_alert_wording_uses_the_same_provider_order_as_recommendations(app, 
             return _generate
 
         monkeypatch.setattr(llm_service, "_GENERATORS", {
-            "openai": _generator("openai", None),          # configured, dead
-            "anthropic": _generator("anthropic", None),    # no key
+            "openai": _generator("openai", None),
+            "anthropic": _generator("anthropic", None),
             "gemini": _generator("gemini", '{"summary": "written by gemini"}'),
         })
 
@@ -719,10 +678,6 @@ def test_plain_prose_from_the_model_is_accepted(app, monkeypatch):
 
         assert result == ("Competition in San Roque has risen sharply.", "llm:gemini")
 
-
-# ---------------------------------------------------------------------
-# THE HOOKS, AND FAILING SAFE
-# ---------------------------------------------------------------------
 
 def test_a_broken_sweep_is_reported_not_raised(app, monkeypatch):
     """This runs off the back of an LGU upload. An alerting problem must
@@ -811,7 +766,6 @@ def test_a_broken_sweep_does_not_fail_the_upload(app, monkeypatch):
         monkeypatch.setattr(alerts, "run_all_alert_sweeps",
                             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
 
-        # No exception escapes -- that is the whole assertion.
         data_import_service._run_alert_sweeps()
 
 
@@ -826,10 +780,6 @@ def test_a_places_refresh_that_changed_nothing_does_not_alert(app, monkeypatch):
     assert "if refreshed:" in source
     assert source.index("if refreshed:") < source.index("run_all_alert_sweeps")
 
-
-# ---------------------------------------------------------------------
-# THE EMAIL BODIES
-# ---------------------------------------------------------------------
 
 def test_every_notification_email_says_how_to_stop_it(app, monkeypatch):
     """An automated email that does not say how to turn it off is the
@@ -861,8 +811,6 @@ def test_every_notification_email_says_how_to_stop_it(app, monkeypatch):
             body = bodies[subject]
             assert switch in body, switch
             assert "Settings > Notifications" in body
-            # And no OTHER switch is named, which is the failure that
-            # would send someone to turn off the wrong thing.
             for other in expected.values():
                 if other != switch:
                     assert other not in body
@@ -886,15 +834,6 @@ def test_a_notification_email_is_not_attempted_when_mail_is_unconfigured(app, mo
         assert email_service.send_market_alert("a@example.com", "Ana", "s", "b") is False
         assert attempted == []
 
-
-# ---------------------------------------------------------------------
-# WHO THE MAIL COMES FROM
-# ---------------------------------------------------------------------
-# "Is there no sender yet?" was the question that started this feature,
-# and the answer used to depend on which of three variables happened to
-# be set. A BREVO_API_KEY with no GMAIL_ADDRESS resolved to no sender at
-# all, and every send was refused for a missing "from" -- which reads in
-# the logs like a credential problem and is not one.
 
 def test_the_sender_falls_back_to_the_support_address(app, monkeypatch):
     """A deployment with a Brevo key and nothing else still has a sender,
@@ -966,10 +905,6 @@ def test_the_settings_page_says_so_when_email_is_off(app, monkeypatch):
         assert "Email is not configured on this deployment" in body
         assert "Your notifications" in body
 
-
-# ---------------------------------------------------------------------
-# THE DETECTOR READS; IT DOES NOT WRITE
-# ---------------------------------------------------------------------
 
 def test_detection_never_creates_a_market_data_row(app):
     """The bug this guards is subtle and was real.
@@ -1102,8 +1037,8 @@ def test_unchanged_pairs_are_never_handed_to_the_scorer(app):
     from app.services import forecasting_service
 
     with app.app_context():
-        _market_history("Food and Beverage", "San Roque", [4, 40])   # moved
-        _market_history("Construction", "Matatalaib", [12, 12])      # did not
+        _market_history("Food and Beverage", "San Roque", [4, 40])
+        _market_history("Construction", "Matatalaib", [12, 12])
         db.session.commit()
 
         asked = []

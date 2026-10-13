@@ -100,11 +100,6 @@ def _detail(client, location, industry=FOOD):
     return response.get_json()
 
 
-# ---------------------------------------------------------------------------
-# 1. Top-3 industries in the barangay detail
-# ---------------------------------------------------------------------------
-
-
 def test_detail_ranks_the_three_biggest_industries(app, client):
     """Most businesses first, at most three, measured vs estimated told
     apart -- and every count the reconciled one, not the raw newest row."""
@@ -114,29 +109,15 @@ def test_detail_ranks_the_three_biggest_industries(app, client):
     archived.archive(None, "test: archived rows must not count")
     db.session.add_all(
         [
-            # A generated placeholder -- the biggest number, but not a real one.
             _market_row(FOOD, here, 70, "Manual"),
-            # Stale snapshot of the same combo: only the freshest counts.
             _market_row(FOOD, here, 999, "Manual", date(2020, 1, 1)),
-            # The newest row is a generated placeholder of 8 (what gets
-            # written when an old Google row is refreshed with no live
-            # lookup available), but Google saw 55 and the permit
-            # register 12 the day before. Reconciled -- each real source
-            # at its freshest, then the larger -- it is 55, FROM GOOGLE:
-            # so a real, measured count, even though the row it rides on
-            # is the placeholder. "Newest wins" would show 8, and reading
-            # the row's own source would wrongly call it an estimate.
             _market_row("Manufacturing", here, 55, "Google Places API", yesterday),
             _market_row("Manufacturing", here, 12, "DTI", yesterday),
             _market_row("Manufacturing", here, 8, "Manual"),
-            # From an LGU permit upload: a real source.
             _market_row(SERVICES, here, 50, "DTI"),
-            # Fourth place: left out by the limit.
             _market_row("Construction", here, 10, "Google Places API"),
-            # No businesses: never a "top" industry.
             _market_row("Mining and Quarrying", here, 0, "Manual"),
             archived,
-            # Another barangay's businesses are not this one's.
             _market_row("Education", elsewhere, 300, "Google Places API"),
         ]
     )
@@ -149,8 +130,6 @@ def test_detail_ranks_the_three_biggest_industries(app, client):
         {"industry": "Manufacturing", "label": "Manufacturing", "count": 55, "is_estimated": False},
         {"industry": SERVICES, "label": "Other Services", "count": 50, "is_estimated": False},
     ]
-    # Total still covers every industry on file here (reconciled), not
-    # just the three shown: 70 + 55 + 50 + 10 + 0.
     assert detail["total_businesses"] == 185
 
 
@@ -216,11 +195,6 @@ def test_detail_for_a_never_scored_barangay_lists_only_the_flagged_estimate(app,
     assert top[0]["is_estimated"] is True
 
 
-# ---------------------------------------------------------------------------
-# 2. A cleaner Saturation Map page
-# ---------------------------------------------------------------------------
-
-
 def _rendered_map_page(client):
     from flask import url_for
 
@@ -248,16 +222,10 @@ def test_saturation_map_keeps_a_short_honest_about_section(app, client):
     assert re.search(r"<summary>\s*About this map", about_html), "collapsible should be titled 'About this map...'"
     bullets = re.findall(r"<li>", about_html)
     assert 3 <= len(bullets) <= 5, f"expected 3-5 concise bullets, found {len(bullets)}"
-    # The same honest facts, just shorter: what is measured, what is
-    # estimated (and that it is marked), why, and what the lines mean.
     text = re.sub(r"<[^>]+>", " ", about_html)
-    # The boundaries bullet changed when the official PSA/NAMRIA barangay
-    # boundaries replaced the computed cells: it now names that source
-    # instead of calling the inner lines approximations.
     for fact in ("Google Places", "2024 PSA", "Estimated", "(est.)", "thousands of paid Google calls",
                  "official boundary", "PSA / NAMRIA", "city border", "not a survey"):
         assert fact in text, f"the About section lost: {fact!r}"
-    # One short caption instead of the paragraphs.
     assert "Click a barangay for details." in body
 
 
@@ -267,7 +235,6 @@ def test_saturation_map_keeps_every_required_attribution(app, client):
     assert "ODbL" in body
     assert "leafletjs.com" in body
     assert "powered by google" in body.lower()
-    # map.css is this page's own stylesheet, loaded from <head>.
     head = body.split("</head>", 1)[0]
     assert "css/map.css" in head
 
@@ -285,10 +252,7 @@ def test_every_element_map_js_looks_up_is_on_the_saturation_map_page():
     queried |= set(re.findall(r'querySelector(?:All)?\(\s*["\'`]#([A-Za-z0-9_-]+)', code))
     assert {"dss-map", "detailPanel", "tierShowAll", "saturationLegend"} <= queried, "id extraction broke"
 
-    # Built by map.js itself, inside HTML it injects.
     created_by_js = set(re.findall(r'\bid="([^"$]+)"', js))
-    # renderLocationTable() is a guarded no-op on a page without a
-    # #locationTable, and no current page has one.
     optional = {"locationTable"}
     missing = sorted(queried - template_ids - created_by_js - optional)
     assert missing == [], f"map.js looks up ids the Saturation Map no longer has: {missing}"
@@ -297,11 +261,6 @@ def test_every_element_map_js_looks_up_is_on_the_saturation_map_page():
         assert attribute in code and attribute in template, f"{attribute} missing from map.js or the page"
     for tier in ("Low", "Moderate", "High", "Saturated"):
         assert f'data-tier-filter="{tier}"' in template and f'data-tier-count="{tier}"' in template
-
-
-# ---------------------------------------------------------------------------
-# 3. map.js: focus a barangay, popups that fit a small map
-# ---------------------------------------------------------------------------
 
 
 def _map_js_code():
@@ -350,11 +309,6 @@ def test_leaflet_contract_under_node():
     assert "ALL LEAFLET CONTRACT CHECKS PASSED" in result.stdout
 
 
-# ---------------------------------------------------------------------------
-# Layout follow-up: controls on the right, map as tall as the side panel,
-# and a tab that folds the side panel away.
-# ---------------------------------------------------------------------------
-
 def test_the_controls_sit_in_the_header_to_the_right_of_the_title():
     template = _read(MAP_TEMPLATE)
     head = template.split('class="dss-sat-head', 1)[1].split('id="satLayout"', 1)[0]
@@ -368,12 +322,16 @@ def test_the_controls_sit_in_the_header_to_the_right_of_the_title():
     assert "margin-left: auto" in rule, "the controls should stay on the right when they wrap"
 
 
-def test_the_map_grows_to_the_side_panels_height():
+def test_the_map_keeps_a_fixed_height_whatever_the_side_panel_does():
+    """Developer's note: nothing that expands beside the map may stretch
+    it. The map has its own fixed height and the columns align to the
+    top instead of stretching to one shared height."""
     css = _read(os.path.join(ROOT, "app", "static", "css", "map.css"))
-    assert re.search(r"\.dss-sat-map-card\s*\{[^}]*height:\s*100%", css)
     map_rule = re.search(r"\.dss-sat-map-card #dss-map\s*\{([^}]+)\}", css).group(1)
-    assert "flex: 1 1 auto" in map_rule and "height: auto" in map_rule and "min-height" in map_rule
-    assert re.search(r"\.dss-sat-layout\s*\{[^}]*align-items:\s*stretch", css)
+    assert "flex: 0 0 auto" in map_rule and "height: max(520px" in map_rule
+    assert "flex: 1 1 auto" not in map_rule
+    assert re.search(r"\.dss-sat-layout\s*\{[^}]*align-items:\s*start", css)
+    assert not re.search(r"\.dss-sat-map-card\s*\{[^}]*height:\s*100%", css)
 
 
 def test_the_side_panel_can_be_folded_away_and_brought_back():
@@ -381,7 +339,6 @@ def test_the_side_panel_can_be_folded_away_and_brought_back():
     assert 'id="satSideToggle"' in template
     assert 'aria-controls="satSide"' in template and 'id="satSide"' in template
     assert 'aria-expanded="true"' in template
-    # Both panels live inside the foldable side column.
     side = template.split('id="satSide"', 1)[1]
     assert 'id="detailPanel"' in side and 'id="locationList"' in side
     script = template.split('id="satSideToggle"', 1)[1]

@@ -80,8 +80,6 @@ auth_bp = Blueprint("auth", __name__)
 ROLE_MAP = {"sme": "SME", "lgu": "LGU"}
 PENDING_SESSION_KEY = "pending_registration"
 
-# Kept in step with sme_controller.BUSINESS_STAGES and the
-# sme_profile.business_stage ENUM.
 BUSINESS_STAGES = ["startup", "existing"]
 
 
@@ -117,9 +115,6 @@ def _create_user_from_pending(pending):
         email=pending["email"],
         role=pending["role"],
     )
-    # The personal details travel through the session ENCRYPTED (the
-    # session is a signed cookie, readable by whoever holds the browser)
-    # and land in encrypted columns -- see app/utils/privacy.py.
     personal = json.loads(decrypt_value(pending["personal"]) or "{}") if pending.get("personal") else None
     if personal:
         apply_personal_info(user, personal)
@@ -134,17 +129,6 @@ def _create_user_from_pending(pending):
 
     business = pending.get("business")
     if business and not SmeProfile.query.filter_by(user_id=user.user_id).first():
-        # ONE row, and only one. The parameters entered during sign-up are
-        # not copied anywhere afterwards -- `sme_profile` IS where a
-        # business plan lives, and "My Plans" and the Home page both read
-        # straight from it (see SmeProfile.to_dict and the My Plans popup
-        # in shared/_topbar.html). So this single insert is the plan; no
-        # second record is created to represent it, and no forecast row is
-        # written either.
-        #
-        # The existence check guards the one way a duplicate could appear:
-        # a double-submitted verification form, or a retried request,
-        # calling this twice for the same account.
         from app.services.plan_params import apply_plan_data
 
         profile = apply_plan_data(SmeProfile(user_id=user.user_id), business)
@@ -156,11 +140,6 @@ def _create_user_from_pending(pending):
             user_id=user.user_id,
             target=profile,
         )
-        # No forecast is run here on purpose. Scoring loads the trained
-        # model and can hit the Places API, which would make the visitor
-        # wait -- possibly through a request timeout -- on the one page
-        # where abandoning costs them the whole account. The plan is
-        # ready; the forecast runs when they open Home.
 
     return user
 
@@ -173,7 +152,6 @@ def _register_form_context(form=None):
 
     offering_items = []
     if form is not None and hasattr(form, "getlist"):
-        # Redraw the optional price list rows the visitor had typed.
         prices = form.getlist("offering_price")
         for i, name in enumerate(form.getlist("offering_item")):
             if (name or "").strip():
@@ -183,7 +161,7 @@ def _register_form_context(form=None):
     today = date.today()
     try:
         latest_birthdate = today.replace(year=today.year - MIN_AGE)
-    except ValueError:  # 29 February
+    except ValueError:
         latest_birthdate = today.replace(year=today.year - MIN_AGE, day=28)
     return {
         "form": form if form is not None else {},
@@ -227,8 +205,6 @@ def register():
         role = ROLE_MAP.get(request.form.get("role", "sme").strip().lower())
 
         errors = []
-        # Personal information, in full, for every self-registering
-        # account (SME and LGU) -- see app/services/account_params.py.
         personal, personal_errors = parse_personal_info(request.form)
         errors.extend(personal_errors)
         if not email or not password:
@@ -247,9 +223,6 @@ def register():
         full_name = compose_full_name(personal["first_name"], personal["middle_name"],
                                       personal["last_name"], personal["suffix"])
 
-        # The first business plan, for SME sign-ups only. Validated in the
-        # same pass as the account fields so the visitor sees everything
-        # that is wrong at once rather than one error per submit.
         business = None
         if role == "SME":
             business, business_errors = _collect_business_params(request.form)
@@ -283,24 +256,6 @@ def register():
                 flash(f"We sent a 6-digit verification code to {email}. Enter it below to finish creating your account.", "info")
                 return redirect(url_for("auth.verify_email"))
 
-            # Gmail is configured but the send failed -- a wrong app
-            # password, a Gmail rate limit, or a host that does not
-            # allow outbound SMTP. What happens next is now a
-            # deliberate choice rather than an accident.
-            #
-            # Creating the account anyway was the old behaviour, and on
-            # a deployment that MEANS to verify people it is the worst
-            # available outcome: a mistyped app password stops looking
-            # like "verification is broken" and starts looking like
-            # "verification quietly is not happening". Nobody notices
-            # until they wonder why unverified accounts exist.
-            # The reason is whatever the transport recorded, not a
-            # guess. This line used to name GMAIL_ADDRESS and port 587
-            # unconditionally -- so on a deployment using the Brevo
-            # transport it sent the reader to check two settings that
-            # were not involved, directly underneath the line stating
-            # the real cause. An error message that contradicts the one
-            # above it is worse than no error message.
             failure = email_service.last_failure()
             current_app.logger.error(
                 "verification email to %s could not be sent: %s%s",
@@ -356,15 +311,6 @@ def verify_email():
             return redirect(url_for("auth.register"))
 
         if not entered or entered != pending["code"]:
-            # ATTEMPTS ARE CAPPED. A six-digit code is one chance in a
-            # million per guess, which is only protection if the number
-            # of guesses is bounded -- unbounded, an attacker can post
-            # guesses as fast as HTTP allows for the whole ten-minute
-            # window, and a million is not a large number at that rate.
-            #
-            # Burning the pending registration rather than locking a
-            # timer keeps it simple and costs an honest typist nothing
-            # but starting the form again.
             max_attempts = int(current_app.config.get("EMAIL_VERIFICATION_MAX_ATTEMPTS", 5))
             pending["attempts"] = int(pending.get("attempts", 0)) + 1
             remaining = max_attempts - pending["attempts"]
@@ -390,8 +336,6 @@ def verify_email():
             return render_template("auth/verify_email.html", email=pending["email"])
 
         if User.query.filter_by(email=pending["email"]).first():
-            # Extremely unlikely (someone else registered the same email
-            # while this code was pending), but handle it cleanly.
             session.pop(PENDING_SESSION_KEY, None)
             flash("An account with that email already exists. Please log in.", "danger")
             return redirect(url_for("auth.login"))
@@ -416,11 +360,6 @@ def resend_verification_code():
         flash("Start registration again.", "warning")
         return redirect(url_for("auth.register"))
 
-    # THROTTLED. A free Gmail account sends roughly 500 messages a day,
-    # and an unthrottled resend button spends that at whatever rate
-    # somebody can click -- or floods a stranger's inbox using your
-    # address, since the recipient is chosen by whoever filled in the
-    # registration form.
     cooldown = int(current_app.config.get("EMAIL_VERIFICATION_RESEND_SECONDS", 60))
     last_sent = pending.get("last_sent_at")
     if last_sent:
@@ -440,9 +379,6 @@ def resend_verification_code():
         pending["code"] = code
         pending["expires_at"] = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat()
         pending["last_sent_at"] = datetime.utcnow().isoformat()
-        # A fresh code deserves a fresh allowance of attempts -- but
-        # resending must not become a way to buy unlimited guesses at
-        # the OLD code, which is why the code itself is replaced above.
         pending["attempts"] = 0
         session[PENDING_SESSION_KEY] = pending
         flash("A new code was sent to your email.", "success")
@@ -467,8 +403,6 @@ def login():
             flash("Invalid email or password.", "danger")
             return render_template("auth/login.html", email=email)
 
-        # A timed suspension whose end has passed is lifted here, at the
-        # moment it matters, and the trail records that it ended.
         if user.lift_expired_suspension():
             db.session.commit()
             log_action("admin_toggle_active", details="Reactivated: timed suspension ended", target=user,
@@ -502,28 +436,6 @@ def logout():
     return redirect(url_for("auth.login"))
 
 
-# =====================================================================
-# FORGOTTEN PASSWORD
-# =====================================================================
-# Same shape as registration verification -- a six-digit code to the
-# address on file -- and the same three protections, for the same
-# reasons: a bounded number of guesses, a throttle on resending, and a
-# code that expires.
-#
-# ONE THING IS DELIBERATELY DIFFERENT, AND IT IS THE IMPORTANT ONE.
-#
-# This form must not reveal whether an address has an account. "No
-# account with that email" turns the page into a free membership
-# oracle: submit a list of addresses, and every one that comes back
-# "sent" is a confirmed user of this system -- which, for a system
-# whose users are named business owners and city officials, is not a
-# harmless disclosure. So the response is identical either way, and
-# the code is only actually emailed when the account exists.
-#
-# The cost is a real one: somebody who mistypes their own address gets
-# the same reassuring message and no email. That is why the wording
-# names the address back to them and says to check it.
-
 PASSWORD_RESET_SESSION_KEY = "pending_password_reset"
 
 
@@ -541,20 +453,6 @@ def forgot_password():
         user = User.query.filter_by(email=email).first()
         ttl = int(current_app.config.get("PASSWORD_RESET_CODE_TTL_MINUTES", 15))
 
-        # A code is generated either way, and the session state is set
-        # either way. Only the SENDING depends on the account existing.
-        #
-        # THE SESSION STATE MATTERS AS MUCH AS THE FLASH MESSAGE. An
-        # earlier version set it only for real accounts, so an unknown
-        # address bounced straight back to this form while a known one
-        # went on to the reset page -- identical wording, completely
-        # different page, and the membership oracle this route exists
-        # to avoid was rebuilt out of a redirect. A test caught it.
-        #
-        # The decoy code is never emailed to anybody, so it cannot be
-        # entered; the attempt cap disposes of it after a few guesses,
-        # and reset_password() looks the account up again before
-        # changing anything.
         code = f"{secrets.randbelow(1_000_000):06d}"
         session[PASSWORD_RESET_SESSION_KEY] = {
             "email": email,
@@ -568,9 +466,6 @@ def forgot_password():
             if email_service.send_password_reset_code(email, user.name, code):
                 log_action("password_reset_requested", details=f"email={email}")
             else:
-                # Logged, not shown. Telling this visitor the send
-                # failed would confirm the account exists, which is the
-                # one thing this route must not do.
                 current_app.logger.error(
                     "password reset code for %s could not be sent: %s%s",
                     email,
@@ -598,9 +493,6 @@ def reset_password():
     pending = session.get(PASSWORD_RESET_SESSION_KEY)
 
     if request.method == "POST":
-        # No pending reset in this session. Deliberately the same
-        # message as a wrong code: "that code is not valid" tells a
-        # visitor nothing about whether an account exists.
         if not pending:
             flash("That reset code is no longer valid. Please request a new one.", "danger")
             return redirect(url_for("auth.forgot_password"))
@@ -626,12 +518,6 @@ def reset_password():
             return render_template("auth/reset_password.html", email=pending["email"])
 
         if not entered or not secrets.compare_digest(entered, pending["code"]):
-            # compare_digest rather than != : a plain comparison on a
-            # secret returns faster the earlier it finds a difference,
-            # which leaks the code one character at a time to anybody
-            # patient enough to measure it. The attempt cap makes that
-            # attack impractical anyway; using the constant-time
-            # comparison costs nothing and removes the question.
             max_attempts = int(current_app.config.get("EMAIL_VERIFICATION_MAX_ATTEMPTS", 5))
             pending["attempts"] = int(pending.get("attempts", 0)) + 1
             remaining = max_attempts - pending["attempts"]

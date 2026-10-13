@@ -58,25 +58,13 @@ from app.services.forecasting_service import SYSTEM_USER_EMAIL
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
-# The WHY an administrator types. Five characters is the smallest
-# number that rules out "x", "ok" and "test" while still accepting a
-# terse but real answer such as "spam" + one more word, or "dup row".
 MIN_REASON_LENGTH = 5
 
-# The audit trail's WHEN is shown in Philippine time, because that is
-# the clock the people reading it live by: created_at is stored in UTC
-# (datetime.utcnow), and a sign-in at 10:14 in the morning showing as
-# 02:14 reads as a break-in, not a sign-in. A fixed +8 offset rather
-# than a zoneinfo lookup is exact here -- the Philippines has no
-# daylight saving time -- and needs no tzdata package, which the
-# project's Windows venv does not have.
 DISPLAY_UTC_OFFSET = timedelta(hours=8)
 DISPLAY_TZ_LABEL = "PHT"
 
 AUDIT_PER_PAGE = 30
 
-# "none" is the rows with no account behind them: failed sign-ins,
-# password-reset requests from signed-out visitors, background jobs.
 AUDIT_ROLE_CHOICES = (
     ("Admin", "Admin"),
     ("SME", "SME"),
@@ -148,37 +136,54 @@ def dashboard():
     day_ago = now - timedelta(days=1)
     week_ago = now - timedelta(days=7)
 
-    live = User.query.filter(User.archived_at.is_(None))
-    users = live.all()
+    all_users = User.query.all()
+    users = [u for u in all_users if u.archived_at is None]
     states = {}
     for user in users:
         states[user.activity_state] = states.get(user.activity_state, 0) + 1
+
+    from sqlalchemy import func, select
+
+    def table_count(model, archived=None):
+        table = model.__table__
+        query = select(func.count()).select_from(table)
+        if archived is True:
+            query = query.where(table.c.archived_at.isnot(None))
+        elif archived is False:
+            query = query.where(table.c.archived_at.is_(None))
+        return query.scalar_subquery()
+
+    forecasts_n, lgu_n, market_n, lgu_archived_n, market_archived_n = db.session.execute(select(
+        table_count(ForecastResult),
+        table_count(LguData, archived=False),
+        table_count(MarketData, archived=False),
+        table_count(LguData, archived=True),
+        table_count(MarketData, archived=True),
+    )).one()
+
+    start_day = (_to_local(now).date() - timedelta(days=13))
+    since = datetime.combine(start_day, time.min) - DISPLAY_UTC_OFFSET
+    rows = db.session.query(AuditLog.created_at, AuditLog.action).filter(AuditLog.created_at >= since).all()
+    high = set(high_importance_actions())
+    last_day = [action for created_at, action in rows if created_at is not None and created_at >= day_ago]
+
     stats = {
         "total_users": len(users),
-        "archived_users": User.query.filter(User.archived_at.isnot(None)).count(),
+        "archived_users": len(all_users) - len(users),
         "by_role": {role: sum(1 for u in users if u.role == role) for role in ("SME", "LGU", "Admin")},
         "online": states.get("online", 0),
         "active": states.get("active", 0) + states.get("online", 0),
         "inactive": states.get("inactive", 0),
         "suspended": states.get("suspended", 0),
-        "new_this_week": live.filter(User.created_at >= week_ago).count(),
-        "total_forecasts": ForecastResult.query.count(),
-        "total_lgu_data": LguData.query.count(),
-        "total_market_data": MarketData.query.count(),
-        "archived_records": (
-            LguData.query.execution_options(**{INCLUDE_ARCHIVED: True}).filter(LguData.archived_at.isnot(None)).count()
-            + MarketData.query.execution_options(**{INCLUDE_ARCHIVED: True})
-            .filter(MarketData.archived_at.isnot(None)).count()
-        ),
-        "events_24h": AuditLog.query.filter(AuditLog.created_at >= day_ago).count(),
-        "important_24h": AuditLog.query.filter(
-            AuditLog.created_at >= day_ago, AuditLog.action.in_(high_importance_actions())
-        ).count(),
+        "new_this_week": sum(1 for u in users if u.created_at is not None and u.created_at >= week_ago),
+        "total_forecasts": int(forecasts_n or 0),
+        "total_lgu_data": int(lgu_n or 0),
+        "total_market_data": int(market_n or 0),
+        "archived_records": int(lgu_archived_n or 0) + int(market_archived_n or 0),
+        "events_24h": len(last_day),
+        "important_24h": sum(1 for action in last_day if action in high),
     }
 
-    # SECURITY: failed sign-ins in the last 24 hours, and any address or
-    # account with a burst of them -- the pattern of someone guessing
-    # passwords. A burst is SUSPICIOUS_FAILURES or more.
     failures = AuditLog.query.filter(AuditLog.action == "login_failed", AuditLog.created_at >= day_ago).all()
     by_ip, by_email = {}, {}
     for entry in failures:
@@ -193,11 +198,6 @@ def dashboard():
     )
     alerts.sort(key=lambda a: -a["count"])
 
-    # ACTIVITY: audit events per day for the last 14 days, split into
-    # important and routine, for the chart.
-    start_day = (_to_local(now).date() - timedelta(days=13))
-    since = datetime.combine(start_day, time.min) - DISPLAY_UTC_OFFSET
-    rows = db.session.query(AuditLog.created_at, AuditLog.action).filter(AuditLog.created_at >= since).all()
     days = [start_day + timedelta(days=i) for i in range(14)]
     important = {d: 0 for d in days}
     routine = {d: 0 for d in days}
@@ -239,8 +239,6 @@ def dashboard():
     )
 
 
-# Failed sign-ins from one address or for one account within 24 hours
-# at which the dashboard raises an alert.
 SUSPICIOUS_FAILURES = 5
 
 
@@ -253,7 +251,7 @@ def _system_health():
 
         checks.append(("Market model (stage 1)", models_are_trained(),
                        "trained Random Forest loaded" if models_are_trained() else "not trained -- formula fallback in use"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         checks.append(("Market model (stage 1)", False, "could not be checked"))
     try:
         from app.services import plan_forecast_service as pfs
@@ -261,7 +259,7 @@ def _system_health():
         model = pfs._load_plan_model() if hasattr(pfs, "_load_plan_model") else None
         checks.append(("Plan model (stage 2)", model is not None,
                        "trained plan viability model loaded" if model is not None else "not trained -- scorecard formula in use"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         checks.append(("Plan model (stage 2)", False, "could not be checked"))
     try:
         from app.services.llm_service import gemini_transcription_available
@@ -269,14 +267,14 @@ def _system_health():
         ok = bool(gemini_transcription_available())
         checks.append(("Gemini (AI transcript)", ok,
                        "configured and switched on" if ok else "no Gemini key, or the AI switch is off"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         checks.append(("Gemini (AI transcript)", False, "could not be checked"))
     try:
         from app.services import email_service
 
         ok = bool(email_service.is_configured())
         checks.append(("Email delivery", ok, "configured" if ok else "not configured -- alerts stay in-app"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         checks.append(("Email delivery", False, "could not be checked"))
     try:
         from app.services.forecasting_service import places_calls_today
@@ -284,12 +282,11 @@ def _system_health():
         used, budget = places_calls_today()
         checks.append(("Google Places budget", not budget or used < budget,
                        f"{used} of {budget or 'unlimited'} lookups used today"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         checks.append(("Google Places budget", False, "could not be checked"))
     return [{"name": n, "ok": ok, "note": note} for n, ok, note in checks]
 
 
-# ------------------------------------------------------------------ users
 USERS_PER_PAGE = 25
 USER_STATUS_CHOICES = (
     ("", "All accounts"),
@@ -298,8 +295,6 @@ USER_STATUS_CHOICES = (
     ("inactive", "Inactive (not seen in 30 days)"),
     ("suspended", "Suspended"),
 )
-# How long a suspension can last, in days. None = until an administrator
-# lifts it.
 SUSPENSION_CHOICES = ((1, "1 day"), (3, "3 days"), (7, "7 days"), (30, "30 days"), (None, "Until I lift it"))
 
 
@@ -385,8 +380,6 @@ def create_user():
     last = request.form.get("last_name", "").strip()[:60]
     suffix = request.form.get("suffix", "").strip()
     suffix = suffix if suffix in SUFFIXES else ""
-    # The name in parts, like sign-up; a single "name" is still read so an
-    # older form (or script) keeps working.
     name = compose_full_name(first, middle, last, suffix) if (first and last) else request.form.get("name", "").strip()
     email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
@@ -408,9 +401,6 @@ def create_user():
 
     existing = User.query.filter_by(email=email).first()
     if existing is not None:
-        # An archived account still owns its address (email is unique),
-        # so say where it is rather than a bare "already exists" that
-        # sends the admin looking through a list it is not in.
         if existing.is_archived:
             flash("An archived account already uses that email. Restore it from the Archived tab instead.", "warning")
             return redirect(url_for("admin.users", tab="archived"))
@@ -435,9 +425,6 @@ def toggle_active(user_id):
         flash("You cannot suspend your own account.", "warning")
         return redirect(url_for("admin.users"))
     if user.is_archived:
-        # Suspending an archived account would change nothing anyone can
-        # see (it cannot sign in either way) but would quietly decide
-        # what state it comes back in on restore.
         flash(f"{user.email} is archived. Restore it first.", "warning")
         return redirect(url_for("admin.users", tab="archived"))
 
@@ -447,9 +434,6 @@ def toggle_active(user_id):
         return redirect(url_for("admin.users"))
 
     if suspending:
-        # How long: 1, 3, 7 or 30 days, or until an administrator lifts
-        # it. Anything else (a hand-edited form) means "until lifted" --
-        # the safer reading of an unclear suspension.
         raw = (request.form.get("duration") or "").strip()
         days = int(raw) if raw.isdigit() and int(raw) in {d for d, _l in SUSPENSION_CHOICES if d} else None
         until = datetime.utcnow() + timedelta(days=days) if days else None
@@ -475,12 +459,6 @@ def toggle_active(user_id):
     return redirect(url_for("admin.users"))
 
 
-# There is deliberately NO delete route for accounts any more -- see
-# point 2 in the module docstring. Archiving is the replacement: the
-# account can no longer sign in (User.is_active is False once
-# archived_at is set) and leaves the active list, but everything that
-# names it -- the audit trail, the datasets it uploaded, its plans --
-# still resolves, and it can be restored exactly as it was.
 @admin_bp.route("/users/<int:user_id>/archive", methods=["POST"])
 @role_required("Admin")
 def archive_user(user_id):
@@ -518,9 +496,6 @@ def restore_user(user_id):
     if reason is None:
         return redirect(url_for("admin.users", tab="archived"))
 
-    # restore() clears only the archive stamp; status is untouched, so an
-    # account that was suspended before it was archived comes back
-    # suspended rather than being quietly reactivated.
     user.restore()
     db.session.commit()
     log_action("admin_restore_user", details=f"{user.role} account", target=user, reason=reason)
@@ -529,7 +504,6 @@ def restore_user(user_id):
     return redirect(url_for("admin.users"))
 
 
-# ------------------------------------------------------------- audit trail
 def _present_entry(entry):
     """One audit row as the five W's, ready to show.
 
@@ -550,12 +524,8 @@ def _present_entry(entry):
         if entry.user_id is not None:
             name = f"Account #{entry.user_id}"
         elif entry.route:
-            # Recorded inside a request with nobody signed in -- a failed
-            # sign-in, a password-reset request.
             name = "Visitor (not signed in)"
         elif entry.reason:
-            # The five-W writer always records a WHY, so a row that has
-            # one but no request was written by a background job.
             name = "System"
         else:
             name = "No account recorded"
@@ -571,36 +541,28 @@ def _present_entry(entry):
         except (TypeError, ValueError):
             changes = None
     return SimpleNamespace(
-        # DETAILS -- the full before/after record behind the row (see
-        # AuditLog.changes); None when there is nothing more to show.
         changes=changes,
         category=category_for(entry.action),
         importance=importance_for(entry.action),
         user_id=entry.user_id,
         id=entry.id,
-        # WHO
         who_name=name,
         who_email=user.email if user else None,
         who_role=entry.actor_role or (user.role if user else None),
         who_archived=bool(user is not None and user.is_archived),
-        # WHAT
         action=entry.action,
         what=label_for(entry.action),
         target_type=target_type_label(entry.target_type),
         target_id=entry.target_id,
         target_label=entry.target_label,
         details=entry.details,
-        # WHEN
         when=_to_local(entry.created_at),
         when_utc=entry.created_at,
-        # WHERE
         ip=entry.ip_address,
         method=entry.http_method,
         route=entry.route,
         device=describe_device(entry.user_agent),
         user_agent=entry.user_agent,
-        # WHY -- and whether it is a person's words or the action's
-        # standing purpose, so the page can tell the two apart.
         why=reason,
         why_is_stated=bool(reason) and reason != purpose_for(entry.action),
     )
@@ -632,16 +594,11 @@ def _audit_filters():
         "date_from": day_from.isoformat() if day_from else "",
         "date_to": day_to.isoformat() if day_to else "",
         "category": category if category in {value for value, _label in CATEGORIES} else "",
-        # "" = the default, important rows only (see audit_labels);
-        # "all" shows routine rows too.
         "importance": importance if importance in {"high", "all"} else "",
         "user": user if user.isdigit() else "",
     }
 
 
-# "!" rather than the usual backslash: MySQL treats a backslash inside a
-# string literal as an escape of its own, so the same ESCAPE clause
-# means different things on MySQL and SQLite. "!" means the same on both.
 _LIKE_ESCAPE = "!"
 
 
@@ -688,11 +645,6 @@ def _audit_query(filters):
     elif filters["importance"] == "high":
         query = query.filter(AuditLog.action.in_(high_importance_actions()))
     elif filters["importance"] != "all":
-        # THE FLOOD GUARD: by default routine rows (theme changes, plan
-        # switching, the tour...) are left out. They are still there --
-        # "Everything" shows them -- but they no longer bury the rows an
-        # administrator is looking for. An explicit action filter always
-        # wins, so asking for a routine action by name still finds it.
         query = query.filter(AuditLog.action.notin_(low_importance_actions()))
 
     if filters["category"]:
@@ -705,16 +657,12 @@ def _audit_query(filters):
             query = query.filter(AuditLog.action.in_(known))
 
     if filters["user"]:
-        # One account's trail: what it DID, and what was done TO it (an
-        # administrator suspending or archiving it) -- both are its story.
         uid = int(filters["user"])
         query = query.filter(or_(
             AuditLog.user_id == uid,
             and_(AuditLog.target_type == "User", AuditLog.target_id == str(uid)),
         ))
 
-    # The dates the admin picks are Philippine dates; created_at is UTC.
-    # "From Oct 1" therefore starts at Oct 1 00:00 PHT = Sep 30 16:00 UTC.
     if filters["date_from"]:
         start = datetime.combine(date.fromisoformat(filters["date_from"]), time.min) - DISPLAY_UTC_OFFSET
         query = query.filter(AuditLog.created_at >= start)
@@ -732,8 +680,6 @@ def audit_log():
     page = request.args.get("page", 1, type=int)
     pagination = _audit_query(filters).paginate(page=page, per_page=AUDIT_PER_PAGE, error_out=False)
 
-    # Only actions that actually occur -- a dropdown of forty options
-    # most of which match nothing is a dropdown nobody uses.
     present_actions = [row[0] for row in db.session.query(AuditLog.action).distinct().all() if row[0]]
     action_choices = sorted(((a, label_for(a)) for a in present_actions), key=lambda pair: pair[1].lower())
 
@@ -755,9 +701,6 @@ def audit_log():
     )
 
 
-# Repeats of the same action by the same person on the same record within
-# this window are folded into one row ("x 12") -- the other half of the
-# flood guard. Folded rows are still listed, one click away.
 REPEAT_WINDOW = timedelta(minutes=10)
 
 
@@ -813,8 +756,6 @@ def export_audit_log():
     entries = [_present_entry(entry) for entry in _audit_query(filters).all()]
 
     buffer = io.StringIO()
-    # A byte-order mark so Excel reads the file as UTF-8: names such as
-    # "Peña" otherwise open as mojibake.
     buffer.write("\ufeff")
     writer = csv.writer(buffer)
     writer.writerow(AUDIT_CSV_HEADER)
@@ -829,10 +770,6 @@ def export_audit_log():
             "; ".join(f"{k}: {v}" for k, v in (e.changes or {}).items()) or None,
         )])
 
-    # The filters ARE the WHAT of an export -- which slice of the trail
-    # left the system -- so unlike an ordinary page view (see _where()
-    # in app/utils/audit.py, which keeps query strings out of the log),
-    # they are recorded, along with how many rows went out.
     described = ", ".join(f"{key}={value}" for key, value in filters.items() if value) or "no filters"
     log_action("export_audit_log", details=f"{len(entries)} rows ({described})")
 
@@ -844,7 +781,6 @@ def export_audit_log():
     )
 
 
-# --------------------------------------------------------------- datasets
 def _lgu_row_label(row):
     uploaded = row.upload_date.strftime("%b %d, %Y") if row.upload_date else "no date"
     return f"{row.barangay} ({row.source}, uploaded {uploaded})"
@@ -902,13 +838,15 @@ def _system_account_email():
 @admin_bp.route("/datasets")
 @role_required("Admin")
 def datasets():
-    # No archived_at filter needed on these four: the global filter in
-    # app/models/archive.py already hides archived rows from them, which
-    # is the same view of the data every analysis gets.
     lgu_rows = LguData.query.order_by(LguData.upload_date.desc(), LguData.lgu_id.desc()).limit(100).all()
     market_rows = MarketData.query.order_by(MarketData.date_recorded.desc(), MarketData.market_id.desc()).limit(100).all()
-    market_total = MarketData.query.count()
-    market_real_count = MarketData.query.filter_by(source="Google Places API").count()
+    from sqlalchemy import case, func
+
+    market_total, market_real_count = db.session.query(
+        func.count(MarketData.market_id),
+        func.sum(case((MarketData.source == "Google Places API", 1), else_=0)),
+    ).one()
+    market_total, market_real_count = int(market_total or 0), int(market_real_count or 0)
     return render_template(
         "admin/datasets.html",
         lgu_rows=lgu_rows,
@@ -941,17 +879,6 @@ def export_barangay_seed_csv():
     )
 
 
-# Archive / restore for the two data tables. There is deliberately NO
-# delete route -- see point 2 in the module docstring.
-#
-# Both look the row up with get_including_archived(): an ordinary
-# query cannot see an archived row at all, so restore could never find
-# its target, and archiving an already-archived row would 404 instead
-# of saying "already archived".
-#
-# The label and id are read BEFORE the commit and handed to the audit
-# log as a tuple, so the audit row describes the record as it was when
-# the admin acted on it.
 def _set_archived(row, *, archive, action, label, target_type, target_id):
     if archive and row.is_archived:
         flash(f"{label} is already archived.", "info")
@@ -1025,7 +952,6 @@ def restore_market_data(market_id):
                          label=_market_row_label(row), target_type="MarketData", target_id=market_id)
 
 
-# ------------------------------------------------------------ settings
 def _save_plan_assumptions(form):
     """Save the plan forecast's two Admin-editable assumptions -- the
     daily wage (P1-P100,000) and the gross margin (0.05-0.95) -- and
@@ -1049,14 +975,10 @@ def _save_plan_assumptions(form):
             wage = float(raw_wage)
         except ValueError:
             wage = None
-        if wage is None or not (low <= wage <= high):  # also refuses NaN and infinity
+        if wage is None or not (low <= wage <= high):
             rejected.append(f"Settings saved, except the daily wage: it must be between ₱{low:,.0f} and "
                             f"₱{high:,.0f} a day.")
         else:
-            # Stored at centavo precision -- the precision the forecast
-            # uses and records it at (plan_forecast_service.WAGE_DECIMALS)
-            # -- written out in full ("12345.67", where :g would have
-            # cut it to six significant digits), trailing zeros dropped.
             SystemSetting.set(WAGE_SETTING_KEY, f"{wage:.2f}".rstrip("0").rstrip("."))
 
     raw_margin = (form.get(MARGIN_SETTING_KEY) or "").strip()
@@ -1079,8 +1001,6 @@ def _save_plan_assumptions(form):
 @role_required("Admin")
 def settings():
     if request.method == "POST":
-        # Every setting's value before the save, so the trail records
-        # exactly what changed from what to what (the Details button).
         before = {row.setting_key: row.setting_value for row in SystemSetting.query.all()}
         for key in (
             "kmeans_n_clusters",
@@ -1096,17 +1016,8 @@ def settings():
 
         SystemSetting.set("use_llm_recommendations", "true" if request.form.get("use_llm_recommendations") else "false")
 
-        # Plan forecast assumptions (stage 2 of the forecast). Unlike the
-        # MSI weights above, these ARE validated: a wage of 0 would make
-        # every plan's payroll free and a margin of 1.0 would make every
-        # price list break even on one sale -- both would quietly become
-        # forecasts. plan_forecast_service also refuses such values at
-        # read time, but refusing them here is what tells the Admin.
         rejected = _save_plan_assumptions(request.form)
 
-        # The Discord invite behind the footer's Community Forum link.
-        # Only a discord.gg / discord.com invite is accepted -- anything
-        # else would make /community an open redirect.
         from app.controllers.community_controller import SETTING_KEY, is_valid_invite
 
         invite = (request.form.get("community_invite_url") or "").strip()
@@ -1135,7 +1046,6 @@ def settings():
     return render_template("admin/settings.html", settings=all_settings, cluster_thresholds=CLUSTER_THRESHOLDS)
 
 
-# --------------------------------------------------------- LLM status
 @admin_bp.route("/llm-status", methods=["GET"])
 @admin_bp.route("/llm-status/probe", methods=["GET", "POST"], endpoint="llm_probe")
 @role_required("Admin")
@@ -1171,15 +1081,12 @@ def llm_status():
     if request.path.endswith("/probe"):
         log_action("admin_llm_probe")
         payload["probe"] = llm_service.probe()
-        # The status is re-read AFTER the probe so last_failure
-        # reflects this attempt rather than whatever failed before it.
         payload["status"] = llm_service.llm_status()
     else:
         payload["hint"] = "Open /admin/llm-status/probe to make a real test call."
     return jsonify(payload)
 
 
-# ------------------------------------------------------- email status
 @admin_bp.route("/email-status", methods=["GET"])
 @admin_bp.route("/email-status/probe", methods=["GET", "POST"], endpoint="email_probe")
 @role_required("Admin")

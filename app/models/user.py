@@ -70,107 +70,35 @@ class User(ArchivableMixin, UserMixin, db.Model):
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.Enum("Admin", "SME", "LGU", name="user_role"), nullable=False)
 
-    # ---------------- Personal information (IT expert review) ----------------
-    # The name in parts. `name` above stays the single display name every
-    # page already shows; it is composed from these
-    # (account_params.compose_full_name). NULL on accounts created before
-    # sign-up asked for them -- Settings asks those owners to complete it.
     first_name = db.Column(db.String(60), nullable=True)
     middle_name = db.Column(db.String(60), nullable=True)
     last_name = db.Column(db.String(60), nullable=True)
     suffix = db.Column(db.String(10), nullable=True)
 
-    # ENCRYPTED AT REST (app/utils/privacy.py): the table holds only
-    # ciphertext; the app reads and writes plain strings. The contact
-    # number moved here from the original VARCHAR(20) `contact_number`
-    # column, which is too short for ciphertext -- startup_migrations
-    # encrypts any number still in it and clears it. The old column is
-    # kept (mapped as legacy_contact_number) so the given schema is not
-    # altered.
     contact_number = db.Column("contact_number_enc", EncryptedText, nullable=True)
     legacy_contact_number = db.Column("contact_number", db.String(20), nullable=True)
     gender = db.Column("gender_enc", EncryptedText, nullable=True)
     birthdate_iso = db.Column("birthdate_enc", EncryptedText, nullable=True)
     address_line = db.Column("address_line_enc", EncryptedText, nullable=True)
     address_barangay = db.Column("address_barangay_enc", EncryptedText, nullable=True)
-    # When the Terms and Conditions / Data Privacy Notice were accepted.
     terms_accepted_at = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.Enum("active", "inactive", name="user_status"), nullable=False, default="active")
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    # Additive -- see docstring above. A data: URI (base64 image), or
-    # NULL if the user never uploaded one (falls back to initials()).
     profile_picture = db.Column(db.Text().with_variant(LONGTEXT(),"mysql"), nullable=True)
 
-    # Additive preferences, saved by the Settings page.
-    #
-    # theme: 'light' | 'dark'. A plain string, not an Enum, so adding a
-    # value later needs no migration.
-    #
-    # There is deliberately no "match system" option: the choice should
-    # be one the person made and can see, not one that changes under
-    # them when their laptop switches at sunset. Accounts created before
-    # this was decided may still hold 'system' in the database --
-    # resolved_theme() below maps that to light, and
-    # startup_migrations.py rewrites the rows.
     theme = db.Column(db.String(10), nullable=False, default="light", server_default="light")
 
-    # ---------------- Notification preferences ----------------
-    # Four switches, stored as four columns on this row. Still no new
-    # rows anywhere: a per-user/per-setting preferences table would cost
-    # four rows per account to hold four booleans.
-    #
-    # ONE OF THESE IS WIRED TO A LIVE FEATURE AND THREE ARE NOT, and
-    # that distinction is deliberate rather than an oversight:
-    #
-    #   notify_saturation_change -> REAL. Checked by
-    #       _maybe_fire_early_warning() in forecasting_service.py before
-    #       an early-warning notification is created. Defaults ON, since
-    #       the warnings are one of the SME module's stated features.
-    #
-    #   notify_recommendations / notify_weekly_trends
-    #       -> REAL. app/services/market_alert_service.py detects
-    #       material movement in market_data and delivers both an
-    #       in-app Notification and an email through email_service.
-    #
-    #   notify_newsletter
-    #       -> saved, and nothing sends it. A monthly newsletter is
-    #       product news written by a person; there is no copy and no
-    #       author, and wiring it to send something auto-generated
-    #       would make an honest label into a false one. The Settings
-    #       page still marks this one as not sending.
-    #
-    #   All three default OFF: an account must not be silently opted in
-    #   to mail it never asked for. Only notify_saturation_change, a
-    #   stated SME-module feature, defaults ON.
     notify_recommendations = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     notify_weekly_trends = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     notify_saturation_change = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
     notify_newsletter = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
 
-    # First-time walkthrough (see static/js/tour.js). NULL means the
-    # account has never been asked "is this your first time?" -- which is
-    # every account that existed before the walkthrough did, so each of
-    # them is asked exactly once. 'touring' while a walkthrough is in
-    # progress, then 'completed' or 'skipped'. A plain string so adding a
-    # state later needs no migration.
     onboarding_state = db.Column(db.String(20), nullable=True)
 
-    # ---------------- Monitoring (Admin > Manage Users) ----------------
-    # last_seen_at: the last time this account used the system, written
-    # at sign-in and then at most once every LAST_SEEN_RESOLUTION by the
-    # before_request hook in app/__init__.py -- a write per page view
-    # would be the most expensive thing on every page. That resolution is
-    # plenty for "is this account active or dormant?".
-    #
-    # suspended_until: a suspension's end. NULL with status 'inactive'
-    # means suspended until an administrator lifts it; a date means the
-    # suspension ends on its own then (lift_expired_suspension).
     last_seen_at = db.Column(db.DateTime, nullable=True)
     suspended_until = db.Column(db.DateTime, nullable=True)
 
     LAST_SEEN_RESOLUTION = timedelta(minutes=5)
-    # An account not seen for this long is "inactive" on the Manage Users
-    # page -- dormant, not suspended.
     INACTIVE_AFTER = timedelta(days=30)
 
     def touch_last_seen(self, now=None):
@@ -211,8 +139,6 @@ class User(ArchivableMixin, UserMixin, db.Model):
             return "online"
         return "active" if idle <= self.INACTIVE_AFTER else "inactive"
 
-    # Kept as an alias so older code and databases that used the
-    # original name keep working after the rename.
     @property
     def notify_early_warning(self):
         return self.notify_saturation_change
@@ -221,9 +147,6 @@ class User(ArchivableMixin, UserMixin, db.Model):
     def notify_early_warning(self, value):
         self.notify_saturation_change = bool(value)
 
-    # Only the values the UI offers. Anything else -- a legacy 'system'
-    # row, or a hand-edited one -- resolves to light, so nothing
-    # unexpected can reach the <html data-bs-theme> attribute.
     THEMES = ("light", "dark")
 
     @property
@@ -235,20 +158,13 @@ class User(ArchivableMixin, UserMixin, db.Model):
     notifications = db.relationship("Notification", backref="user", lazy="dynamic", cascade="all, delete-orphan")
     uploaded_lgu_data = db.relationship("LguData", backref="uploader", lazy="dynamic")
 
-    # Flask-Login's UserMixin.get_id() returns str(self.id) by default,
-    # but this table's primary key column is named user_id, not id --
-    # override it so login sessions actually work.
     def get_id(self):
         return str(self.user_id)
 
     @property
     def is_active(self):
-        # An archived account cannot sign in whatever its status says:
-        # archiving is the admin's replacement for deletion, so it has to
-        # be at least as final as deletion was for access.
         return self.status == "active" and self.archived_at is None
 
-    # ---------------- personal information helpers ----------------
     @property
     def birthdate(self):
         from datetime import date as _date

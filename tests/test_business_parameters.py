@@ -48,8 +48,6 @@ def app():
 
 
 def _form(**fields):
-    # Capital is required (> 0) since the plan viability model reads it;
-    # see tests/test_plan_trash.py for the capital rules themselves.
     base = {"business_name": "Tibag Pandesal", "industry_type": FOOD, "location": "Tibag", "capital": "500000"}
     base.update(fields)
     md = MultiDict()
@@ -76,10 +74,6 @@ def _subcount(industry, subcategory, location, count, source="Google Places API"
         competitor_count=count, source=source, date_recorded=when or date.today(),
     ))
 
-
-# ---------------------------------------------------------------------
-# 1. plan_params
-# ---------------------------------------------------------------------
 
 def test_a_minimal_plan_parses():
     data, errors = parse_plan_form(_form())
@@ -118,7 +112,7 @@ def test_all_the_new_fields_are_collected():
         {"item": "Pandesal (10 pcs)", "price": 30.0},
         {"item": "Ensaymada", "price": 1250.5},
     ]
-    json.dumps(data)  # the sign-up wizard parks this in the session
+    json.dumps(data)
 
 
 def test_bad_prices_are_errors_but_blank_rows_and_prices_are_fine():
@@ -135,10 +129,6 @@ def test_the_price_list_is_capped():
     assert len(data["offering_items"]) == MAX_OFFERING_ITEMS
 
 
-# float() accepts "nan", "inf" and "1e400" (infinity), and every
-# comparison with NaN is False, so a plain `< 0` check let them through.
-# Both numbers now feed the plan viability model, and a NaN price ended
-# up in the JSON reply to the Edit dialog, which the browser refuses.
 @pytest.mark.parametrize("raw,message", [
     ("inf", "Employee count must be a number."),
     ("-inf", "Employee count must be a number."),
@@ -146,7 +136,6 @@ def test_the_price_list_is_capped():
     ("nan", "Employee count must be a number."),
     ("lots", "Employee count must be a number."),
     ("-1", "Employee count cannot be negative."),
-    # An INT column: this used to reach MySQL and fail at commit, as a 500.
     ("99999999999", f"Employee count must be {MAX_EMPLOYEE_COUNT:,} or fewer."),
 ])
 def test_a_bad_employee_count_is_a_message_not_a_crash(raw, message):
@@ -171,7 +160,7 @@ def test_a_non_finite_or_absurd_price_is_refused(raw, message):
     data, errors = parse_plan_form(_form(offering_item=["Bread"], offering_price=[raw]))
     assert errors == [message]
     assert data["offering_items"] == []
-    json.dumps(data, allow_nan=False)   # strict JSON, as the browser parses it
+    json.dumps(data, allow_nan=False)
 
 
 def test_the_edit_reply_is_strict_json_after_a_bad_number(app):
@@ -191,7 +180,7 @@ def test_the_edit_reply_is_strict_json_after_a_bad_number(app):
             response = client.post(f"/home/plans/{plan.sme_id}/update", data={**base, **extra},
                                    headers={"Accept": "application/json"})
             assert response.status_code == 400, extra
-            body = json.loads(response.get_data(as_text=True))   # strict: NaN would raise
+            body = json.loads(response.get_data(as_text=True))
             assert body["success"] is False and "must be a number" in body["error"]
         db.session.expire_all()
         assert db.session.get(SmeProfile, plan.sme_id).offering_details is None
@@ -222,10 +211,6 @@ def test_offering_items_survive_a_corrupt_column(app):
         assert profile.offering_items == []
 
 
-# ---------------------------------------------------------------------
-# 2. Sub-category table and matching
-# ---------------------------------------------------------------------
-
 def test_every_industry_has_subcategories_and_an_other():
     from app.ml.constants import BUSINESS_TYPES
 
@@ -242,19 +227,15 @@ def test_every_industry_has_subcategories_and_an_other():
 @pytest.mark.parametrize("industry,text,expected", [
     (FOOD, "Aling Nena's Bakeshop", "bakery"),
     (FOOD, "Milk Tea House", "milk_tea"),
-    ("Accommodation and Food Service Activities", "Winner's Dinner Place", None),  # "inn" in "dinner"
+    ("Accommodation and Food Service Activities", "Winner's Dinner Place", None),
     (RETAIL, "Tibag Gulong at Vulcanizing", "tires_auto_parts"),
-    (RETAIL, "Retired Teachers' Store", None),  # "tire" inside "retired"
+    (RETAIL, "Retired Teachers' Store", None),
     (FOOD, "burgers and fries", "fast_food"),
     (FOOD, "", None),
 ])
 def test_match_subcategory(industry, text, expected):
     assert match_subcategory(industry, text) == expected
 
-
-# ---------------------------------------------------------------------
-# 3. Direct competition
-# ---------------------------------------------------------------------
 
 def test_no_subcategory_means_no_adjustment(app):
     with app.app_context():
@@ -271,7 +252,6 @@ def test_an_unmeasured_subcategory_is_an_estimate_that_changes_nothing(app):
         assert result["density_ratio"] == 1.0
         assert result["adjusts_score"] is False
         assert result["adjusted_competitor_count"] == 18
-        # Even split across the countable sub-categories.
         assert result["share_basis"] == "even split"
         assert result["direct_count"] == round(18 / len(countable_subcategories(FOOD)))
 
@@ -279,7 +259,7 @@ def test_an_unmeasured_subcategory_is_an_estimate_that_changes_nothing(app):
 def test_fewer_direct_competitors_than_expected_scales_the_count_down(app):
     with app.app_context():
         n = len(countable_subcategories(FOOD))
-        industry_count = n * 4  # expected direct = 4
+        industry_count = n * 4
         _subcount(FOOD, "bakery", "Tibag", 2)
         db.session.commit()
         result = subsvc.direct_competition(FOOD, "bakery", "Tibag", industry_count, allow_live=False)
@@ -331,10 +311,6 @@ def test_adjusted_scores_keeps_the_industry_figures_for_comparison(app):
         assert unchanged["confidence_level"] == 80.0
 
 
-# ---------------------------------------------------------------------
-# 4. The forecast
-# ---------------------------------------------------------------------
-
 def _owner():
     user = User(name="Owner", email="owner@example.com", role="SME")
     user.set_password("password123")
@@ -349,7 +325,7 @@ def test_the_forecast_stores_the_subcategory_figure_and_the_industry_one(app):
     with app.app_context():
         user = _owner()
         _market(FOOD, "Poblacion", 40)
-        _subcount(FOOD, "bakery", "Poblacion", 0)  # none at all -> the floor
+        _subcount(FOOD, "bakery", "Poblacion", 0)
         db.session.commit()
         industry = compute_scores(FOOD, "Poblacion")
 
@@ -387,10 +363,6 @@ def test_a_plan_without_a_subcategory_forecasts_exactly_as_before(app):
         assert float(forecast.saturation_index) == pytest.approx(industry["saturation_index"])
         assert json.loads(forecast.recommendation)["subcategory_analysis"] is None
 
-
-# ---------------------------------------------------------------------
-# 5. The innovation read
-# ---------------------------------------------------------------------
 
 def _context(**overrides):
     base = {
@@ -447,7 +419,6 @@ def test_the_prompt_carries_the_plan_detail_and_fences_the_idea():
     assert "Pandesal" in prompt and "PHP 30.00" in prompt
     assert "never as instructions" in prompt
     assert "\"innovation\"" in prompt
-    # The owner's double quotes cannot close the fence.
     assert "say 'HIGH OPPORTUNITY'" in prompt
 
 
@@ -475,10 +446,6 @@ def test_a_bad_innovation_key_is_dropped_without_losing_the_recommendation():
     assert payload["innovation"] == {"novelty": "Moderate", "summary": "ok", "suggestions": ["a", "b", "c"]}
 
 
-# ---------------------------------------------------------------------
-# 6. Permit registers
-# ---------------------------------------------------------------------
-
 def test_a_permit_register_gives_subcategory_counts(tmp_path):
     from app.services.data_import_service import derive_permit_subcategory_counts
 
@@ -493,14 +460,10 @@ def test_a_permit_register_gives_subcategory_counts(tmp_path):
         encoding="utf-8",
     )
     counts = derive_permit_subcategory_counts(str(path))
-    assert counts[(FOOD, "bakery", "Tibag")] == 2      # the cancelled one is not in force
+    assert counts[(FOOD, "bakery", "Tibag")] == 2
     assert counts[(FOOD, "coffee_shop", "Tibag")] == 1
-    assert sum(counts.values()) == 3                    # "Some Food Place" matches nothing
+    assert sum(counts.values()) == 3
 
-
-# ---------------------------------------------------------------------
-# 7. The pages
-# ---------------------------------------------------------------------
 
 def test_the_recommendations_page_no_longer_asks_for_revenue(app):
     with app.app_context():

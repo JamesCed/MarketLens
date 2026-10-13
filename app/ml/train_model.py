@@ -107,7 +107,6 @@ MODEL_DIR = os.path.join(os.path.dirname(__file__), "model_store")
 RF_MODEL_FILE = "rf_model.pkl"
 REPORT_FILE = "training_report.json"
 
-# MSI weights (mirrors app/config.py defaults / system_settings table)
 W1_COMPETITOR_DENSITY = 0.45
 W2_DEMAND_TREND = 0.35
 W3_SOCIODEMOGRAPHIC = 0.20
@@ -148,9 +147,6 @@ def _make_synthetic_dataset(rng):
         brgy = profiles[rng.integers(0, len(profiles))]
         industry_type = BUSINESS_TYPES[rng.integers(0, len(BUSINESS_TYPES))]
 
-        # Competitor count: denser/busier locations realistically support
-        # (and attract) more competitors; add noise so it's not a
-        # perfect function of foot traffic alone.
         base_competitors = 2 + 25 * _normalize(brgy["foot_traffic_index"], 0, 100)
         competitor_count = max(0, int(rng.normal(base_competitors, 4)))
 
@@ -163,9 +159,8 @@ def _make_synthetic_dataset(rng):
         business_density = brgy["business_density"] * rng.uniform(0.9, 1.1)
         industry_type_encoded = BUSINESS_TYPE_ENCODING.get(industry_type, OTHER_INDUSTRY_ENCODING)
 
-        # ---- component scores (0-1), matching the paper's definitions ----
         cd_score = _normalize(competitor_count, 0, 30)
-        dt_score = 1 - historical_success_rate  # low historical success = high demand-decline pressure
+        dt_score = 1 - historical_success_rate
         sd_score = (
             0.5 * _normalize(population_density, pop_lo, pop_hi)
             + 0.3 * _normalize(average_rent, rent_lo, rent_hi)
@@ -178,7 +173,7 @@ def _make_synthetic_dataset(rng):
             + W2_DEMAND_TREND * dt_score
             + W3_SOCIODEMOGRAPHIC * sd_score
         )
-        true_saturation = max(0.0, min(100.0, true_saturation + rng.normal(0, 4.0)))  # real-world noise
+        true_saturation = max(0.0, min(100.0, true_saturation + rng.normal(0, 4.0)))
 
         rows.append(
             {
@@ -204,7 +199,7 @@ def _label_clusters(kmeans):
     the 'Saturated' label -- it's whichever centroid actually scores
     highest."""
     centroid_scores = kmeans.cluster_centers_.mean(axis=1)
-    order = np.argsort(centroid_scores)  # ascending: lowest saturation first
+    order = np.argsort(centroid_scores)
     cluster_to_label = {}
     for rank, cluster_idx in enumerate(order):
         cluster_to_label[int(cluster_idx)] = CLUSTER_LABELS_ORDERED[rank]
@@ -233,18 +228,12 @@ def train_and_save(verbose=True):
     rf_model.fit(X_train, y_train)
 
     y_pred = rf_model.predict(X_test)
-    mae = float(mean_absolute_error(y_test, y_pred))          # in saturation-index POINTS (0-100 scale)
-    rmse = float(mean_squared_error(y_test, y_pred) ** 0.5)    # same units
+    mae = float(mean_absolute_error(y_test, y_pred))
+    rmse = float(mean_squared_error(y_test, y_pred) ** 0.5)
     accuracy_percent = round(max(0.0, 100.0 - mae), 2)
 
     feature_importances = dict(zip(FEATURE_NAMES, [float(v) for v in rf_model.feature_importances_]))
 
-    # ---- K-Means on (competitor pressure, business density) pairs ----
-    # See module docstring: this satisfies the paper's stated clustering
-    # methodology and is reported below for your evaluation chapter, but
-    # is NOT what forecasting_service.py uses to label a live forecast
-    # (that uses fixed thresholds on the RF's own saturation_index
-    # prediction instead -- simpler and schema-compatible).
     cluster_features = np.array([[r["cd_score"], r["business_density_norm"]] for r in data])
     kmeans_model = KMeans(n_clusters=N_CLUSTERS, random_state=RANDOM_STATE, n_init=10)
     kmeans_model.fit(cluster_features)
@@ -276,11 +265,6 @@ def train_and_save(verbose=True):
         ),
     }
 
-    # Stage 2 is trained on THIS run's stage-1 forest, after everything
-    # above is finished, with its own freshly seeded generator -- so it
-    # draws nothing from `rng` and cannot change a single stage-1
-    # number. Its section is added under one new key; every key above
-    # is exactly what it was before stage 2 existed.
     report["plan_model"] = train_plan_model(
         rf_model, np.random.default_rng(PLAN_RANDOM_STATE), verbose=verbose
     )
@@ -303,47 +287,13 @@ def train_and_save(verbose=True):
     return report
 
 
-# =====================================================================
-# STAGE 2 -- the Plan Viability Model (RF2)
-# =====================================================================
-# WHERE ITS TRAINING DATA COMES FROM. Same situation as stage 1: there
-# are no recorded outcomes of Tarlac City business plans to learn from
-# yet. So each synthetic plan is
-#
-#   1. placed in a market drawn EXACTLY the way stage 1's sampler draws
-#      one (a barangay profile, an industry, a competitor count around
-#      that barangay's foot traffic, the same +/-10% jitter);
-#   2. scored by the TRAINED stage-1 forest -- rf.predict, not the MSI
-#      formula -- so stage 2 learns on the saturation figures stage 1
-#      actually produces, quirks included, rather than on an idealised
-#      version of them. 30% of plans get a sub-category style
-#      adjustment (competitor count x U(0.3, 1.6), re-scored by the
-#      forest), as a bakery inside "Food and Beverage" would;
-#   3. given business parameters drawn from deliberately wide ranges
-#      (capital P10k-P10M log-uniform, 0-20 staff skewed small, 30%
-#      existing businesses, a price list 60% of the time...);
-#   4. given a daily wage and a gross margin drawn per plan -- the two
-#      assumptions an Admin can change (see _PLAN_DAILY_WAGE_RANGE
-#      below for why they are sampled rather than held at 590 / 40%);
-#   5. labelled with the scorecard S of app/ml/plan_model.py plus
-#      N(0, 3) noise -- the same "documented formula + real-world
-#      unpredictability" construction as stage 1's labels.
-#
-# So RF2's accuracy figures measure how well it RECOVERS THE DOCUMENTED
-# SCORECARD from raw inputs, not how well it predicts real business
-# survival. That is said in the report itself, and it is the reason the
-# pipeline exists as code: re-run it on real outcomes and the numbers
-# become real ones.
-
-# Plan-parameter sampling distributions, named so the report can quote
-# them and a reader can argue with them.
-_PLAN_CAPITAL_RANGE = (10_000.0, 10_000_000.0)          # PHP, log-uniform
-_PLAN_PRICE_RANGE = (10.0, 20_000.0)                    # PHP, log-uniform
-_PLAN_EMPLOYEE_CHOICES = np.arange(0, 21)               # 0-20 employees...
-_PLAN_EMPLOYEE_WEIGHTS = 0.8 ** _PLAN_EMPLOYEE_CHOICES  # ...each 20% rarer than the last
+_PLAN_CAPITAL_RANGE = (10_000.0, 10_000_000.0)
+_PLAN_PRICE_RANGE = (10.0, 20_000.0)
+_PLAN_EMPLOYEE_CHOICES = np.arange(0, 21)
+_PLAN_EMPLOYEE_WEIGHTS = 0.8 ** _PLAN_EMPLOYEE_CHOICES
 _PLAN_EMPLOYEE_WEIGHTS = _PLAN_EMPLOYEE_WEIGHTS / _PLAN_EMPLOYEE_WEIGHTS.sum()
-_PLAN_ITEM_CHOICES = np.arange(1, 31)                   # 1-30 priced items...
-_PLAN_ITEM_WEIGHTS = 0.9 ** (_PLAN_ITEM_CHOICES - 1)    # ...each 10% rarer than the last
+_PLAN_ITEM_CHOICES = np.arange(1, 31)
+_PLAN_ITEM_WEIGHTS = 0.9 ** (_PLAN_ITEM_CHOICES - 1)
 _PLAN_ITEM_WEIGHTS = _PLAN_ITEM_WEIGHTS / _PLAN_ITEM_WEIGHTS.sum()
 _PLAN_LABEL_NOISE_SD = 3.0
 _PLAN_PROBABILITIES = {
@@ -354,43 +304,9 @@ _PLAN_PROBABILITIES = {
     "has_innovation_idea": 0.5,
 }
 
-# The Admin's two assumptions, SAMPLED per plan (uniform) instead of held
-# at their defaults. WHY: the forest can only learn the effect of an
-# input that varies in its training data. While every training plan used
-# P590 and 40%, required daily sales was an exact function of average
-# price and fixed cost, so the forest learnt price coverage mostly from
-# average price and barely looked at required daily sales -- and an
-# Admin who halved the margin moved the scorecard by -1.2 points on an
-# average priced plan but the forest by -0.1. Drawing both per plan means
-# the labels can only be fitted fully through what the wage and margin
-# actually change: monthly fixed cost, capital runway and required daily
-# sales.
-#   * Wage P450-P800: a band around Tarlac's P590 wide enough for the
-#     next several wage orders, or an Admin who prices labour above the
-#     minimum, without leaving what the forest has seen.
-#   * Margin 15%-70%: from thin-margin trading and groceries to food
-#     service and services, around the 40% default.
-# WHAT IT ACHIEVED, measured over thousands of random plans (the numbers
-# are in Reference/FORECAST_MODEL.md and pinned by
-# tests/test_plan_forecast_model.py): a wage change gets through at about
-# 60% of the scorecard's effect -- as it did before, through capital
-# runway. Halving the margin now gets through at about 15%, up from 9%:
-# better, still weak. Average price still varies over three decades in
-# training against the margin's factor of five, so the trees keep
-# reading price coverage mostly from price; halving the PRICE, which
-# moves required daily sales exactly as halving the margin does, gets
-# through at about 70%. Closing that gap needs the coverage ratio itself
-# (required daily sales / daily sales ceiling) as a feature -- a change
-# to PLAN_FEATURE_NAMES, not to sampling.
-# An Admin may still type values outside these ranges (the form accepts
-# P1-P100,000 and 5%-95%); there the trees answer as for the nearest
-# value they were trained on, while the payload's financials and the
-# scorecard keep using the exact figure.
-_PLAN_DAILY_WAGE_RANGE = (450.0, 800.0)       # PHP/day, uniform
-_PLAN_GROSS_MARGIN_RANGE = (0.15, 0.70)       # share of each sale, uniform
+_PLAN_DAILY_WAGE_RANGE = (450.0, 800.0)
+_PLAN_GROSS_MARGIN_RANGE = (0.15, 0.70)
 
-# RF2's hyperparameters and split, named once: the fit, the report and
-# the training-config fingerprint (plan_training_config) all read them.
 _PLAN_HYPERPARAMETERS = {"n_estimators": N_ESTIMATORS, "max_depth": 14, "min_samples_leaf": 3}
 _PLAN_TEST_SIZE = 0.2
 
@@ -420,8 +336,7 @@ def _barangay_populations():
 
 def _make_plan_dataset(rf_market_model, rng, n_samples=None):
     """N_PLAN_SAMPLES (or `n_samples`) synthetic plans: (inputs dicts,
-    feature matrix, noise-free scorecard, noisy labels). See the block
-    comment above."""
+    feature matrix, noise-free scorecard, noisy labels)."""
     from app.ml.plan_model import derive_quantities, plan_feature_vector, scorecard_index
 
     n_samples = N_PLAN_SAMPLES if n_samples is None else int(n_samples)
@@ -443,7 +358,6 @@ def _make_plan_dataset(rf_market_model, rng, n_samples=None):
 
     drafts, industry_vectors, direct_vectors = [], [], []
     for _ in range(n_samples):
-        # ---- the market: drawn exactly as _make_synthetic_dataset does ----
         brgy = profiles[rng.integers(0, len(profiles))]
         industry_type = BUSINESS_TYPES[rng.integers(0, len(BUSINESS_TYPES))]
         base_competitors = 2 + 25 * _normalize(brgy["foot_traffic_index"], 0, 100)
@@ -455,7 +369,6 @@ def _make_plan_dataset(rf_market_model, rng, n_samples=None):
         business_density = brgy["business_density"] * rng.uniform(0.9, 1.1)
         industry_type_encoded = BUSINESS_TYPE_ENCODING.get(industry_type, OTHER_INDUSTRY_ENCODING)
 
-        # ---- the plan ----
         is_existing = bool(rng.random() < p["existing_business"])
         years_in_operation = round(float(rng.uniform(0, 15)), 1) if is_existing else 0.0
         adjusted = bool(rng.random() < p["subcategory_adjusted"])
@@ -471,14 +384,10 @@ def _make_plan_dataset(rf_market_model, rng, n_samples=None):
         described = bool(rng.random() < p["offering_described"]) or priced_items > 0
         has_idea = bool(rng.random() < p["has_innovation_idea"])
 
-        # Stage 1 sees the plan's own years in business, as
-        # compute_scores(years_in_operation=...) does for a real plan...
         industry_vectors.append([
             competitor_count, population_density, foot_traffic_index, average_rent,
             historical_success_rate, business_density, years_in_operation, industry_type_encoded,
         ])
-        # ...and the sub-category re-score uses years 0, exactly as
-        # forecasting_service.saturation_for_counts does at inference.
         direct_vectors.append([
             direct_count, population_density, foot_traffic_index, average_rent,
             historical_success_rate, business_density, 0.0, industry_type_encoded,
@@ -498,11 +407,6 @@ def _make_plan_dataset(rf_market_model, rng, n_samples=None):
             "has_innovation_idea": has_idea,
         })
 
-    # Stage 1's TRAINED forest scores every market, in one batch each.
-    # Pinned to one thread for the duration: with n_jobs=-1 the
-    # summation order of the trees varies run to run (see
-    # forecasting_service._pin_to_one_thread), and the training set
-    # should not differ in the last bit between two runs of this script.
     original_jobs = rf_market_model.n_jobs
     rf_market_model.n_jobs = 1
     try:
@@ -511,12 +415,6 @@ def _make_plan_dataset(rf_market_model, rng, n_samples=None):
     finally:
         rf_market_model.n_jobs = original_jobs
 
-    # The Admin's two assumptions, one draw each per plan. Drawn HERE,
-    # after every market and business parameter, so each synthetic plan
-    # is the very plan the wage-and-margin-fixed model was trained on --
-    # only its wage, its margin and (drawn after them) its label noise
-    # are new -- which keeps the before/after comparison about these two
-    # inputs and nothing else.
     wages = rng.uniform(*_PLAN_DAILY_WAGE_RANGE, size=len(drafts))
     margins = rng.uniform(*_PLAN_GROSS_MARGIN_RANGE, size=len(drafts))
 
@@ -537,36 +435,8 @@ def _make_plan_dataset(rf_market_model, rng, n_samples=None):
     return inputs_list, np.array(features, dtype=float), scorecard, labels
 
 
-# ---------------------------------------------------------------------
-# The training-config fingerprint -- how seed.py knows a model is stale
-# ---------------------------------------------------------------------
-# plan_model.pkl is gitignored, so every install trains its own -- and
-# seed.py used to retrain only when the file was MISSING. A host whose
-# build cache kept the file (Render's can) would then go on serving a
-# model trained on an older recipe, silently: it loads, it predicts, it
-# is simply not the model this code describes. So the bundle now records
-# a fingerprint of everything that decides what RF2 learns, and
-# plan_model_staleness() -- which seed.py calls on every build --
-# compares it with the fingerprint the CURRENT code computes. Any
-# difference retrains stage 2 (stage 1 is left alone).
-#
-# The fingerprint covers:
-#   * every named setting: sample count, seed, split, hyperparameters,
-#     label noise, each sampling range and probability, the scorecard
-#     weights, the feature order, the model version;
-#   * a RECIPE PROBE: the sampler, the feature arithmetic and the
-#     scorecard run on 256 plans against a fixed stand-in for stage 1,
-#     with every resulting number hashed. That catches what a list of
-#     names cannot -- a changed formula in plan_model.py, a new draw in
-#     the sampler, an edited constant in constants.py or seed_data.py --
-#     while an edit to a comment changes nothing and retrains nothing;
-#   * stage 1's forest itself (its trees' split features, thresholds and
-#     leaf values), because stage 2 learns on stage 1's outputs.
-
 _RECIPE_PROBE_SAMPLES = 256
 _RECIPE_PROBE_SEED = 20261002
-# Numbers are hashed at this many decimals, so a last-bit difference in
-# floating-point arithmetic cannot by itself read as a new recipe.
 _RECIPE_PROBE_DECIMALS = 6
 
 
@@ -587,7 +457,6 @@ class _StandInMarketModel:
 def _digest_arrays(*arrays):
     digest = hashlib.sha256()
     for array in arrays:
-        # + 0.0 turns -0.0 into 0.0, which round() can otherwise produce.
         rounded = np.round(np.asarray(array, dtype=np.float64), _RECIPE_PROBE_DECIMALS) + 0.0
         digest.update(np.ascontiguousarray(rounded).tobytes())
     return digest.hexdigest()
@@ -618,7 +487,7 @@ def market_model_digest(rf_market_model):
 def plan_training_config(rf_market_model):
     """Everything that decides what RF2 learns on top of
     `rf_market_model`, as plain JSON. Stored in the bundle (and its hash
-    in training_report.json); see the block comment above."""
+    in training_report.json)."""
     from app.ml.plan_model import PLAN_MODEL_VERSION
 
     return {
@@ -669,14 +538,14 @@ def plan_model_staleness(model_dir=None):
         return "no stage-1 model on disk to check the plan model against"
     try:
         bundle = joblib.load(plan_path)
-    except Exception:  # noqa: BLE001 -- unreadable means retrain, whatever the reason
+    except Exception:
         return "plan_model.pkl could not be read"
     recorded = bundle.get("training_config_hash") if isinstance(bundle, dict) else None
     if not recorded:
         return "plan_model.pkl predates the training-config fingerprint"
     try:
         rf_market_model = joblib.load(rf_path)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return "rf_model.pkl could not be read"
     expected = plan_training_config_hash(plan_training_config(rf_market_model))
     if recorded != expected:
@@ -720,7 +589,6 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
     )
     plan_model.fit(X[train_idx], y[train_idx])
 
-    # Pinned for evaluation, for the same reproducibility reason as above.
     plan_model.n_jobs = 1
     y_pred = plan_model.predict(X[test_idx])
     plan_model.n_jobs = -1
@@ -729,11 +597,7 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
     mae = float(mean_absolute_error(y_test, y_pred))
     rmse = float(mean_squared_error(y_test, y_pred) ** 0.5)
     r2 = float(r2_score(y_test, y_pred))
-    # How far the noisy labels themselves sit from the noise-free
-    # formula: the error even a perfect model of the formula would
-    # show. Reported so MAE can be read against what is achievable.
     noise_floor = float(mean_absolute_error(y_test, scorecard[test_idx]))
-    # How closely the forest reproduces the formula itself.
     mae_vs_formula = float(mean_absolute_error(scorecard[test_idx], y_pred))
     accuracy_percent = round(max(0.0, 100.0 - mae), 2)
 
@@ -770,8 +634,6 @@ def train_plan_model(rf_market_model, rng=None, verbose=True):
         "training_config_hash": training_config_hash,
         "assumptions": {
             "operating_days_per_month": OPERATING_DAYS_PER_MONTH,
-            # The DEFAULTS a forecast uses until an Admin changes them.
-            # Training does not hold them fixed -- see sampling below.
             "daily_wage_php": DEFAULT_DAILY_WAGE_PHP,
             "daily_wage_source": "DOLE Wage Order No. RBIII-26 (2nd tranche, effective 16 Apr 2026): "
                                  "Tarlac retail & service establishments",

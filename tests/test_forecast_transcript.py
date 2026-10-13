@@ -52,7 +52,6 @@ MODEL = "gemini-3.8-flash"
 
 @pytest.fixture
 def app(monkeypatch):
-    # The switch is decided per test; an operator's shell must not.
     monkeypatch.delenv("USE_LLM_RECOMMENDATIONS", raising=False)
     app = create_app("testing")
     with app.app_context():
@@ -79,10 +78,6 @@ def _gemini_on(app, monkeypatch, key=GEMINI_KEY):
     app.config["GEMINI_API_KEY"] = key
     app.config["LLM_PROVIDER"] = "gemini"
 
-
-# ---------------------------------------------------------------------
-# A payload in the contract's shape, with all seven scorecard parts
-# ---------------------------------------------------------------------
 
 SEVEN_COMPONENTS = [
     {"key": "market_opportunity", "label": "Market opportunity", "aspect": "Market",
@@ -147,7 +142,6 @@ def _context(**overrides):
     return context
 
 
-# Six sentences, every figure one the computation block shows.
 TRANSCRIPT = (
     "The trained models rate this bakery plan's viability at 6.1/10, with 84% confidence. "
     "Tibag is 42.1% saturated for this kind of business, which puts it in the Moderate tier. "
@@ -182,46 +176,36 @@ def _generators(monkeypatch, replies):
     return calls
 
 
-# ---------------------------------------------------------------------
-# 1. The block: the whole computation, and nothing else to quote
-# ---------------------------------------------------------------------
-
 def test_the_prompt_hands_gemini_the_whole_computation(app):
     with app.app_context():
         prompt = llm_service._transcript_prompt(llm_service._transcript_lines(_context()))
 
-    # The owner's inputs.
     for piece in ("Capital: ₱500,000", "Paid staff: 3 employee(s)", "Stage: a startup, not yet opened",
                   "Price list: 5 priced item(s); average price ₱85",
                   "Industry: Food and Beverage; sub-category: Bakery / Pastries", "Location: Tibag",
                   'What they will sell or serve (the owner\'s words): "Pandesal and ensaymada"',
                   "What makes the business different: not described yet"):
         assert piece in prompt, piece
-    # The market stage.
     assert "Market Saturation Index: 42.1% (tier: Moderate)" in prompt
     assert "before the sub-category adjustment: 48%" in prompt
     assert "Competitors counted: 7" in prompt and "Market-stage confidence: 88.2%" in prompt
     assert "residents per business: 1,556.3" in prompt
-    # The derived financials.
     for piece in ("Monthly rent for a site in Tibag: ₱15,000", "Monthly payroll: ₱46,020 (3 employee(s) × ₱590 × 26 days)",
                   "Monthly fixed cost: ₱61,020", "Capital runway: 8.2 months", "ramp-up before steady sales: 11.9 months",
                   "Capital adequacy score", ": 0.69", "Gross margin assumed: 40%",
                   "Sales a day needed just to cover the fixed costs: 69.1",
                   "plausibly support: 222.3", "Break-even window: 10-15 months"):
         assert piece in prompt, piece
-    # All seven scorecard parts, as score × weight = points.
     assert "Market opportunity (Market; from industry, sub-category, location): 0.58 × 0.4 = 23.2 points" in prompt
     scorecard = prompt.split("PLAN SCORECARD", 1)[1].split("PLAN MODEL", 1)[0]
     assert len(re.findall(r" × .+ = .+ points", scorecard)) == 7
     for component in SEVEN_COMPONENTS:
         assert component["label"] in scorecard
-    # The trained model's baseline and signed drivers summing to the PVI.
     assert "Baseline (the average plan the model learned from): 52" in prompt
     assert "Capital vs. running costs: -5.1 points" in prompt
     assert "Market saturation (industry · sub-category · location): +8.3 points" in prompt
     assert "Plan Viability Index: 61.3 out of 100" in prompt and "viability score of 6.1/10" in prompt
     assert "Plan-model confidence: 84%" in prompt
-    # The rules.
     assert "5-8 plain-language sentences" in prompt
     assert "copied exactly as written" in prompt and "round it differently" in prompt
     assert "in digits" in prompt and "₱ sign" in prompt and "no markdown" in prompt
@@ -239,11 +223,8 @@ def test_the_block_labels_carry_no_figures_of_their_own(app):
             assert rec_service._numbers_in(text) == [], text
     allowed = rec_service.transcript_allowed_figures(
         [(text, kind == "percent") for text, kind in lines if kind != "head"], _payload())
-    # None of these is a payload figure; each would be easy to leak from a
-    # label ("Stage 2", "the two stages", "/100").
     for value in (2.0, 4.0, 100.0):
         assert value not in allowed[0], f"{value} leaked into the block from a label"
-    # The wording used when a figure is absent adds nothing either.
     with app.app_context():
         bare = llm_service._transcript_lines(_context(employee_count=0, product_offering="",
                                                       forecast={**_payload(), "inputs": {
@@ -264,18 +245,12 @@ def test_what_the_block_showed_grounds_and_nothing_else_does(app):
         return rec_service.review_transcript(text, allowed, _payload())["ungrounded"]
 
     assert ungrounded(TRANSCRIPT) == []
-    # Shown only in the transcript block: the scorecard and the adequacy.
     assert ungrounded("Market opportunity earned 23.2 points; the capital adequacy score is 0.69.") == []
-    # The margin is shown as a percentage, so it grounds only a percentage.
     assert ungrounded("a 40% gross margin") == []
     assert ungrounded("40 months to break even") == ["40"]
     assert ungrounded("Expect ₱2,400,000 in your first year.") == ["2,400,000"]
     assert ungrounded("Break even in 4 months.") == ["4"]
 
-
-# ---------------------------------------------------------------------
-# 2. transcribe_forecast: Gemini first, retry, prune, fall back
-# ---------------------------------------------------------------------
 
 def test_gemini_writes_the_transcript_first(app, monkeypatch):
     with app.app_context():
@@ -388,10 +363,6 @@ def test_the_reply_is_read_as_plain_prose(raw, expected):
     assert llm_service._coerce_transcript(raw) == expected
 
 
-# ---------------------------------------------------------------------
-# 3. build_recommendation asks for the dedicated transcript
-# ---------------------------------------------------------------------
-
 def _one_call(explanation):
     body = {"headline": "MODERATE OPPORTUNITY -- viable.", "opportunity_type": "Moderate Opportunity",
             "summary": "S", "reasons": ["r"], "risks": ["k"]}
@@ -437,19 +408,15 @@ def test_when_every_provider_failed_only_a_gemini_key_earns_a_second_try(app, mo
         monkeypatch.setattr(llm_service, "generate_recommendation_json", lambda c: None)
         monkeypatch.setattr(llm_service, "transcribe_forecast", lambda c: asked.append(c) or None)
 
-        # No usable key anywhere: nothing would differ the second time.
         recommendation = rec_service.build_recommendation(_context())
         assert asked == []
         assert recommendation["explanation"]["generated_by"] == "rule-based"
 
-        # A Gemini key: the shorter dedicated call may succeed.
         app.config["GEMINI_API_KEY"] = GEMINI_KEY
         recommendation = rec_service.build_recommendation(_context())
         assert len(asked) == 1
         assert recommendation["explanation"]["generated_by"] == "rule-based", "it failed, so the summary stands"
 
-        # ...and the failure is stamped, so the page showing this fresh
-        # forecast does not fire another (doomed) Gemini call at once.
         assert recommendation["explanation"]["transcript_failed_at"]
         stored = rec_service.parse_recommendation(rec_service.serialize_recommendation(recommendation))
         assert stored["explanation"]["transcript_failed_at"]
@@ -469,10 +436,6 @@ def test_the_switch_off_asks_nobody(app, monkeypatch):
         recommendation = rec_service.build_recommendation(_context())
     assert recommendation["explanation"]["generated_by"] == "rule-based"
 
-
-# ---------------------------------------------------------------------
-# 4. Upgrading a stored forecast: POST /api/forecasts/<id>/transcript
-# ---------------------------------------------------------------------
 
 def _user(email, role="SME"):
     user = User(name=email.split("@")[0], email=email, role=role)
@@ -565,7 +528,6 @@ def test_the_owner_gets_gemini_s_transcript_and_only_the_explanation_changes(app
     assert data["ok"] is True and data["text"] == transcript["text"]
     assert data["generated_by"] == f"llm:gemini:{MODEL}"
     assert "Transcribed by Gemini" in data["badge_html"] and MODEL in data["badge_html"]
-    # The context was rebuilt from the STORED payload, not re-scored.
     assert seen[0]["forecast"] == before["forecast"]
     assert after["explanation"] == transcript
     assert {k: v for k, v in after.items() if k != "explanation"} == \
@@ -635,12 +597,10 @@ def test_a_failure_is_stamped_and_backs_off(app, stored, monkeypatch):
         stamp = after["explanation"]["transcript_failed_at"]
         second = client.post(url).get_json()
 
-    # The page is told how long to wait before it asks again by itself.
     assert first == {"ok": False, "reason": "failed", "retry_after": 120}
     assert second["ok"] is False and second["reason"] == "retry_later"
     assert 100 <= second["retry_after"] <= 121
     assert len(seen) == 1, "the second request inside the window spent no call"
-    # Stamped in UTC; the summary itself and every other key unchanged.
     when = datetime.fromisoformat(stamp)
     assert when.tzinfo is not None and abs(datetime.now(timezone.utc) - when) < timedelta(minutes=1)
     before = json.loads(stored["raw"])
@@ -659,11 +619,8 @@ def test_the_backoff_window_is_2_minutes_and_versioned():
         assert rec_service.transcript_failed_recently(explanation, now=now) is recent, seconds
     explanation["transcript_failed_at"] = (now - timedelta(seconds=30)).isoformat()
     assert 90 <= rec_service.transcript_retry_in(explanation, now=now) <= 91
-    # A naive stamp is read as UTC.
     explanation["transcript_failed_at"] = (now - timedelta(minutes=1)).replace(tzinfo=None).isoformat()
     assert rec_service.transcript_failed_recently(explanation, now=now) is True
-    # A stamp left by an OLDER Gemini request says nothing about this one:
-    # it is ignored, and the forecast is retried at once.
     old = {"text": "t", "generated_by": "rule-based", "transcript_failed_at": (now - timedelta(minutes=1)).isoformat()}
     assert rec_service.transcript_failed_recently(old, now=now) is False
     old["transcript_failed_version"] = version - 1
@@ -779,10 +736,6 @@ def test_end_to_end_through_gemini_s_native_endpoint(app, stored, monkeypatch):
     assert after["explanation"] == {"text": summary, "generated_by": f"llm:gemini:{MODEL}"}
 
 
-# ---------------------------------------------------------------------
-# 5. The page: the hook, the badges, the script
-# ---------------------------------------------------------------------
-
 def _render(app, rec, forecast=SimpleNamespace(forecast_id=41), macro="explanation_paragraph"):
     from flask import get_template_attribute
 
@@ -798,7 +751,6 @@ def _rec(generated_by="rule-based", **explanation):
 
 def test_the_hook_is_rendered_only_when_gemini_can_be_asked(app, monkeypatch):
     with app.app_context():
-        # Nothing configured: no hook, no script, no spinner.
         page = _render(app, _rec())
         assert "data-forecast-transcript" not in page and "forecast_transcript.js" not in page
 
@@ -810,8 +762,6 @@ def test_the_hook_is_rendered_only_when_gemini_can_be_asked(app, monkeypatch):
         assert 'aria-live="polite"' in page and "Gemini is transcribing the forecast" in page
         assert "js/forecast_transcript.js" in page
 
-        # Not without the forecast row, not for an AI transcript, not
-        # inside the back-off, not with the switch off, not with an sk- key.
         assert "data-forecast-transcript" not in _render(app, _rec(), forecast=None)
         assert "data-forecast-transcript" not in _render(app, _rec(generated_by=f"llm:gemini:{MODEL}"))
         version = rec_service.TRANSCRIPT_REQUEST_VERSION
@@ -821,7 +771,6 @@ def test_the_hook_is_rendered_only_when_gemini_can_be_asked(app, monkeypatch):
         stale = (datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat()
         assert "data-forecast-transcript" in _render(
             app, _rec(transcript_failed_at=stale, transcript_failed_version=version))
-        # A stamp from the old (pre-fix) Gemini request does not hold it back.
         assert "data-forecast-transcript" in _render(app, _rec(transcript_failed_at=recent))
         monkeypatch.setenv("USE_LLM_RECOMMENDATIONS", "false")
         assert "data-forecast-transcript" not in _render(app, _rec())
@@ -851,7 +800,6 @@ def test_the_badges_say_who_wrote_it(app):
     assert "fw-normal" in summary, "the stand-in is the visually quieter badge"
     for page in (gemini, other, summary):
         assert "Rule-based explanation" not in page and "Explained by Gemini" not in page
-    # Paragraphs are kept apart.
     assert summary.count("<p class=\"small") >= 2 and "Second paragraph." in summary
 
 
@@ -864,10 +812,6 @@ def test_the_script_is_idempotent_and_never_parses_the_transcript_as_html():
     assert "for (const hooks of groups.values())" in script and "await requestTranscript" in script, \
         "one request per forecast, one at a time"
 
-
-# ---------------------------------------------------------------------
-# 6. Gemini is the default narrator
-# ---------------------------------------------------------------------
 
 def test_gemini_is_the_default_provider(monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
@@ -915,10 +859,6 @@ def test_the_admin_switch_says_gemini_writes_the_transcript(app):
     assert "Gemini turns each forecast" in page and "plain-language explanation" in page
 
 
-# ---------------------------------------------------------------------
-# Every plan is transcribed, not only the one on screen
-# ---------------------------------------------------------------------
-
 def _second_plan(stored):
     """Another plan of the same owner, with its own model-summary forecast
     (copied from the stored one -- the same state)."""
@@ -944,7 +884,6 @@ def test_every_plan_is_queued_for_a_transcript_not_only_the_one_on_screen(app, s
         _gemini_on(app, monkeypatch)
         _plan, other = _second_plan(stored)
         client = _client(app, "owner@transcript.test")
-        # View the FIRST plan; the second must still be queued.
         html = client.get(f"{page}?plan={stored['sme_id']}" if page == "/planning" else page).get_data(as_text=True)
     assert "data-transcript-queue" in html
     assert f'data-transcript-url="/api/forecasts/{other.forecast_id}/transcript"' in html
@@ -973,9 +912,6 @@ def test_an_already_transcribed_plan_is_not_queued(app, stored, monkeypatch):
 def test_the_script_processes_hidden_queue_hooks():
     with open(os.path.join(ROOT, "app", "static", "js", "forecast_transcript.js"), encoding="utf-8") as f:
         script = f.read()
-    # The queue hooks carry the same attributes the visible hooks do, and
-    # the script's selector picks up both; a hook with no status/text
-    # elements is simply posted for, with nothing to repaint.
     assert 'querySelectorAll("[data-forecast-transcript][data-transcript-url]")' in script
     assert 'hook.querySelector("[data-transcript-status]")' in script and "if (!status) return;" in script
 
@@ -993,7 +929,7 @@ def test_extra_asks_stop_when_the_time_budget_is_spent(app, monkeypatch):
 
         def slow(prompt):
             calls.append(prompt)
-            clock["now"] += 40  # each answer takes 40 s
+            clock["now"] += 40
             return _reply(TRANSCRIPT + INVENTED_SENTENCE)
 
         monkeypatch.setitem(llm_service._GENERATORS, "gemini", slow)

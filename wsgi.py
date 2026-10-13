@@ -32,13 +32,8 @@ import os
 
 from dotenv import load_dotenv
 
-# Harmless on a host that has no .env file (Render, Railway and friends
-# inject real environment variables instead) -- load_dotenv() simply does
-# nothing when the file is absent. Kept so the same command also works
-# for a local production-mode dry run, where .env IS where the settings
-# live.
 load_dotenv()
 
-from app import create_app  # noqa: E402
+from app import create_app
 
 app = create_app(os.environ.get("FLASK_CONFIG", "production"))

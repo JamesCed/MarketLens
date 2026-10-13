@@ -20,6 +20,14 @@ Two transport-level speed-ups, installed once from create_app():
    is ~140 KB of HTML, the barangay boundary data ~90 KB). Static files
    are compressed once and kept, so a hit costs nothing. A response that
    is already encoded (e.g. compressed by a proxy) is left alone.
+
+3. CONDITIONAL JSON (ETags on /api/ GET responses)
+   The map pages fetch the same barangay boundaries, coordinates and
+   scores on every visit. Each JSON answer now carries an ETag; when the
+   browser already holds that exact answer it gets "304 Not Modified"
+   with no body, instead of downloading and parsing it again. The
+   geometry (barangay shapes, city border) does not change between
+   deploys, so the browser may also reuse it for an hour without asking.
 """
 
 import gzip
@@ -56,7 +64,7 @@ def _static_hashes(app):
         if hit and hit[0] == key:
             return hit[1]
         with lock:
-            digest = hashlib.md5()  # noqa: S324 -- a cache-busting token, not security
+            digest = hashlib.md5()
             with open(path, "rb") as f:
                 for chunk in iter(lambda: f.read(65536), b""):
                     digest.update(chunk)
@@ -80,8 +88,6 @@ def install_static_versioning(app):
     default_max_age = app.get_send_file_max_age
 
     def _max_age(filename):
-        # Only a URL carrying the content hash is safe to cache for a
-        # year; anything else falls back to Flask's own behaviour.
         if request and request.args.get("v"):
             return ONE_YEAR
         return default_max_age(filename)
@@ -97,9 +103,6 @@ _GZ_STATIC_MAX_ENTRIES = 64
 def install_compression(app):
     @app.before_request
     def _strip_gzip_etag_suffix():
-        # The gzip variant of a static file carries ETag "<etag>-gz".
-        # Strip the suffix from a revalidation so Flask's own conditional
-        # check still matches and answers 304.
         header = request.environ.get("HTTP_IF_NONE_MATCH")
         if header and _GZ_SUFFIX in header:
             request.environ["HTTP_IF_NONE_MATCH"] = header.replace(_GZ_SUFFIX + '"', '"')
@@ -111,8 +114,6 @@ def install_compression(app):
             if request.endpoint == "static" and request.args.get("v") and response.status_code in (200, 304):
                 response.cache_control.immutable = True
             if response.status_code == 304 and request.environ.get("dss.gzip_etag"):
-                # A 304 must carry the same validators as the 200 it
-                # confirms: the gzip variant's ETag, and Vary.
                 etag, _weak = response.get_etag()
                 if etag and not etag.endswith(_GZ_SUFFIX):
                     response.set_etag(etag + _GZ_SUFFIX)
@@ -120,14 +121,13 @@ def install_compression(app):
             if request.method == "HEAD":
                 return response
             return _maybe_compress(response)
-        except Exception:  # noqa: BLE001 -- compression must never break a page
+        except Exception:
             return response
 
 
 def _maybe_compress(response):
     if response.status_code != 200 or response.is_streamed and not response.direct_passthrough:
         return response
-    # quality(), not a substring test: "gzip;q=0" means "never gzip".
     if request.accept_encodings.quality("gzip") <= 0:
         return response
     if response.headers.get("Content-Encoding") or request.headers.get("Range"):
@@ -137,7 +137,8 @@ def _maybe_compress(response):
 
     is_static = request.endpoint == "static"
     etag, _weak = response.get_etag()
-    cache_key = (request.path, etag) if is_static and etag else None
+    reusable = is_static or request.path.startswith("/api/")
+    cache_key = (request.path, etag) if reusable and etag else None
 
     body = _GZ_STATIC_CACHE.get(cache_key) if cache_key else None
     if body is None:
@@ -163,3 +164,38 @@ def _maybe_compress(response):
     if etag:
         response.set_etag(etag + _GZ_SUFFIX)
     return response
+
+
+_LONG_LIVED_API = {"/api/barangay-choropleth", "/api/tarlac-city-boundary"}
+_API_MAX_AGE = 3600
+
+
+def install_api_etags(app):
+    """ETag + conditional 304 for every successful JSON GET under /api/.
+
+    Registered AFTER install_compression(), so (Flask runs after_request
+    hooks in reverse) it sees the uncompressed body: the ETag describes
+    the JSON itself, and the gzip step appends its "-gz" marker exactly
+    as it does for static files."""
+
+    @app.after_request
+    def _api_etag(response):
+        try:
+            if request.method != "GET" or not request.path.startswith("/api/"):
+                return response
+            if response.status_code != 200 or response.direct_passthrough or response.is_streamed:
+                return response
+            if (response.mimetype or "") != "application/json":
+                return response
+            body = response.get_data()
+            digest = hashlib.md5(body).hexdigest()[:20]
+            response.set_etag(digest)
+            if request.path in _LONG_LIVED_API:
+                response.cache_control.private = True
+                response.cache_control.max_age = _API_MAX_AGE
+            else:
+                response.cache_control.private = True
+                response.cache_control.no_cache = True
+            return response.make_conditional(request)
+        except Exception:
+            return response

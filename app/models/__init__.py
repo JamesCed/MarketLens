@@ -33,9 +33,6 @@ from app.models.audit_log import AuditLog
 from app.models.system_setting import SystemSetting
 from app.models.industry_migration_log import IndustryMigrationLog
 from app.models.subcategory_market_data import SubcategoryMarketData
-# (The community forum tables that used to be imported here are gone:
-# the community moved to Discord -- see community_controller.py. Tables
-# already created in a database are left in place, unused.)
 
 __all__ = [
     "User",

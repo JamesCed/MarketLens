@@ -35,7 +35,7 @@ def _session_has_pending_writes():
 
         session = db.session
         return bool(session.new or session.dirty or session.deleted)
-    except Exception:  # noqa: BLE001 -- no app context / no session: nothing pending
+    except Exception:
         return False
 
 

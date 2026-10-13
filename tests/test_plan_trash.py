@@ -108,10 +108,6 @@ def two_plans(app):
         return {"keep": keep.sme_id, "bin": bin_.sme_id}
 
 
-# ---------------------------------------------------------------------
-# 1. Trash is an archive
-# ---------------------------------------------------------------------
-
 def test_trash_hides_the_plan_from_home_but_keeps_the_row(app, two_plans):
     with app.app_context():
         client = _client(app)
@@ -127,7 +123,6 @@ def test_trash_hides_the_plan_from_home_but_keeps_the_row(app, two_plans):
         page = client.get("/planning").get_data(as_text=True)
         assert f'href="/planning?plan={two_plans["bin"]}"' not in page
         assert f'href="/planning?plan={two_plans["keep"]}"' in page
-        # ...but it is listed in the Trash dialog.
         trash = _section(page, "planTrashModal")
         assert "Tibag Pandesal" in trash
         assert "Moved to Trash on" in trash
@@ -146,7 +141,6 @@ def test_a_trashed_plan_is_off_the_recommendations_page(app, two_plans):
         client = _client(app)
         before = client.get("/recommendations").get_data(as_text=True)
         assert "Tibag Pandesal" in before
-        # Followed, so the "moved to Trash" flash is shown (and used up) on Home.
         client.post(f"/home/plans/{two_plans['bin']}/trash", follow_redirects=True)
         after = client.get("/recommendations").get_data(as_text=True)
         assert "Tibag Pandesal" not in after
@@ -171,7 +165,7 @@ def test_a_trashed_plan_gets_no_market_alerts(app, two_plans):
 def test_restore_brings_back_the_plan_and_its_forecasts(app, two_plans):
     with app.app_context():
         client = _client(app)
-        client.get(f"/planning?plan={two_plans['bin']}")      # forecasts it
+        client.get(f"/planning?plan={two_plans['bin']}")
         forecasts = ForecastResult.query.filter_by(sme_id=two_plans["bin"]).count()
         assert forecasts >= 1
 
@@ -325,14 +319,10 @@ def test_the_startup_migration_adds_the_trash_columns():
         assert column in _ADDITIVE_COLUMNS["sme_profile"]
 
 
-# ---------------------------------------------------------------------
-# 2. Ownership, including plans in Trash (no IDOR)
-# ---------------------------------------------------------------------
-
 @pytest.fixture
 def strangers_plans(app):
     with app.app_context():
-        _user()                                   # the signed-in owner
+        _user()
         stranger = _user("stranger@trash.test")
         live = _plan(stranger, "Not Yours")
         trashed = _plan(stranger, "Not Yours Either")
@@ -369,10 +359,6 @@ def test_someone_elses_trash_is_not_listed(app, strangers_plans):
         assert "Trash is empty." in _section(page, "planTrashModal")
 
 
-# ---------------------------------------------------------------------
-# 3. JSON for the page's script, redirects for a plain form post
-# ---------------------------------------------------------------------
-
 def test_update_answers_json_to_fetch(app, two_plans):
     with app.app_context():
         response = _client(app).post(f"/home/plans/{two_plans['bin']}/update", headers=JSON, data=_edit_form(
@@ -402,7 +388,6 @@ def test_update_redirects_a_plain_form_post(app, two_plans):
         assert response.headers["Location"].endswith(f"/planning?plan={two_plans['bin']}")
         page = client.get(response.headers["Location"]).get_data(as_text=True)
         assert "“Plain Post Pandesal” updated" in page
-        # A browser's ordinary Accept header prefers HTML: still a redirect.
         browser = client.post(f"/home/plans/{two_plans['bin']}/update", data=_edit_form(),
                               headers={"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"})
         assert browser.status_code == 302
@@ -428,7 +413,6 @@ def test_edit_validation_errors_come_back_as_json_text(app, two_plans):
         assert "Capital is required." in payload["error"]
         assert "must be a number" in payload["error"]
         assert _row(two_plans["bin"]).business_name == "Tibag Pandesal"
-        # The page script writes the message as text, never as markup.
         with open("app/static/js/plan_manage.js", encoding="utf-8") as handle:
             script = handle.read()
         assert "box.textContent = message" in script
@@ -463,10 +447,6 @@ def test_editing_keeps_a_legacy_industry_name(app):
         assert response.get_json()["success"] is True
 
 
-# ---------------------------------------------------------------------
-# 4. Capital
-# ---------------------------------------------------------------------
-
 def _form(**fields):
     base = {"business_name": "Tibag Pandesal", "industry_type": FOOD, "location": "Tibag", "capital": "500000"}
     base.update(fields)
@@ -496,8 +476,6 @@ def test_capital_is_parsed_under_both_keys():
     ("1e400", "Capital must be a number."),
     ("0", "Capital must be greater than zero."),
     ("-5000", "Capital must be greater than zero."),
-    # Under half a centavo: > 0 as typed, but stored as 0.00. The check
-    # runs on the rounded value -- what is checked is what is stored.
     ("0.001", "Capital must be greater than zero."),
     ("0.004", "Capital must be greater than zero."),
 ])
@@ -523,7 +501,6 @@ def test_the_legacy_field_name_is_still_accepted():
     data, errors = parse_plan_form(_form(capital=None, startup_capital="300000"))
     assert errors == []
     assert data["capital"] == 300000.0
-    # When both are sent, the current name wins.
     data, _ = parse_plan_form(_form(capital="400000", startup_capital="1"))
     assert data["capital"] == 400000.0
 
@@ -563,9 +540,9 @@ def test_every_plan_form_on_home_asks_for_a_required_capital(app, two_plans):
     with app.app_context():
         page = _client(app).get("/planning").get_data(as_text=True)
     capital_inputs = re.findall(r'<input type="number" id="[^"]+-capital" name="capital"[^>]*>', page)
-    assert len(capital_inputs) == 3                     # Add + one Edit per plan
+    assert len(capital_inputs) == 3
     for tag in capital_inputs:
-        assert "required" in tag and 'min="5000"' in tag    # the PHP 5,000 floor (IT expert review)
+        assert "required" in tag and 'min="5000"' in tag
     assert page.count("Capital (&#8369;)") == 3 or page.count("Capital (₱)") == 3
     assert "Startup capital" not in page
     assert 'name="startup_capital"' not in page
@@ -581,10 +558,6 @@ def test_recommendations_say_capital_and_break_even(app, two_plans):
         assert "Break-even" in page
         assert "₱250,000" in page
 
-
-# ---------------------------------------------------------------------
-# 5. The Home markup
-# ---------------------------------------------------------------------
 
 def _visible_text(html):
     html = re.sub(r"<span class=\"visually-hidden\">.*?</span>", "", html, flags=re.S)
@@ -606,7 +579,6 @@ def test_plan_chips_have_icon_only_edit_and_trash_buttons(app, two_plans):
     assert 'aria-label="Move “Tibag Pandesal” to Trash"' in page
     assert f'action="/home/plans/{two_plans["bin"]}/trash"' in page
     assert f'action="/home/plans/{two_plans["bin"]}/update"' in page
-    # The selection link holds no button: nothing interactive is nested.
     for link in re.findall(r'<a href="/planning\?plan=\d+" class="dss-plan-chip-link".*?</a>', page, flags=re.S):
         assert "<button" not in link and "<form" not in link
 
@@ -696,7 +668,6 @@ def test_a_chip_scored_before_the_plan_model_says_market_score(app, two_plans):
         assert "Viability " not in stale
         assert re.search(r"Viability \d+\.\d/10", fresh) and "Market score" not in fresh
 
-        # Opening it re-runs the forecast, and the chip becomes a plan score.
         page = client.get(f"/planning?plan={two_plans['keep']}").get_data(as_text=True)
         assert "Market score" not in _chip(page, two_plans["keep"])
 
@@ -712,7 +683,7 @@ def test_the_chip_pill_is_coloured_by_its_own_score_not_the_market_tier(app, two
         client.get(f"/planning?plan={two_plans['bin']}")
         row = ForecastResult.query.filter_by(sme_id=two_plans["bin"]).first()
         row.viability_score = score
-        row.saturation_index = 10.0          # a "Low" saturation tier, whatever the score
+        row.saturation_index = 10.0
         db.session.commit()
         page = client.get(f"/planning?plan={two_plans['keep']}").get_data(as_text=True)
         chip = _chip(page, two_plans["bin"])
@@ -806,10 +777,6 @@ def test_the_chip_actions_are_styled_for_both_themes():
     assert "width: 32px" in rule and "height: 32px" in rule
 
 
-# ---------------------------------------------------------------------
-# 6. The forecast panel reads the trained model's payload
-# ---------------------------------------------------------------------
-
 def test_an_old_forecast_without_the_model_payload_is_regenerated(app, two_plans):
     with app.app_context():
         client = _client(app)
@@ -829,7 +796,6 @@ def test_an_old_forecast_without_the_model_payload_is_regenerated(app, two_plans
                   .order_by(ForecastResult.forecast_id.desc()).first())
         assert json.loads(newest.recommendation).get("forecast"), "the regenerated row carries the payload"
 
-        # ...and a fresh one is NOT regenerated on every visit.
         client.get(f"/planning?plan={two_plans['bin']}")
         assert ForecastResult.query.filter_by(sme_id=two_plans["bin"]).count() == before + 1
 

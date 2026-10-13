@@ -35,26 +35,6 @@ def is_configured():
                 and current_app.config.get("GMAIL_APP_PASSWORD"))
 
 
-# =====================================================================
-# TWO TRANSPORTS, AND WHY
-# =====================================================================
-# smtplib to Gmail was the only way out of here, and on 26 September
-# 2026 Render began blocking outbound traffic to SMTP ports 25, 465 and
-# 587 on FREE web services. The connection never leaves the host, so
-# there is no app password, timeout or retry that fixes it -- the
-# symptom is simply that codes stop arriving, on a deployment where
-# nothing about the code changed.
-#
-# So there is a second transport that speaks HTTPS on port 443, which
-# is not blocked: Brevo's transactional email API. Set BREVO_API_KEY
-# and it is used; leave it unset and Gmail SMTP is used exactly as
-# before, which keeps local development and any paid host working with
-# no configuration at all.
-#
-# The message itself is built once, above the transport split. Two
-# copies of the wording is how a change lands in the verification email
-# and not in the password-reset one.
-
 def _send(to_email, to_name, subject, body):
     """Deliver one plain-text message. True if a transport accepted it.
 
@@ -78,7 +58,7 @@ def _send(to_email, to_name, subject, body):
         if current_app.config.get("BREVO_API_KEY"):
             return _send_via_brevo(to_email, to_name, subject, body)
         return _send_via_gmail_smtp(to_email, subject, body)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _record_failure(exc, include_traceback=True)
         return False
 
@@ -114,12 +94,7 @@ def _send_via_gmail_smtp(to_email, subject, body):
             server.sendmail(address, [to_email], msg.as_string())
         _LAST_FAILURE.clear()
         return True
-    except Exception as exc:  # noqa: BLE001 - a mail failure must not raise into a request
-        # LOGGED, not swallowed. This used to be a bare `return False`,
-        # so a wrong app password, a Gmail rate limit and a host with no
-        # outbound SMTP all produced exactly the same nothing. What the
-        # person sees is "the code never arrived", with no way to tell
-        # which of the three it was.
+    except Exception as exc:
         _record_failure(exc)
         return False
 
@@ -158,7 +133,7 @@ def _send_via_brevo(to_email, to_name, subject, body):
             },
             timeout=20,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _record_failure(exc)
         return False
 
@@ -220,26 +195,6 @@ def send_password_reset_code(to_email, to_name, code):
     return _send(to_email, to_name, f"Your {sender_name} password reset code: {code}", body)
 
 
-# =====================================================================
-# NOTIFICATION EMAILS (Settings -> Notifications)
-# =====================================================================
-# The four switches on the Notifications tab used to be stored and
-# nothing more, which is why three of them carried a "not sending yet"
-# badge. These are the senders that make them real.
-#
-# They are deliberately thin. Everything above -- the transport split,
-# the never-raises guard, the redaction, the diagnostics -- already
-# works and is already the thing that gets debugged when mail breaks;
-# an alert path with its own copy of that logic would be a second thing
-# to fix every time.
-#
-# WHAT IS SHARED, AND WHY IT IS SHARED
-# Every notification email ends with the same two lines: which switch
-# turns this kind of message off, and where to reach a human. An
-# automated email that does not say how to stop it is the definition of
-# spam, and a per-sender copy of that footer is how one of them ends up
-# without it.
-
 def _notification_footer(switch_label):
     from flask import current_app
 
@@ -293,12 +248,6 @@ def send_trend_digest(to_email, to_name, subject, body):
                               "Weekly market trend reports")
 
 
-# ---------------------------------------------------------------------
-# DIAGNOSTICS
-# ---------------------------------------------------------------------
-# Kept so "is the mail set up correctly?" can be answered from the
-# Admin page instead of by registering throwaway accounts and reading
-# the host's logs.
 _LAST_FAILURE = {}
 
 
@@ -313,11 +262,6 @@ def _record_failure(exc, include_traceback=False):
         "hint": _hint_for(detail),
     })
 
-    # An UNEXPECTED exception -- one the transports did not anticipate
-    # -- carries its traceback into the diagnostics, because for those
-    # the type and message alone are rarely enough to say what to
-    # change. Redacted like everything else. Expected failures (a 535,
-    # a timeout) do not, since their hint already says what to do.
     if include_traceback:
         import traceback
 
@@ -331,15 +275,11 @@ def _record_failure(exc, include_traceback=False):
     try:
         from flask import current_app
 
-        # Not "verification email failed" any more: the same transport
-        # now carries codes AND notification alerts, and a log line
-        # naming the wrong one sends whoever reads it looking in the
-        # wrong flow.
         current_app.logger.error(
             "outgoing email failed: %s", _LAST_FAILURE["detail"],
             exc_info=include_traceback,
         )
-    except Exception:  # pragma: no cover - no app context
+    except Exception:
         pass
 
 
@@ -355,7 +295,7 @@ def _redact(text, limit=400):
             secret = (current_app.config.get(key) or "").strip()
             if len(secret) >= 8:
                 message = message.replace(secret, "***redacted***")
-    except Exception:  # pragma: no cover
+    except Exception:
         pass
     return message[:limit]
 
@@ -382,14 +322,6 @@ def _hint_for(detail):
                 "upgrade to a paid instance, or set BREVO_API_KEY to send over HTTPS "
                 "instead (see app/services/email_service.py).")
     if "key not found" in lowered:
-        # Brevo's page is headed "SMTP & API" and offers two
-        # credentials that look alike. The SMTP one (xsmtpsib-) is a
-        # password for their mail relay; the REST API only accepts the
-        # API key (xkeysib-). Handing the REST API the SMTP key returns
-        # exactly this, and "Key not found" reads like "your key was
-        # deleted" rather than "that is the wrong kind of key" -- which
-        # sends people off regenerating a credential that was never the
-        # problem.
         return ("Brevo does not recognise this credential. The most likely cause is the "
                 "wrong KIND of key: Brevo's 'SMTP & API' page offers both an SMTP key "
                 "(starts xsmtpsib-, for their mail relay) and an API key (starts "
@@ -449,7 +381,7 @@ def _probe_smtp():
         _LAST_FAILURE.clear()
         return {"ok": True, "transport": "smtp",
                 "detail": f"smtp.gmail.com accepted {address}"}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _record_failure(exc)
         return {"ok": False, "transport": "smtp", "error": last_failure()}
 
@@ -467,7 +399,7 @@ def _probe_brevo():
             headers={"api-key": api_key, "accept": "application/json"},
             timeout=20,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _record_failure(exc)
         return {"ok": False, "transport": "brevo", "error": last_failure()}
 
@@ -501,10 +433,6 @@ def status():
     password = current_app.config.get("GMAIL_APP_PASSWORD") or ""
     brevo_key = current_app.config.get("BREVO_API_KEY") or ""
 
-    # The prefix is reported because it is the whole diagnosis for the
-    # most common Brevo mistake -- see _hint_for's "key not found"
-    # branch. Three characters of a key identify its TYPE and are no
-    # use to anybody who steals them.
     brevo_report = {"set": bool(brevo_key), "length": len(brevo_key)}
     if brevo_key:
         if brevo_key.startswith("xkeysib-"):

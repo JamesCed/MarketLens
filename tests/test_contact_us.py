@@ -55,10 +55,6 @@ def _signed_in(app, email):
     return client
 
 
-# ---------------------------------------------------------------------
-# 1. Every role can reach it
-# ---------------------------------------------------------------------
-
 @pytest.mark.parametrize("role,email,path", ROLES)
 def test_every_dashboard_has_a_working_contact_us(app, role, email, path):
     """The whole point of the change: it used to exist on one of these
@@ -94,10 +90,6 @@ def test_the_dialog_explains_what_to_write_about(app, role, email, path):
     assert "account email" in page
 
 
-# ---------------------------------------------------------------------
-# 2. One address, written down once
-# ---------------------------------------------------------------------
-
 def test_the_address_comes_from_config_not_the_templates(app):
     """It appears in the contact dialog, the Support dialog and a
     mailto: link. Three hardcoded copies is how one of them goes
@@ -109,8 +101,6 @@ def test_the_address_comes_from_config_not_the_templates(app):
     offenders = []
     for path in templates.rglob("*.html"):
         text = path.read_text(encoding="utf-8")
-        # The literal address must not be typed into any template --
-        # every occurrence should be {{ SUPPORT_EMAIL }}.
         if re.search(re.escape(EXPECTED_EMAIL), text):
             offenders.append(str(path.relative_to(templates)))
 
@@ -143,10 +133,6 @@ def test_the_support_dialog_gives_the_same_address(app):
     )
     assert EXPECTED_EMAIL in page[support:support + 4000]
 
-
-# ---------------------------------------------------------------------
-# 3. It is a real control, not a styled span
-# ---------------------------------------------------------------------
 
 def test_contact_us_is_a_button_not_a_span(app):
     """The old one was a <span>: not focusable, not reachable by

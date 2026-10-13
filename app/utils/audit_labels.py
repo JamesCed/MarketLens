@@ -25,9 +25,7 @@ administrator, not by the developer who wrote the log line.
 
 import re
 
-# action -> (label, purpose)
 ACTION_META = {
-    # --- account & authentication
     "register": ("Created an account", "Account registration"),
     "login": ("Signed in", "User authentication"),
     "login_failed": ("Failed sign-in attempt", "Account security"),
@@ -48,26 +46,20 @@ ACTION_META = {
     "onboarding_completed": ("Finished the first-time walkthrough", "User onboarding"),
     "onboarding_skipped": ("Skipped the first-time walkthrough", "User onboarding"),
 
-    # --- business planning
     "create_plan": ("Created a business plan", "Business planning"),
     "run_forecast": ("Ran an AI forecast", "Business planning"),
     "update_plan": ("Edited a business plan", "Business planning"),
-    # Plans are never deleted any more -- removing one moves it to Trash.
-    # delete_plan is kept so rows written before that still read well.
     "trash_plan": ("Moved a business plan to Trash", "Business planning"),
     "restore_plan": ("Restored a business plan from Trash", "Business planning"),
     "delete_plan": ("Deleted a business plan (legacy)", "Business planning"),
     "select_plan": ("Switched the plan being viewed", "Business planning"),
-    # A plan left in Trash for 30 days is deleted for good, by the system.
     "purge_plan": ("Permanently deleted a plan after 30 days in Trash", "Trash retention"),
     "save_recommended_location": ("Saved a recommended location as a plan", "Business planning"),
 
-    # --- LGU data
     "dataset_upload": ("Uploaded a government dataset", "Data maintenance"),
     "view_diversification_plan": ("Opened the Diversification Plan", "City planning"),
     "export_diversification_plan": ("Exported the Diversification Plan", "City planning"),
 
-    # --- administration
     "admin_create_user": ("Created a user account", "User administration"),
     "admin_toggle_active": ("Changed an account's access (suspend/activate)", "User administration"),
     "admin_suspend_user": ("Suspended a user account", "User administration"),
@@ -88,8 +80,6 @@ ACTION_META = {
     "export_barangay_seed_csv": ("Downloaded the barangay seed dataset", "Data export"),
     "export_audit_log": ("Exported the audit trail", "Audit review"),
 
-    # --- community forum (retired: the community moved to Discord; kept
-    #     so audit rows written while the forum existed still read well)
     "forum_post_created": ("Posted in the community forum", "Community participation"),
     "forum_comment_created": ("Commented in the community forum", "Community participation"),
     "forum_post_approved": ("Approved a community post", "Content moderation"),
@@ -104,20 +94,6 @@ ACTION_META = {
 
 GENERIC_PURPOSE = "General system activity"
 
-# ------------------------------------------------------------ categories
-# Every action belongs to one CATEGORY (what part of the system it
-# touched) and has an IMPORTANCE -- the audit trail's answer to flooding.
-# With many users, routine rows (someone switched the plan they are
-# viewing, changed their theme, stepped through the tour) outnumber the
-# rows an administrator is actually looking for by orders of magnitude.
-# The trail therefore opens on "important" rows (high + normal) and can
-# be switched to "everything"; nothing is ever deleted or hidden for
-# good, only filtered.
-#
-#   high    security and administration: failed sign-ins, access changes,
-#           archives, settings, uploads, exports, permanent deletions
-#   normal  what users did to their own data: plans, profile, sign-in
-#   low     routine and personal: viewing, theme, tour, preferences
 CATEGORIES = (
     ("security", "Security & sign-in"),
     ("accounts", "Account administration"),
@@ -211,10 +187,6 @@ def actions_matching(text):
     return [action for action, (label, _purpose) in ACTION_META.items() if needle in label.lower()]
 
 
-# ------------------------------------------------------------ targets
-# target_type is stored as the model's class name, because that is what
-# log_action() can know without every caller spelling it out. These are
-# the words shown for it.
 TARGET_TYPE_LABELS = {
     "User": "Account",
     "LguData": "LGU data row",
@@ -239,15 +211,6 @@ def target_type_label(target_type):
     return words.strip().capitalize()
 
 
-# ------------------------------------------------------------ devices
-# A deliberately small user-agent reader. The audit page needs "which
-# kind of device was this", not a full browser-capability database, and
-# a new dependency for one column is not worth its upkeep.
-#
-# ORDER IS THE WHOLE TRICK. Almost every browser's user agent claims to
-# be several others for compatibility -- Edge says "Chrome" and
-# "Safari", Chrome says "Safari", Opera says "Chrome" -- so the most
-# specific token has to be tested first and the most generic last.
 _BROWSERS = (
     ("Edg/", "Edge"), ("EdgA/", "Edge"), ("EdgiOS/", "Edge"),
     ("OPR/", "Opera"), ("Opera", "Opera"),
@@ -255,27 +218,21 @@ _BROWSERS = (
     ("FBAN", "Facebook app"), ("FBAV", "Facebook app"),
     ("Firefox/", "Firefox"), ("FxiOS/", "Firefox"),
     ("CriOS/", "Chrome"), ("Chrome/", "Chrome"), ("Chromium/", "Chromium"),
-    ("Version/", "Safari"),   # Safari is the one that says "Version/x Safari/y"
+    ("Version/", "Safari"),
     ("MSIE ", "Internet Explorer"), ("Trident/", "Internet Explorer"),
 )
 
-# Same rule: iPhone and iPad user agents also say "Mac OS X", and an
-# Android one also says "Linux", so the specific ones come first.
 _SYSTEMS = (
     ("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
     ("CrOS", "ChromeOS"), ("Windows", "Windows"),
     ("Macintosh", "macOS"), ("Mac OS X", "macOS"), ("Linux", "Linux"),
 )
 
-# Not people. Named plainly so an unusual row explains itself.
 _TOOLS = (
     ("Werkzeug/", "Test client"), ("curl/", "curl (command line)"),
     ("python-requests/", "Python script"), ("python-urllib", "Python script"),
     ("PostmanRuntime/", "Postman"),
 )
-# Crawlers are checked BEFORE browsers, because Googlebot and friends
-# now carry a full Chrome token and would otherwise read as a person
-# using Chrome.
 _BOT = re.compile(r"(bot|crawler|spider)[/;\s)+]", re.IGNORECASE)
 
 
@@ -300,6 +257,4 @@ def describe_device(user_agent):
         return f"{browser} on {system}"
     if browser or system:
         return browser or system
-    # Something we have never seen: its product name is still more
-    # useful than "Unknown", and never longer than a word or two.
     return agent.split("/")[0].split(" ")[0][:40] or "Unknown device"

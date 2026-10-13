@@ -68,21 +68,14 @@ def _csv(rows, header):
     return handle.name
 
 
-# ---------------------------------------------------------------------
-# 1. All or nothing
-# ---------------------------------------------------------------------
-
 def test_one_bad_row_leaves_the_database_untouched(app, lgu_user):
     from app.services.data_import_service import process_upload
 
-    # Deliberately NOT "N/A": pandas reads that as a missing-value
-    # marker, and imputing a missing figure is the documented
-    # behaviour this project wants. A typo is a different thing.
     path = _csv(
         [
             (BARANGAY_NAMES[0], 12, 1.4),
             (BARANGAY_NAMES[1], 8, 1.1),
-            (BARANGAY_NAMES[2], "12o", 0.9),      # row 4: a typed digit-o
+            (BARANGAY_NAMES[2], "12o", 0.9),
         ],
         ["barangay", "permit_count", "business_density"],
     )
@@ -122,10 +115,6 @@ def test_a_good_file_lands_completely(app, lgu_user):
     assert rows == 5
 
 
-# ---------------------------------------------------------------------
-# 2. Errors that name themselves
-# ---------------------------------------------------------------------
-
 def test_a_bad_cell_is_reported_with_its_row_and_column(app, lgu_user):
     from app.services.data_import_service import process_upload
 
@@ -140,8 +129,6 @@ def test_a_bad_cell_is_reported_with_its_row_and_column(app, lgu_user):
         os.unlink(path)
 
     assert status == "failed"
-    # Row 3 -- the header is row 1, so the second data row is row 3 in
-    # the spreadsheet the uploader is looking at.
     assert "Row 3" in message, message
     assert "permit_count" in message
     assert "twelve" in message
@@ -187,10 +174,6 @@ def test_a_percentage_success_rate_is_caught(app, lgu_user):
     assert "fraction between 0 and 1" in message
 
 
-# ---------------------------------------------------------------------
-# 3. Permits become per-industry competitor counts
-# ---------------------------------------------------------------------
-
 def test_a_permit_register_with_psic_codes_produces_competitor_counts(app, lgu_user):
     """The substance of the merge. A register is one row per business;
     grouped by trade and barangay it is an official competitor count,
@@ -199,10 +182,10 @@ def test_a_permit_register_with_psic_codes_produces_competitor_counts(app, lgu_u
     from app.services.data_import_service import process_upload
 
     rows = (
-        [(BARANGAY_NAMES[0], "56101", "active") for _ in range(4)]     # food service
-        + [(BARANGAY_NAMES[0], "47211", "active") for _ in range(7)]   # retail
+        [(BARANGAY_NAMES[0], "56101", "active") for _ in range(4)]
+        + [(BARANGAY_NAMES[0], "47211", "active") for _ in range(7)]
         + [(BARANGAY_NAMES[1], "56101", "active") for _ in range(2)]
-        + [(BARANGAY_NAMES[0], "56101", "expired")]                    # must not count
+        + [(BARANGAY_NAMES[0], "56101", "expired")]
     )
     path = _csv(rows, ["barangay", "psic_code", "status"])
     try:
@@ -246,10 +229,6 @@ def test_a_register_without_a_trade_column_still_imports(app, lgu_user):
     assert derived == 0
 
 
-# ---------------------------------------------------------------------
-# 4. Reconciling the two competitor sources
-# ---------------------------------------------------------------------
-
 def test_the_larger_of_the_two_sources_wins(app):
     """Both sources undercount, in different directions, and neither
     contains the other: Google misses unlisted micro-enterprises, a
@@ -267,7 +246,7 @@ def test_the_larger_of_the_two_sources_wins(app):
         ))
         db.session.add(MarketData(
             industry_type=industry, location=location, competitor_count=3,
-            source="DTI", date_recorded=date.today(),   # newer, but smaller
+            source="DTI", date_recorded=date.today(),
         ))
         db.session.commit()
 
@@ -323,10 +302,6 @@ def test_the_reconciled_count_is_what_the_model_scores(app):
     assert scores["competitor_count"] == 25
 
 
-# ---------------------------------------------------------------------
-# 5. Cold start
-# ---------------------------------------------------------------------
-
 def test_placeholder_rows_do_not_count_as_an_active_dataset(app):
     """The trap this function exists for. lgu_data is never empty --
     the scoring engine writes placeholder rows for itself -- so
@@ -338,7 +313,7 @@ def test_placeholder_rows_do_not_count_as_an_active_dataset(app):
     with app.app_context():
         assert has_active_lgu_data() is False
 
-        find_or_create_lgu_data(BARANGAY_NAMES[0])      # engine talking to itself
+        find_or_create_lgu_data(BARANGAY_NAMES[0])
         assert LguData.query.count() == 1
         assert has_active_lgu_data() is False, (
             "an auto-generated placeholder was mistaken for an official upload"
@@ -387,10 +362,6 @@ def test_the_home_panel_shows_the_empty_state_before_any_upload(app):
 
     assert "No record yet" in page
     assert "No official LGU dataset is active" in page
-    # The container itself must be absent, so the script's
-    # `if (!lguBox) return` short-circuits and the ranking endpoint is
-    # never called. (The script still MENTIONS the id, which is why
-    # this looks for the element rather than the bare string.)
     assert 'id="lguRecommendationList"' not in page, (
         "the ranking container rendered anyway, so the browser will still call the "
         "endpoint and rank barangays off placeholder rows"
@@ -499,17 +470,11 @@ def test_after_an_upload_the_panel_ranks_barangays(app, lgu_user):
     assert payload["has_lgu_data"] is True
     assert len(payload["top_opportunity"]) == 3
     assert len(payload["top_saturated"]) == 3
-    # Least saturated first in the opportunity list, most saturated
-    # first in the other -- the two lists must not be the same order.
     opportunity = [row["saturation_index"] for row in payload["top_opportunity"]]
     saturated = [row["saturation_index"] for row in payload["top_saturated"]]
     assert opportunity == sorted(opportunity)
     assert saturated == sorted(saturated, reverse=True)
 
-
-# ---------------------------------------------------------------------
-# 6. The day budget on live Places lookups
-# ---------------------------------------------------------------------
 
 def test_the_day_budget_stops_spending_once_it_is_reached(app):
     """PLACES_LIVE_FETCH is true on a public URL and Places API (New)
@@ -519,7 +484,7 @@ def test_the_day_budget_stops_spending_once_it_is_reached(app):
 
     with app.app_context():
         SystemSetting.set(fs.PLACES_DAILY_BUDGET_KEY, "3")
-        fs._DAY_SPEND["day"] = None          # fresh process
+        fs._DAY_SPEND["day"] = None
 
         allowed = [fs._spend_day_budget() for _ in range(5)]
 
@@ -550,7 +515,7 @@ def test_the_budget_counter_cannot_commit_someone_elses_transaction(app, lgu_use
             source="DTI", barangay=BARANGAY_NAMES[0], permit_count=1,
             business_density=1.0, upload_date=date.today(), uploaded_by=lgu_user,
         ))
-        assert fs._spend_day_budget() is True     # staged row still pending
+        assert fs._spend_day_budget() is True
         db.session.rollback()
 
         after = LguData.query.count()
@@ -559,10 +524,6 @@ def test_the_budget_counter_cannot_commit_someone_elses_transaction(app, lgu_use
         "the day-budget counter committed a row that was staged by someone else"
     )
 
-
-# ---------------------------------------------------------------------
-# 7. An upload reaches the Trend Reports, not just the dashboard
-# ---------------------------------------------------------------------
 
 def test_an_upload_changes_what_the_trend_reports_read(app, lgu_user):
     """The whole point of the pipeline. If the numbers on Trend
@@ -580,7 +541,6 @@ def test_an_upload_changes_what_the_trend_reports_read(app, lgu_user):
     )
     try:
         with app.app_context():
-            # Google saw 3 of them; the city has permits for 9.
             db.session.add(MarketData(
                 industry_type=industry, location=location, competitor_count=3,
                 population_density=2500, historical_success_rate=0.55,
@@ -621,7 +581,7 @@ def test_the_trend_reports_never_disagree_with_the_model(app, lgu_user):
         ))
         db.session.add(MarketData(
             industry_type=industry, location=location, competitor_count=4,
-            source="DTI", date_recorded=date.today(),      # newer, smaller
+            source="DTI", date_recorded=date.today(),
         ))
         db.session.add(LguData(
             source="DTI", barangay=location, permit_count=4, business_density=1.2,
@@ -652,10 +612,6 @@ def test_a_reconciled_row_cannot_be_written_to(app):
         with pytest.raises(AttributeError):
             row.competitor_count = 999
 
-
-# ---------------------------------------------------------------------
-# 8. The guidance an LGU officer actually needs
-# ---------------------------------------------------------------------
 
 def test_the_upload_page_documents_every_column_it_accepts(app, lgu_user):
     from app.controllers.lgu_controller import UPLOAD_COLUMNS

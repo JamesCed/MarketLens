@@ -78,10 +78,6 @@ def _seed_market(rows=12, recorded=None, count=150):
     db.session.commit()
 
 
-# ---------------------------------------------------------------------
-# 1. The history is the real published shape, not a smooth invention
-# ---------------------------------------------------------------------
-
 def test_the_projection_carries_the_2020_contraction():
     """The single most important assertion in this file.
 
@@ -143,10 +139,6 @@ def test_nothing_is_written_to_the_database(app):
         assert MarketData.query.count() == before
 
 
-# ---------------------------------------------------------------------
-# 2. The KPI cards: no more false blanks, and no lost honest ones
-# ---------------------------------------------------------------------
-
 def test_every_card_gets_a_comparison_for_a_month_before_the_app_existed(app):
     """This is the reported bug. Picking any month of 2020-2025 left all
     four cards reading "no comparison available", because market_data
@@ -170,7 +162,6 @@ def test_a_projected_card_says_it_is_projected(app):
         card = overview["cards"]["total_businesses"]
         assert card["measured"] is False
         assert card["projected"] is True
-        # ...and it names what it was projected from, on screen.
         assert overview["basis"]["source"].startswith("DTI")
         assert overview["basis"]["national_establishments"] > 0
 
@@ -231,16 +222,11 @@ def test_viability_delta_is_not_rounded_into_nothing(app):
         assert any(abs(d) > 0 for d in deltas), f"every viability delta rounded to zero: {deltas}"
 
 
-# ---------------------------------------------------------------------
-# 3. The picker offers 2020 -> now, and the charts follow it
-# ---------------------------------------------------------------------
-
 def test_the_picker_reaches_back_to_2020(app):
     with app.app_context():
         assert trends.EARLIEST_TREND_MONTH == date(2020, 1, 1)
         assert trends.resolve_as_of_month("2020-01") == date(2020, 1, 1)
         assert trends.resolve_as_of_month("2021-07") == date(2021, 7, 1)
-        # Still bounded at both ends.
         assert trends.resolve_as_of_month("2019-12") == date(2020, 1, 1)
         assert trends.resolve_as_of_month("2099-01").strftime("%Y-%m") == date.today().strftime("%Y-%m")
 
@@ -285,8 +271,6 @@ def test_monthly_trend_lines_move_with_the_year_not_just_the_month_name(app):
         assert early["labels"][-1] == "Jun 2020"
         assert late["labels"][-1] == "Jun 2025"
         assert early["series"]["Food and Beverage"] != late["series"]["Food and Beverage"]
-        # A less crowded market back then, which is the point of the
-        # projection -- not a flat line with a sine wiggle on it.
         assert early["series"]["Food and Beverage"][-1] < late["series"]["Food and Beverage"][-1]
 
 
@@ -303,9 +287,6 @@ def test_real_forecasts_are_matched_by_year_not_by_month_name(app):
         )
         db.session.add(profile)
         db.session.commit()
-        # forecast_result.market_id / lgu_id are NOT NULL, and
-        # cluster_label is a derived read-only property -- so let the
-        # engine produce a real scored row and date it by hand.
         scores = trends.compute_scores("Food and Beverage", "Poblacion")
         db.session.add(ForecastResult(
             sme_id=profile.sme_id,
@@ -325,10 +306,6 @@ def test_real_forecasts_are_matched_by_year_not_by_month_name(app):
         assert miss["series"]["Food and Beverage"][-1] != 91.0, "June 2021 must not borrow June 2026's forecast"
 
 
-# ---------------------------------------------------------------------
-# 4. Changing the month is fast
-# ---------------------------------------------------------------------
-
 def test_changing_the_month_does_not_re_run_the_city_wide_sweep(app, monkeypatch):
     """The sweep is 600 AI scores and is what made the page take seconds
     to answer a click. It describes the market as it stands NOW, so the
@@ -338,14 +315,6 @@ def test_changing_the_month_does_not_re_run_the_city_wide_sweep(app, monkeypatch
         _seed_market()
         trends.clear_trend_caches()
 
-        # Counts PAIRS SCORED, not function calls. The sweep used to
-        # call compute_scores() once per pair; it now hands the whole
-        # list to compute_scores_batch() in one call. Counting calls
-        # would silently read 0 for the batch path and the test would
-        # pass while measuring nothing -- which is exactly what it did
-        # when the batching landed. Both paths are wrapped so this
-        # keeps meaning "how much scoring work happened" whichever one
-        # is in use.
         calls = {"n": 0}
         real_single = trends.compute_scores
         real_batch = trends.compute_scores_batch
@@ -418,7 +387,6 @@ def test_the_period_endpoint_skips_the_month_independent_half(app):
             assert key in payload
         for key in ("industry_distribution", "places_api_rows", "overview"):
             assert key not in payload, f"{key} does not depend on the month"
-        # Internal handles must never be serialised.
         assert "_baseline" not in payload and "_real_forecasts" not in payload
 
 

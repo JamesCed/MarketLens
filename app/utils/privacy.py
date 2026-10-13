@@ -40,7 +40,7 @@ import threading
 
 from sqlalchemy.types import Text, TypeDecorator
 
-_MASK = "•••"  # •••
+_MASK = "•••"
 
 
 def mask_email(value):
@@ -68,9 +68,6 @@ def mask_text(value, keep=1):
     return f"{text[:keep]}{_MASK}"
 
 
-# ---------------------------------------------------------------------
-# Encryption at rest
-# ---------------------------------------------------------------------
 _PREFIX = "enc1:"
 _fernet_lock = threading.Lock()
 _fernet_cache = {}
@@ -106,9 +103,6 @@ def _fernet():
     from cryptography.fernet import Fernet, MultiFernet
 
     with _fernet_lock:
-        # A fixed context string keeps these keys distinct from anything
-        # else derived from the same secrets (Flask's own session signing
-        # uses SECRET_KEY directly).
         keys = [Fernet(base64.urlsafe_b64encode(hashlib.sha256(b"marketlens-pii-v1|" + m.encode("utf-8")).digest()))
                 for m in materials]
         f = MultiFernet(keys)
@@ -141,9 +135,6 @@ def decrypt_value(stored):
     try:
         return f.decrypt(str(stored)[len(_PREFIX):].encode("ascii")).decode("utf-8")
     except (InvalidToken, ValueError):
-        # Loud in the log, quiet on the page: this means the key the value
-        # was written under is not configured any more (see the module
-        # docstring) -- restore PII_ENCRYPTION_KEY / SECRET_KEY to recover.
         import logging
 
         logging.getLogger(__name__).warning(

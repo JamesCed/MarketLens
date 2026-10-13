@@ -61,10 +61,6 @@ def _real_google_row(days_old=0, count=4242):
     return row
 
 
-# ---------------------------------------------------------------------
-# 1. Read-only Google mode
-# ---------------------------------------------------------------------
-
 def test_read_only_mode_makes_no_places_call_even_with_a_key(app):
     """The gate is the config flag, NOT the absence of a key. A key left
     in the environment by accident must still not be spendable."""
@@ -203,10 +199,6 @@ def test_the_bulk_fetch_card_is_gone_from_the_page(app):
     assert "billable calls" not in page
 
 
-# ---------------------------------------------------------------------
-# 2. Production hardening
-# ---------------------------------------------------------------------
-
 def test_production_refuses_the_development_secret_key():
     """Flask signs the login session cookie with SECRET_KEY, and the
     development default is printed in app/config.py -- which is in the
@@ -267,7 +259,7 @@ def test_a_user_can_actually_log_in_over_https(app):
 
     app.config["WTF_CSRF_ENABLED"] = True
     app.config["WTF_CSRF_SSL_STRICT"] = ProductionConfig.WTF_CSRF_SSL_STRICT
-    app.config["SESSION_COOKIE_SECURE"] = False  # the test client is on http
+    app.config["SESSION_COOKIE_SECURE"] = False
 
     import re
 
@@ -280,7 +272,7 @@ def test_a_user_can_actually_log_in_over_https(app):
     response = client.post(
         "/login",
         data={"email": "live@example.com", "password": "password123", "csrf_token": token},
-        headers=forwarded,          # note: deliberately NO Referer header
+        headers=forwarded,
         follow_redirects=True,
     )
     assert response.status_code == 200
@@ -315,19 +307,9 @@ def test_the_dev_server_is_not_the_deployment_entry_point():
         procfile = f.read()
 
     assert '"production"' in wsgi_source
-    # load_dotenv() MUST run before `from app import create_app`:
-    # app/config.py reads os.environ at class-definition time, so an
-    # import-then-load order would silently ignore every setting.
     assert wsgi_source.index("load_dotenv()") < wsgi_source.index("from app import create_app")
     assert "wsgi:app" in procfile
-    # NOT app:app. `app` is the package (app/), and Python resolves that
-    # name to the package every time -- a file called app.py next to it
-    # can never be imported by name, so `gunicorn app:app` dies with
-    # "Failed to find attribute 'app' in 'app'". Cheap to get wrong when
-    # editing a dashboard field, and it fails only once deployed.
     assert "app:app" not in procfile
-    # One worker only -- a free 512 MB instance cannot hold two copies of
-    # numpy/pandas/scikit-learn plus the Random Forest.
     assert "--workers 1" in procfile
 
 
@@ -346,20 +328,9 @@ def test_the_app_package_shadows_app_py_so_nothing_should_import_it():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     with open(os.path.join(root, "app.py"), encoding="utf-8") as f:
         entry = f.read()
-    # The banner exists so the next person does not lose an afternoon to
-    # "Failed to find attribute 'app' in 'app'".
     assert "gunicorn wsgi:app" in entry
     assert "app/ folder" in entry or "app/ PACKAGE" in entry
 
-
-# ---------------------------------------------------------------------
-# 3. The managed-database connection string
-# ---------------------------------------------------------------------
-# Aiven hands you a URL that PyMySQL cannot use. Each of the three
-# faults fails at a DIFFERENT moment -- one at import, one at the first
-# query, one not at all (it just silently drops TLS) -- which is exactly
-# why they are repaired in code instead of in a README step someone
-# skips.
 
 AIVEN_URL = ("mysql://avnadmin:s3cret@mysql-38bdb7d4-project-dss.h.aivencloud.com"
              ":23964/defaultdb?ssl-mode=REQUIRED")
@@ -521,8 +492,6 @@ def test_the_entry_point_refuses_to_run_as_a_shadowed_import():
 
     assert "_assert_app_means_the_package" in source
     assert "namespace package" in source
-    # The guard has to run BEFORE the import it is guarding, or it
-    # guards nothing.
     assert source.index("_assert_app_means_the_package()") < source.index("from app import create_app")
 
 

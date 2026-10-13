@@ -40,9 +40,6 @@ from app.models.user import User
 
 from app.ml.constants import BUSINESS_TYPES
 
-# An SME sign-up also creates a first business plan, so the three
-# fields the forecasting engine cannot work without have to be here or
-# the form never reaches the code-sending branch.
 REGISTRATION = {
     **PERSONAL,
     "email": "newuser@otp.test",
@@ -53,7 +50,6 @@ REGISTRATION = {
     "industry_type": BUSINESS_TYPES[0],
     "location": "Poblacion",
     "business_stage": "startup",
-    # Capital is required too (the plan viability model reads it).
     "capital": "150000",
 }
 
@@ -93,10 +89,6 @@ def _register(client, **overrides):
     data.update(overrides)
     return client.post("/register", data=data, follow_redirects=True)
 
-
-# ---------------------------------------------------------------------
-# 1. The happy path
-# ---------------------------------------------------------------------
 
 def test_registering_sends_a_six_digit_code_and_creates_nothing_yet(app, sent):
     client = app.test_client()
@@ -145,10 +137,6 @@ def test_an_expired_code_is_refused(app, sent):
     with app.app_context():
         assert User.query.filter_by(email=REGISTRATION["email"]).first() is None
 
-
-# ---------------------------------------------------------------------
-# 2. Guesses are bounded
-# ---------------------------------------------------------------------
 
 def test_wrong_codes_are_counted_and_run_out(app, sent):
     client = app.test_client()
@@ -215,10 +203,6 @@ def test_a_resend_gives_a_new_code_and_a_fresh_allowance(app, sent):
     assert "Email verified" in page
 
 
-# ---------------------------------------------------------------------
-# 3. Resend is throttled
-# ---------------------------------------------------------------------
-
 def test_resending_immediately_is_refused(app, sent):
     client = app.test_client()
     _register(client)
@@ -245,10 +229,6 @@ def test_resending_after_the_cooldown_works(app, sent):
     client.post("/register/resend-code", follow_redirects=True)
     assert len(sent) == 2
 
-
-# ---------------------------------------------------------------------
-# 4. A send failure does not quietly skip verification
-# ---------------------------------------------------------------------
 
 def test_a_failed_send_blocks_registration_when_verification_is_required(app, monkeypatch):
     from app.services import email_service
@@ -298,18 +278,11 @@ def test_verification_is_required_by_default_once_gmail_is_configured(monkeypatc
     importlib.reload(config_module)
     try:
         assert config_module.Config.REQUIRE_EMAIL_VERIFICATION is True
-        # ...and the spaces Google displays are stripped, because
-        # smtplib does not reliably tolerate them and the resulting 535
-        # is indistinguishable from a wrong password.
         assert config_module.Config.GMAIL_APP_PASSWORD == "abcdefghijklmnop"
     finally:
         monkeypatch.undo()
         importlib.reload(config_module)
 
-
-# ---------------------------------------------------------------------
-# 5. Diagnostics, and what they must never print
-# ---------------------------------------------------------------------
 
 def test_the_status_never_returns_the_app_password(app):
     from app.services import email_service
@@ -391,10 +364,6 @@ def test_an_admin_sees_the_configuration(app):
     assert "x" * 16 not in repr(payload)
 
 
-# ---------------------------------------------------------------------
-# 6. Forgotten password
-# ---------------------------------------------------------------------
-
 @pytest.fixture
 def reset_sent(monkeypatch):
     from app.services import email_service
@@ -460,7 +429,6 @@ def test_an_unknown_address_looks_exactly_like_a_known_one(app, existing_user, r
 
     assert existing_user in known
     assert "nobody@nowhere.test" in unknown
-    # Same sentence, only the address differs.
     assert known.replace(existing_user, "X") == unknown.replace("nobody@nowhere.test", "X")
     assert len(reset_sent) == 1, "a code was emailed for an address with no account"
 
@@ -490,7 +458,6 @@ def test_reset_codes_run_out_too(app, existing_user, reset_sent):
 
     assert "Too many incorrect codes" in page
 
-    # ...and the real code is dead with it.
     client.post("/reset-password", data={
         "code": reset_sent[0]["code"], "password": "Hacked#2026",
         "confirm_password": "Hacked#2026",
@@ -556,10 +523,6 @@ def test_reset_resend_is_throttled(app, existing_user, reset_sent):
     client.post("/reset-password/resend", follow_redirects=True)
     assert len(reset_sent) == 1
 
-
-# ---------------------------------------------------------------------
-# 7. The transport that works on a host with no outbound SMTP
-# ---------------------------------------------------------------------
 
 def test_brevo_is_used_when_its_key_is_set(app, monkeypatch):
     """Render blocks outbound SMTP on free web services (ports 25, 465,
@@ -726,20 +689,6 @@ def test_the_brevo_key_is_redacted_from_a_traceback(app):
     assert "xkeysib-SECRET-value-here" not in repr(failure)
 
 
-# ---------------------------------------------------------------------
-# 8. The Brevo key mix-up that actually happened
-# ---------------------------------------------------------------------
-# A live deployment logged, verbatim:
-#
-#   Brevo returned HTTP 401: {"message":"Key not found","code":"unauthorized"}
-#
-# Brevo's page is headed "SMTP & API" and offers two credentials that
-# look alike. The SMTP one (xsmtpsib-) is a password for their mail
-# relay; the REST API only accepts the API key (xkeysib-). Giving the
-# REST API the SMTP key returns exactly that 401 -- and "Key not found"
-# reads like "your key was deleted", which sends people off
-# regenerating a credential that was never the problem.
-
 def test_an_smtp_key_in_the_api_slot_is_named_as_the_problem(app):
     from app.services import email_service
 
@@ -806,16 +755,6 @@ def test_the_failure_log_reports_the_real_reason_not_a_guess(app, monkeypatch, c
         "the log still blames SMTP on a deployment that was not using SMTP"
     )
 
-
-# ---------------------------------------------------------------------
-# SHOW / HIDE PASSWORD
-# ---------------------------------------------------------------------
-# The reset form rendered two eye buttons that did nothing. The handler
-# was copy-pasted into login.html and register.html -- each copy
-# commented as "delegated, so the same handler serves this page and the
-# registration form" -- and delegation only reaches within one page, so
-# the third page to grow the markup got no handler at all. It looked
-# live and was inert.
 
 def test_the_reset_form_offers_a_reveal_for_both_password_fields(app, existing_user, reset_sent):
     client = app.test_client()

@@ -59,10 +59,6 @@ def _clean_llm_state():
     llm_service.reset_client_cache()
 
 
-# ---------------------------------------------------------------------
-# Fixtures: a payload in the contract's shape, and a context around it
-# ---------------------------------------------------------------------
-
 def _payload(**overrides):
     payload = {
         "version": "plan_v1",
@@ -116,9 +112,6 @@ def _context(forecast="default", **overrides):
     return context
 
 
-# The kind of paragraph Gemini is asked for: every figure in it is one
-# the payload holds (6.1, 61.3, 84, 42.1, 8.3, 5.1, 500,000, 8.2,
-# 61,020, 11.9, 10-15).
 GROUNDED = (
     "The trained model gives this plan a viability of 6.1/10 (index 61.3) with 84% confidence. "
     "Tibag is 42.1% saturated, a Moderate market. Market saturation added 8.3 points while capital "
@@ -126,7 +119,6 @@ GROUNDED = (
     "month, shorter than the 11.9-month ramp-up, and break-even is expected in 10-15 months."
 )
 
-# The same paragraph with one invented figure in it.
 INVENTED = GROUNDED + " Expect about ₱2,400,000 in sales in your first year."
 
 
@@ -160,18 +152,12 @@ def _recording_generators(monkeypatch, replies):
     return attempted
 
 
-# ---------------------------------------------------------------------
-# 1. The rule-based explanation
-# ---------------------------------------------------------------------
-
 def test_rule_based_explanation_quotes_only_payload_numbers():
     explanation = rec_service._rule_based_explanation(_context())
     assert explanation["generated_by"] == "rule-based"
     text = explanation["text"]
 
-    # It passes the same check the LLM's wording has to pass.
     assert rec_service.ungrounded_numbers(text, _context()) == []
-    # ...and that check is not vacuous: it does find the figures.
     assert len(rec_service._numbers_in(text)) >= 10
 
 
@@ -180,21 +166,17 @@ def test_rule_based_explanation_covers_runway_ramp_up_drivers_and_break_even():
 
     assert "6.1/10" in text and "84% confidence" in text
     assert "42.1% saturated" in text and "'Moderate' tier" in text
-    # The three largest drivers, with their signs, from the baseline.
     assert "baseline of 52 points" in text
     assert "market saturation (industry · sub-category · location) added 8.3 points" in text
     assert "capital vs. running costs took off 5.1 points" in text
     assert "pricing (price list) added 3.4 points" in text
     assert "staffing" not in text.lower(), "only the three largest drivers are named"
-    # Fixed cost broken into rent + payroll, then runway vs ramp-up.
     assert "₱61,020/month (rent ₱15,000 plus 3 employees × ₱590/day × 26 days)" in text
     assert "covers about 8.2 months" in text
     assert "shorter than the ~11.9-month ramp-up" in text
-    # Required daily sales vs the ceiling, then the break-even window.
     assert "69.1 sales a day" in text and "222.3" in text
     assert "10-15 months" in text
 
-    # Split on a full stop followed by a capital, so "vs. running" stays whole.
     sentences = re.split(r"(?<=\.)\s+(?=[A-Z])", text)
     assert 4 <= len(sentences) <= 6, sentences
 
@@ -223,7 +205,6 @@ def test_each_confidence_is_credited_to_the_stage_that_produced_it():
     assert "with 55% confidence" not in text
     assert rec_service.ungrounded_numbers(text, context) == []
 
-    # The usual case -- the plan stage is the less sure -- names one figure.
     text = rec_service._rule_based_explanation(_context())["text"]
     assert "with 84% confidence." in text and "overall confidence" not in text
 
@@ -235,10 +216,6 @@ def test_no_payload_means_no_explanation():
     assert recommendation["forecast"] is None
     assert recommendation["explanation"] is None
 
-
-# ---------------------------------------------------------------------
-# 2. Capital and pricing in the reasons, risks and summary
-# ---------------------------------------------------------------------
 
 def test_runway_short_of_the_ramp_up_is_a_risk_with_levers():
     risks = " ".join(rec_service._risks_for(_context()))
@@ -285,10 +262,6 @@ def test_without_a_payload_the_summary_reads_as_before():
     summary = rec_service._summary_for(_context(forecast=None))
     assert "for the parameters you entered" in summary
 
-
-# ---------------------------------------------------------------------
-# 3. Capital wording, and the context
-# ---------------------------------------------------------------------
 
 class _Profile:
     """Just enough of an SmeProfile for build_recommendation_context."""
@@ -346,10 +319,6 @@ def test_the_capital_reason_without_a_payload_says_capital():
     assert "planned capital" not in reasons
 
 
-# ---------------------------------------------------------------------
-# 4. The prompt hands the LLM the trained model's output
-# ---------------------------------------------------------------------
-
 def test_the_prompt_carries_the_trained_model_output_block():
     prompt = llm_service._prompt_for(_context())
     assert "TRAINED MODEL OUTPUT" in prompt
@@ -378,10 +347,6 @@ def test_the_parser_keeps_the_explanation_text():
     assert "explanation" not in llm_service._coerce_llm_payload(_llm_reply(explanation=["not", "text"]))
 
 
-# ---------------------------------------------------------------------
-# 5. The grounding check
-# ---------------------------------------------------------------------
-
 def test_grounded_text_passes_the_check():
     assert rec_service.ungrounded_numbers(GROUNDED, _context()) == []
 
@@ -391,39 +356,37 @@ def test_an_invented_figure_is_caught():
 
 
 @pytest.mark.parametrize("text", [
-    "a viability of 61 out of 100",          # 61.3 rounded
-    "a 6/10 plan",                            # 6.1 rounded; "/10" is not a figure
-    "about 42% saturated",                    # 42.1 rounded
-    "a 40% gross margin",                     # 0.4 as a percentage
-    "3 employees",                            # present exactly
-    "₱61,020 a month",                        # thousands separator
-    "PHP500k of capital",                     # currency prefix and k suffix
-    "Php 500,000 of capital",                 # the prefix in any case, spaced
-    "php500,000 of capital",                  # ...or glued
-    "the rf_v1 and plan_rf_v1 models",       # identifiers glued to digits are codes, not figures
-    "from Q1 to Q4",                          # quarters
-    "B2B catering orders",                    # digits between letters
-    "a site 5 km from the market",            # 5 is held; "km" is not thousands
+    "a viability of 61 out of 100",
+    "a 6/10 plan",
+    "about 42% saturated",
+    "a 40% gross margin",
+    "3 employees",
+    "₱61,020 a month",
+    "PHP500k of capital",
+    "Php 500,000 of capital",
+    "php500,000 of capital",
+    "the rf_v1 and plan_rf_v1 models",
+    "from Q1 to Q4",
+    "B2B catering orders",
+    "a site 5 km from the market",
 ])
 def test_tolerated_forms(text):
     assert rec_service.ungrounded_numbers(text, _context()) == [], text
 
 
 @pytest.mark.parametrize("text, invented", [
-    ("break even in 4 months", "4"),          # a small integer the payload never held
-    ("30 months to break even", "30"),        # not 3 employees x 10
+    ("break even in 4 months", "4"),
+    ("30 months to break even", "30"),
     ("a viability index of 75.5", "75.5"),
     ("₱987,654 of capital", "987,654"),
     ("1.5 million in sales", "1.5 million"),
-    ("1.5 Million in sales", "1.5 Million"),  # the scale word in any case
-    ("40 months to break even", "40"),        # the 40% margin grounds "40%" only, never "40 months"
-    # How money is commonly written. Each was read as nothing at all, or
-    # as a small figure the payload happens to hold, before.
+    ("1.5 Million in sales", "1.5 Million"),
+    ("40 months to break even", "40"),
     ("Expect about Php2,400,000 in sales in your first year.", "2,400,000"),
     ("Expect about php 2,400,000 in sales.", "2,400,000"),
     ("Expect about Php9,999,999 in sales in your first year.", "9,999,999"),
-    ("Expect about ₱3.4m in sales in your first year.", "3.4m"),     # not the 3.4-point driver
-    ("Expect about ₱8.3 M in revenue.", "8.3 M"),                     # not the 8.3-point driver
+    ("Expect about ₱3.4m in sales in your first year.", "3.4m"),
+    ("Expect about ₱8.3 M in revenue.", "8.3 M"),
     ("Expect ₱2.4B over five years.", "2.4B"),
     ("Expect 2.4 mn in sales.", "2.4 mn"),
     ("Expect ₱2 mil in sales.", "2 mil"),
@@ -434,9 +397,6 @@ def test_invented_forms(text, invented):
     assert rec_service.ungrounded_numbers(text, _context()) == [invented]
 
 
-# The scorecard's seven components, weights as the spec sets them. Every
-# real payload carries all seven -- and none of these figures is ever
-# shown to the LLM, so none of them may ground anything.
 SEVEN_COMPONENTS = [
     {"key": "market_opportunity", "label": "Market opportunity", "aspect": "Market",
      "score": 0.58, "weight": 0.40, "points": 23.2, "inputs": "industry, sub-category, location"},
@@ -476,14 +436,14 @@ def _full_context():
 
 
 @pytest.mark.parametrize("text, invented", [
-    ("You will break even in 20 months.", "20"),          # weight 0.20
-    ("Capital covers 40% of the ramp-up.", "40"),         # weight 0.40 -- not the 35% margin
-    ("Break even in 7 months.", "7"),                     # weight 0.07
-    ("Break even in 8 months.", "8"),                     # weight 0.08
-    ("Break even in 10 months.", "10"),                   # weight 0.10
+    ("You will break even in 20 months.", "20"),
+    ("Capital covers 40% of the ramp-up.", "40"),
+    ("Break even in 7 months.", "7"),
+    ("Break even in 8 months.", "8"),
+    ("Break even in 10 months.", "10"),
     ("This plan scores 8/10.", "8"),
-    ("Expect 65 months.", "65"),                          # a component score as a percentage
-    ("Market opportunity earned 23.2 points.", "23.2"),   # a component's points
+    ("Expect 65 months.", "65"),
+    ("Market opportunity earned 23.2 points.", "23.2"),
 ])
 def test_the_scorecard_components_ground_nothing(text, invented):
     assert rec_service.ungrounded_numbers(text, _full_context()) == [invented]
@@ -510,10 +470,10 @@ def test_spelled_out_numbers_are_checked(text, invented):
 
 
 @pytest.mark.parametrize("text", [
-    "With three employees on the payroll",    # 3, as the payload holds it
-    "seven competitors already",              # 7
-    "break-even in ten to fifteen months",    # the window, in words
-    "one of the biggest drivers",             # "one" as a pronoun is not a figure
+    "With three employees on the payroll",
+    "seven competitors already",
+    "break-even in ten to fifteen months",
+    "one of the biggest drivers",
     "no one else sells it",
     "a viability of 61 out of one hundred",
 ])
@@ -527,10 +487,6 @@ def test_spelled_out_numbers_are_read_whole():
     assert [f.value for f in rec_service._numbers_in("between six and nine months")] == [6.0, 9.0]
     assert [f.value for f in rec_service._numbers_in("1.5 million in sales")] == [1500000.0]
 
-
-# ---------------------------------------------------------------------
-# 5b. A plan with no price list, and a market stage with no forest
-# ---------------------------------------------------------------------
 
 def _no_price_payload(**plan):
     return _payload(
@@ -575,8 +531,6 @@ def test_pricing_figures_the_prompt_never_printed_ground_nothing():
     assert rec_service.ungrounded_numbers("a 40% gross margin", context) == ["40"]
 
 
-# A measured sub-category analysis, in subcategory_service's shape plus
-# the three figures forecasting_service adds to it.
 MEASURED_ANALYSIS = {
     "subcategory": "bakery", "label": "Bakery / Pastries", "direct_count": 2, "is_estimated": False,
     "source": "Google Places API", "industry_count": 7, "expected_share": 0.18,
@@ -627,10 +581,6 @@ def test_both_stages_trained_keep_the_trained_labels():
     assert "The market model reads Tibag" in rec_service._rule_based_explanation(_context())["text"]
 
 
-# ---------------------------------------------------------------------
-# 6. build_recommendation: which explanation is kept
-# ---------------------------------------------------------------------
-
 def test_a_grounded_llm_explanation_is_kept(app, monkeypatch):
     monkeypatch.setenv("USE_LLM_RECOMMENDATIONS", "true")
     with app.app_context():
@@ -661,13 +611,11 @@ def test_an_llm_explanation_that_invents_a_number_is_replaced(app, monkeypatch):
 
     assert len(asked) == 1, "the dedicated transcript was asked for before settling for the summary"
     explanation = dict(recommendation["explanation"])
-    # The failed Gemini attempt is stamped, so the page does not retry at once.
     assert explanation.pop("transcript_failed_at")
     assert explanation.pop("transcript_failed_version") == rec_service.TRANSCRIPT_REQUEST_VERSION
     assert explanation == rec_service._rule_based_explanation(_context())
     assert recommendation["explanation"]["generated_by"] == "rule-based"
     assert "2,400,000" not in json.dumps(recommendation, ensure_ascii=False)
-    # Only the explanation is swapped: the LLM's other wording stays.
     assert recommendation["generated_by"] == "llm:gemini"
     assert recommendation["headline"].startswith("MODERATE OPPORTUNITY")
 
@@ -757,10 +705,6 @@ def test_a_malformed_stored_explanation_is_dropped():
     assert parsed["forecast"] is None
 
 
-# ---------------------------------------------------------------------
-# 7. Gemini first -- and not with someone else's key
-# ---------------------------------------------------------------------
-
 def test_gemini_is_tried_first_even_when_the_provider_is_openai(app, monkeypatch):
     with app.app_context():
         app.config["LLM_PROVIDER"] = "openai"
@@ -814,8 +758,6 @@ def test_an_sk_key_skips_gemini(app, monkeypatch):
     assert "gemini" not in attempted
     assert attempted[0] == "openai"
     assert payload["generated_by"] == "llm:openai"
-    # The skip is recorded, so the diagnostics say why Gemini did not
-    # write it -- as a "skipped", the kind any later failure replaces.
     assert failure["provider"] == "gemini"
     assert failure["stage"] == "skipped"
     assert "sk-" in failure["detail"]

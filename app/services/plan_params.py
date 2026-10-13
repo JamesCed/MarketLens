@@ -57,28 +57,10 @@ MAX_OFFERING_ITEMS = 30
 MAX_ITEM_NAME = 80
 MAX_PRODUCT_OFFERING = 500
 MAX_INNOVATION_IDEA = 1000
-# sme_profile.startup_capital is DECIMAL(12,2): ten digits before the
-# point. Anything larger would be refused by MySQL at commit time, as a
-# 500 rather than a message, so it is refused here instead.
 MAX_CAPITAL = 9_999_999_999.99
-# The other numbers on a plan get the same treatment, for the same two
-# reasons. sme_profile.employee_count is an INT, so a typed
-# 99999999999 would be the same commit-time 500 MAX_CAPITAL prevents;
-# and both numbers are now inputs to the plan viability model, which
-# must never be handed NaN or infinity (float("nan") parses happily,
-# and a NaN price would then be stored, re-forecast, and written into
-# a JSON reply the browser refuses to parse). The caps are generous on
-# purpose -- far above any micro, small or medium enterprise (DTI puts
-# "large" at 200 staff) and any single menu price -- so they only ever
-# stop a typo or a crafted POST, never a real plan.
 MAX_EMPLOYEE_COUNT = 10_000
 MAX_ITEM_PRICE = 10_000_000.0
 
-# The smallest starting capital a plan may have (IT expert review: "a
-# one-peso capital is impossible -- set a real minimum, with validation").
-# PHP 5,000 is low enough for a sari-sari store or a home-based micro
-# business and high enough to stop a placeholder value from being
-# forecast as if it were a plan. Overridable with MIN_PLAN_CAPITAL.
 DEFAULT_MIN_CAPITAL = 5_000
 
 
@@ -170,7 +152,7 @@ def _capital(form, errors, keep_capital=None):
     if raw is None or str(raw).strip() == "":
         raw = form.get("startup_capital")
     raw = "" if raw is None else str(raw).strip().replace(",", "")
-    if raw.startswith("₱"):  # a pasted "₱500000"
+    if raw.startswith("₱"):
         raw = raw[1:].strip()
     if raw == "":
         errors.append("Capital is required.")
@@ -180,7 +162,7 @@ def _capital(form, errors, keep_capital=None):
     except (TypeError, ValueError):
         errors.append("Capital must be a number.")
         return None
-    if not _is_finite(value):  # "nan", "inf", "1e400"
+    if not _is_finite(value):
         errors.append("Capital must be a number.")
         return None
     value = round(value, 2)
@@ -188,9 +170,6 @@ def _capital(form, errors, keep_capital=None):
         errors.append("Capital must be greater than zero.")
         return None
     floor = min_capital()
-    # An existing plan saved before the minimum existed keeps its capital
-    # when edited for something else (a rename, a new price) -- the floor
-    # applies to a capital being SET, not to one being left alone.
     unchanged = keep_capital is not None and abs(value - float(keep_capital or 0)) < 0.005
     if value < floor and not unchanged:
         errors.append(f"Capital must be at least ₱{floor:,.0f} -- enough to cover the first month of a real business.")
@@ -226,11 +205,6 @@ def parse_plan_form(form, keep_industry=None, keep_location=None, keep_capital=N
     if not location:
         errors.append("Please choose the barangay you are planning for.")
     else:
-        # The forms offer Tarlac City's 76 barangays as a dropdown; a name
-        # written another way ("Baras" for Baras-baras) is folded into the
-        # official one, and anything else is refused -- except, when
-        # editing, the plan's own current location, so an old plan saved
-        # under an unlisted name can still be opened and saved.
         from app.ml.seed_data import canonical_barangay
 
         official = canonical_barangay(location)
@@ -241,11 +215,6 @@ def parse_plan_form(form, keep_industry=None, keep_location=None, keep_capital=N
     if business_stage not in BUSINESS_STAGES:
         business_stage = "startup"
     if subcategory and industry_type in BUSINESS_TYPES and not is_valid_subcategory(industry_type, subcategory):
-        # Most likely the industry was changed after a sub-category was
-        # picked and the page's script did not refresh the list. Dropping
-        # it scores the plan at the industry level, which is correct for
-        # an unknown sub-category; refusing the whole form over it would
-        # not be.
         subcategory = None
 
     def _number(field, label, cast, upper):
@@ -254,9 +223,6 @@ def parse_plan_form(form, keep_industry=None, keep_location=None, keep_capital=N
             return None
         try:
             number = float(raw)
-            # "nan" and "inf" parse as floats; int() of them raises
-            # ValueError / OverflowError, and a float field would keep
-            # them -- so they are refused before the cast either way.
             if not _is_finite(number):
                 raise ValueError(raw)
             value = cast(number)
@@ -288,8 +254,6 @@ def parse_plan_form(form, keep_industry=None, keep_location=None, keep_capital=N
                 parsed = None
         registration_date = parsed.isoformat() if parsed else None
     if business_stage == "existing" and registration_date is None and not errors:
-        # An existing business with no date is dated today, so
-        # years_in_operation() reads 0 rather than failing on a null.
         registration_date = date.today().isoformat()
 
     offering_items = parse_offering_items(form, errors)
@@ -301,7 +265,6 @@ def parse_plan_form(form, keep_industry=None, keep_location=None, keep_capital=N
         "location": location,
         "business_stage": business_stage,
         "registration_date": registration_date,
-        # Same figure under both names -- see the module docstring.
         "startup_capital": capital,
         "capital": capital,
         "employee_count": employee_count,
@@ -325,7 +288,6 @@ def apply_plan_data(profile, data):
         profile.registration_date = date.fromisoformat(raw_date)
     elif profile.business_stage == "startup":
         profile.registration_date = None
-    # The column is still called startup_capital -- see the docstring.
     capital = data.get("capital")
     if capital is None:
         capital = data.get("startup_capital")

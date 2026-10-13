@@ -74,10 +74,6 @@ def two_plans(app):
         return {"tibag": tibag.sme_id, "balibago": balibago.sme_id}
 
 
-# ---------------------------------------------------------------------
-# The choice bar
-# ---------------------------------------------------------------------
-
 def test_every_plan_is_on_the_choice_bar(app, two_plans):
     with app.app_context():
         page = _client(app).get("/planning").get_data(as_text=True)
@@ -99,7 +95,6 @@ def test_choosing_a_plan_switches_the_forecast_and_the_map(app, two_plans):
         assert f"{RETAIL} in Balibago I" in page
         assert _global(page, "DSS_FOCUS_LOCATION") == "Balibago I"
         assert _global(page, "DSS_DEFAULT_INDUSTRY") == RETAIL
-        # The industry box starts on the chosen plan's industry.
         assert re.search(r'<option value="' + re.escape(RETAIL) + r'"\s+selected>', page)
 
 
@@ -110,13 +105,9 @@ def test_the_choice_is_remembered_and_both_plans_keep_their_scores(app, two_plan
         client.get(f"/planning?plan={two_plans['balibago']}")
         page = client.get("/planning").get_data(as_text=True)
         assert f"{RETAIL} in Balibago I" in page, "coming back to Home should keep the chosen plan"
-        # Both plans were scored by visiting them, and neither was lost.
-        # The chip label is the plan model's viability now, not the
-        # market-only score it used to be.
         assert len(re.findall(r'dss-plan-chip-score[^"]*">\s*Viability \d+\.\d/10', page)) == 2
         assert "Market score" not in page
         assert SmeProfile.query.count() == 2
-        # The chip is a container; its first child is the selection link.
         selected = re.search(
             r'class="dss-plan-chip is-selected"[^>]*>\s*<a [^>]*aria-current="true"[^>]*>\s*'
             r'<span class="dss-plan-chip-name">([^<]+)', page)
@@ -142,10 +133,6 @@ def test_switching_is_audited_once_not_on_every_reload(app, two_plans):
         assert logs[0].target_label and "Tibag Pandesal" in logs[0].target_label
 
 
-# ---------------------------------------------------------------------
-# The search row and the map
-# ---------------------------------------------------------------------
-
 def test_the_search_row_has_a_map_picker_a_visible_industry_box_and_clear(app, two_plans):
     with app.app_context():
         page = _client(app).get("/planning").get_data(as_text=True)
@@ -154,18 +141,24 @@ def test_the_search_row_has_a_map_picker_a_visible_industry_box_and_clear(app, t
     assert '<label class="form-label small fw-semibold mb-1" for="smeSearchIndustry">Industry type</label>' in page
     assert 'id="smeSearchClear"' in page
     assert "js/location_picker.js" in page
-    # The search box is not a dropdown of 76 names any more.
     assert not re.search(r'id="smeSearchInput"[^>]*list=', page)
 
 
-def test_the_map_is_bigger_and_fills_its_card(app, two_plans):
+def test_the_map_has_a_fixed_height_and_never_stretches(app, two_plans):
+    """Developer's note: opening "How this forecast was computed" used
+    to stretch the map card beside it. The map is now a fixed 440px and
+    the two columns keep their own heights."""
     with app.app_context():
         page = _client(app).get("/planning").get_data(as_text=True)
     assert 'class="dss-mini-map dss-home-map' in page
+    assert "align-items-start dss-independent-cols" in page
+    assert 'class="dss-card d-flex flex-column dss-home-map-card"' in page
+    assert '<div class="dss-card" data-tour="forecast-panel">' in page
     with open("app/static/css/style.css", encoding="utf-8") as handle:
         css = handle.read()
     rule = re.search(r"#dss-map\.dss-mini-map\.dss-home-map\s*\{([^}]+)\}", css)
-    assert rule and "min-height: 440px" in rule.group(1) and "flex: 1 1 auto" in rule.group(1)
+    assert rule and "height: 440px" in rule.group(1) and "flex: 0 0 auto" in rule.group(1)
+    assert "flex: 1 1 auto" not in rule.group(1)
 
 
 @pytest.mark.parametrize("anchor", [
@@ -177,10 +170,6 @@ def test_the_walkthrough_anchors_are_on_home(app, two_plans, anchor):
         page = _client(app).get("/planning").get_data(as_text=True)
     assert f'data-tour="{anchor}"' in page
 
-
-# ---------------------------------------------------------------------
-# Add New Plan
-# ---------------------------------------------------------------------
 
 def test_the_add_plan_dialog_has_the_new_fields_and_no_revenue(app, two_plans):
     with app.app_context():
@@ -210,7 +199,6 @@ def test_a_new_plan_is_selected_without_logging_a_switch(app, two_plans):
 
         client.get(response.headers["Location"])
         assert AuditLog.query.filter_by(action="select_plan").count() == 0
-        # Logged as the plan's creation, with every field it was created with.
         created_entry = AuditLog.query.filter_by(action="create_plan").one()
         assert "Kape sa Tibag" in created_entry.changes
 
@@ -225,10 +213,6 @@ def test_a_bad_new_plan_is_refused_with_the_reason(app, two_plans):
         assert SmeProfile.query.count() == 2
 
 
-# ---------------------------------------------------------------------
-# Output encoding on the page's scripts
-# ---------------------------------------------------------------------
-
 def test_client_side_output_is_escaped():
     with open("app/static/js/sme_search.js", encoding="utf-8") as handle:
         search = handle.read()
@@ -241,10 +225,6 @@ def test_client_side_output_is_escaped():
         picker = handle.read()
     assert "label.textContent = name" in picker
 
-
-# ---------------------------------------------------------------------
-# MINOR 1 -- the interior wears the sign-in page's look
-# ---------------------------------------------------------------------
 
 def test_signed_in_pages_carry_the_skin_and_the_landing_does_not(app, two_plans):
     with app.app_context():
@@ -263,8 +243,8 @@ def test_the_skin_keeps_the_prototype_content_colours():
     with open("app/static/css/style.css", encoding="utf-8") as handle:
         css = handle.read()
     skin = css.split("INTERIOR SKIN (body.dss-skin)", 1)[1].split("END INTERIOR SKIN", 1)[0]
-    skin = skin.split("*/", 1)[1]                      # the block's own header comment
-    skin = re.sub(r"/\*.*?\*/", "", skin, flags=re.S)  # and every comment inside it
+    skin = skin.split("*/", 1)[1]
+    skin = re.sub(r"/\*.*?\*/", "", skin, flags=re.S)
     rules = [r.strip() for r in re.findall(r"(?:^|\})\s*([^{}@/]+)\{", skin) if r.strip()]
     for selector in rules:
         if selector.startswith(("from", "to", "0%", "100%")):

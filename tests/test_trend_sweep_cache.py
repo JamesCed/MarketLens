@@ -101,7 +101,6 @@ def test_a_second_process_reads_the_file_instead_of_recomputing(disk_app, monkey
         _seed()
         first = trends._sweep_baseline("Food and Beverage")
 
-        # Simulate a fresh worker: the memo is empty, the file is not.
         trends.clear_trend_caches(drop_disk=False)
         assert len(_cache_files(disk_app)) == 1
 

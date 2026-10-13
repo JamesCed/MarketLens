@@ -87,66 +87,18 @@ from app.services.historical_baseline_service import (
     project_saturation,
 )
 
-# Bounds a full-city sweep to FEATURED_BUSINESS_TYPES (8) x 76 barangays
-# = 608 ephemeral AI scores -- the same compute_scores() the Saturation
-# Map already calls per-barangay. find_or_create_market_data/
-# find_or_create_lgu_data cache their snapshots for 30 days, so repeat
-# page loads reuse those rows; only the trained model's predict() step
-# re-runs every time (fast: a single-row Random Forest inference).
 _MONTHS_BACK = 6
 _QUARTERS_BACK = 5
 
 
-# The city-wide sweep now covers EVERY industry (24), not just the 8
-# featured ones, because the Trend Reports page charts them all. To keep
-# the page load roughly where it was, it samples barangays instead of
-# visiting all 76: 24 industries x 25 barangays = 600 ephemeral scores,
-# versus the 8 x 76 = 608 it used to run. Same cost, full industry
-# coverage.
 _SWEEP_BARANGAY_SAMPLE = 25
 
 
-# ---------------------------------------------------------------------
-# CACHING -- why changing the Select Period month is fast
-# ---------------------------------------------------------------------
-# Picking a different month re-asks for every card and chart. Almost
-# none of that work actually depends on the month: the city-wide AI
-# sweep (600 compute_scores() calls) and the market_data scan produce
-# exactly the same thing in March as in August -- only the arithmetic
-# laid over them moves. Re-running them per date change was the reason
-# the page took seconds to answer a click.
-#
-# So both are memoised, keyed on a FINGERPRINT of the data they were
-# built from, not on a timer alone. If a single market_data row is
-# added, changed or re-fetched, the fingerprint changes and the cache
-# misses -- there is no window in which the page can show numbers that
-# no longer match the database. The TTL is a second safety net for
-# anything the fingerprint cannot see (a retrained model, an edited
-# reference dataset), not the primary invalidation.
 _CACHE_TTL_SECONDS = 300
 _SWEEP_CACHE = {}
 _SNAPSHOT_CACHE = {}
 _CACHE_MAX_ENTRIES = 32
 
-# ...AND WHY THE SAME SWEEP IS ALSO KEPT ON DISK.
-#
-# The memo above lives in one Python process. Restart the server, or let
-# a second worker pick up the request, and the first visit to Trend
-# Reports pays for the whole city-wide sweep again -- roughly 14 CPU
-# seconds of Random Forest inference before a single pixel is drawn.
-# That is the "Building city-wide trend report..." wait.
-#
-# So the finished sweep is also written to instance/, keyed on the SAME
-# market_data fingerprint as the in-memory copy. A new worker reads the
-# file instead of recomputing, which turns those 14 seconds into
-# essentially zero. If any market_data row moves, the fingerprint moves
-# with it, the file no longer matches and the sweep is recomputed --
-# there is no window in which the page can show numbers the database
-# disagrees with.
-#
-# Every number in the file was produced by the trained model; this
-# caches the model's OUTPUT, it does not replace the model with a lookup
-# table. Delete the file and the next request rebuilds it.
 _SWEEP_DISK_CACHE_NAME = "trend_sweep_cache"
 _SWEEP_DISK_CACHE_VERSION = 1
 
@@ -164,7 +116,7 @@ def _data_fingerprint():
     """
     try:
         engine_token = id(db.engine)
-    except Exception:  # pragma: no cover -- no app context / no engine
+    except Exception:
         engine_token = 0
 
     def query():
@@ -182,10 +134,6 @@ def _data_fingerprint():
             int(total or 0),
         )
 
-    # Asked up to five times while one page is built (every memoised
-    # trend figure checks it); the memo makes that one round trip. Any
-    # write in the request clears it, so the "after" fingerprint taken
-    # in _cached() still sees rows a sweep has just saved.
     from app.utils.request_memo import request_memo
 
     return request_memo(("market_fingerprint", engine_token), query)
@@ -203,11 +151,6 @@ def _cached(store, name, build):
     now = time.monotonic()
     store[key] = (now, value)
 
-    # Building may itself have written rows: compute_scores() persists
-    # the Places lookups it makes into market_data. That moves the
-    # fingerprint, so file the result under the NEW one too -- otherwise
-    # the very next request misses and rebuilds something that has not
-    # actually changed, and the cache never warms up on a fresh install.
     after = _data_fingerprint()
     if after != version:
         store[(name, after)] = (now, value)
@@ -229,13 +172,14 @@ def clear_trend_caches(drop_disk=True):
     way it cannot see."""
     _SWEEP_CACHE.clear()
     _SNAPSHOT_CACHE.clear()
+    _OUTLOOK_CACHE.clear()
     try:
         from app.services.diversification_service import clear_diversification_cache
         from app.services.forecasting_service import clear_batch_cache
 
         clear_diversification_cache()
         clear_batch_cache()
-    except ImportError:  # pragma: no cover
+    except ImportError:
         pass
     if not drop_disk:
         return
@@ -294,7 +238,7 @@ def _sweep_disk_cache_path():
         folder = current_app.instance_path
         os.makedirs(folder, exist_ok=True)
         return os.path.join(folder, f"{_SWEEP_DISK_CACHE_NAME}.{token}.json")
-    except (ImportError, RuntimeError, OSError):  # pragma: no cover
+    except (ImportError, RuntimeError, OSError):
         return None
 
 
@@ -315,10 +259,6 @@ def _load_sweep_from_disk(cache_key, version):
 
     if payload.get("format") != _SWEEP_DISK_CACHE_VERSION:
         return None
-    # The engine id is part of the in-memory fingerprint and is a memory
-    # address, so it differs between processes and must NOT be compared
-    # across a restart -- it is dropped here. Everything else in the
-    # fingerprint is real data and is compared in full.
     if payload.get("fingerprint") != list(version[1:]):
         return None
     if payload.get("key") != list(cache_key):
@@ -344,9 +284,7 @@ def _plain(value):
     """
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
-    # numpy scalars, Decimal, and anything else exposing the numeric
-    # protocol: keep it a number, do not stringify it.
-    if hasattr(value, "item"):  # numpy scalar
+    if hasattr(value, "item"):
         return _plain(value.item())
     if isinstance(value, (date,)):
         return value.isoformat()
@@ -372,8 +310,6 @@ def _save_sweep_to_disk(cache_key, version, rows):
         "rows": clean,
     }
     try:
-        # Write-then-rename, so a worker reading the file never catches
-        # it half-written.
         temp = f"{path}.{os.getpid()}.tmp"
         with open(temp, "w", encoding="utf-8") as f:
             json.dump(payload, f, separators=(",", ":"))
@@ -409,11 +345,6 @@ def _sweep_baseline(industry_type=None):
         if from_disk is not None:
             return from_disk
 
-        # One batched call, not 500 separate ones. See
-        # forecasting_service.compute_scores_batch: it resolves every
-        # market/lgu row in two GROUP BY queries instead of ~1,000
-        # round trips, and runs the forest once over the whole matrix
-        # instead of once per pair. Same numbers, same order.
         if industry_type:
             pairs = [(industry_type, barangay) for barangay in BARANGAY_NAMES]
         else:
@@ -423,10 +354,6 @@ def _sweep_baseline(industry_type=None):
                      for barangay in barangays]
         rows = compute_scores_batch(pairs)
 
-        # compute_scores() can itself write market_data rows, which moves
-        # the fingerprint -- so file the result under the fingerprint as
-        # it stands AFTER the sweep, which is what the next request will
-        # be holding.
         _save_sweep_to_disk(cache_key, _data_fingerprint(), rows)
         return rows
 
@@ -553,18 +480,23 @@ def latest_market_data_by_key():
     from app.services.forecasting_service import (
         _latest_market_rows, reconciled_competitor_counts,
     )
+    from app.utils.request_memo import request_memo
 
-    industries = [row[0] for row in db.session.query(MarketData.industry_type).distinct().all()]
-    locations = [row[0] for row in db.session.query(MarketData.location).distinct().all()]
-    if not industries or not locations:
-        return {}
+    def build():
+        pairs = db.session.query(MarketData.industry_type, MarketData.location).distinct().all()
+        industries = sorted({industry for industry, _location in pairs if industry is not None})
+        locations = sorted({location for _industry, location in pairs if location is not None})
+        if not industries or not locations:
+            return {}
 
-    rows = _latest_market_rows(industries, locations)
-    merged = reconciled_competitor_counts(industries, locations, with_source=True)
-    return {
-        key: _ReconciledRow(row, *merged[key]) if key in merged else row
-        for key, row in rows.items()
-    }
+        rows = _latest_market_rows(industries, locations)
+        merged = reconciled_competitor_counts(industries, locations, with_source=True)
+        return {
+            key: _ReconciledRow(row, *merged[key]) if key in merged else row
+            for key, row in rows.items()
+        }
+
+    return request_memo("latest_market_data_by_key", build)
 
 
 class _ReconciledRow:
@@ -648,9 +580,6 @@ def get_overview_stats(baseline, real_forecasts):
 
     return {
         "total_businesses": total_businesses,
-        # Provenance breakdown of the number above -- lets the page state
-        # plainly how much of the total is live Google Places data vs.
-        # market_data already on file vs. registered SME plans.
         "businesses_from_places_api": places_total,
         "businesses_from_market_data": other_market_total,
         "businesses_registered_plans": registered_plans,
@@ -745,8 +674,6 @@ def businesses_as_of(anchor, industry_type=None, rows=None):
 
     current_total, current_combos, reference = _current_market_total(rows)
     if not current_total:
-        # Nothing real to scale. An honest zero beats a projection with
-        # nothing behind it.
         return {"value": 0, "measured": False, "projected": False, "combos": 0}
 
     return {
@@ -781,7 +708,6 @@ def _plans_as_of(cut_off, startup_only=False, first_seen=None):
     dated_ids = {sme_id for sme_id, first in dated.items() if first <= cut_off}
 
     if cut_off >= date.today():
-        # Current month: include plans with no forecast history too.
         profiles = SmeProfile.query
         if startup_only:
             profiles = profiles.filter_by(business_stage="startup")
@@ -813,7 +739,6 @@ def _forecast_averages_in_month(anchor, industry_type=None):
     and says so, rather than drawing a line through empty months."""
     start = anchor.replace(day=1)
     end = month_end(anchor)
-    # Live plans only -- see live_plan_forecasts().
     query = live_plan_forecasts().filter(
         ForecastResult.forecast_date >= start, ForecastResult.forecast_date <= end
     )
@@ -908,30 +833,17 @@ def get_period_overview(as_of, baseline=None, real_forecasts=None, industry_type
     businesses_now = market_now["value"] + plans_now
     businesses_prev = market_prev["value"] + plans_prev
 
-    # New entrants = the month's net gain in businesses on file, plus the
-    # SME plans this app itself saw start that month.
     entrants_now = max(0, market_now["value"] - market_prev["value"]) + _plans_registered_in(
         as_of, first_seen=first_seen
     )
     entrants_prev = max(0, market_prev["value"] - market_before["value"]) + _plans_registered_in(
         prev_anchor, first_seen=first_seen
     )
-    # ...but only where the months behind it are known. On an empty
-    # database every month is zero for lack of data, not because nothing
-    # opened, and "0, unchanged from last month" would assert a
-    # measurement that was never taken. That case still gets the blank.
     entrants_known = market_now["measured"] or market_now["projected"]
 
     sat_now, via_now, n_now = _forecast_averages_in_month(as_of, industry_type)
     sat_prev, via_prev, n_prev = _forecast_averages_in_month(prev_anchor, industry_type)
 
-    # Saturation / viability for a month with no forecasts of its own.
-    # The model's CURRENT city-wide average is the level; the national
-    # establishment curve supplies the movement, because a month when
-    # materially fewer businesses were trading was, all else equal, a
-    # less crowded market. Both months are projected from the SAME
-    # reference so the delta compares like with like instead of setting
-    # a measured month against a modelled one.
     saturation_measured = n_now > 0
     viability_measured = n_now > 0
     baseline_sat = baseline_via = None
@@ -968,15 +880,6 @@ def get_period_overview(as_of, baseline=None, real_forecasts=None, industry_type
                 "higher_is_better": True,
             },
             "new_startups": {
-                # An ABSOLUTE change, not a percentage. New entries in a
-                # month is a small count that legitimately hits zero --
-                # in the first half of 2020 it hit zero for six months
-                # straight, because the national series says the country
-                # was losing establishments. A percentage change has no
-                # answer from a base of zero, so the card would have gone
-                # back to "no comparison available" for exactly the
-                # months worth looking at. "3 fewer than last month" has
-                # an answer whatever the two figures are.
                 "value": entrants_now,
                 "delta_points": _delta(entrants_now, entrants_prev, as_percent=False, ndigits=0)
                 if entrants_known
@@ -986,8 +889,6 @@ def get_period_overview(as_of, baseline=None, real_forecasts=None, industry_type
                 "higher_is_better": True,
             },
             "market_saturation": {
-                # Displayed to one decimal; the delta is computed from
-                # the unrounded pair, for the reason given on viability.
                 "value": round(sat_now, 1) if sat_now is not None else sat_now,
                 "delta_points": _delta(sat_now, sat_prev, as_percent=False),
                 "measured": saturation_measured,
@@ -995,15 +896,7 @@ def get_period_overview(as_of, baseline=None, real_forecasts=None, industry_type
                 "higher_is_better": False,
             },
             "avg_viability": {
-                # Displayed to one decimal (it is an index out of 10);
-                # the delta below is computed from the unrounded pair.
                 "value": round(via_now, 1) if via_now is not None else via_now,
-                # Two decimals, because viability is a 0-10 index and
-                # saturation is a 0-100 one: a month that moves
-                # saturation by 0.2 points moves viability by 0.02, which
-                # rounds to a flat "+0.0" at one decimal. The movement is
-                # small, but it is real, and reporting it as zero would
-                # hide a genuine change rather than an absent one.
                 "delta_points": _delta(via_now, via_prev, as_percent=False, ndigits=2),
                 "measured": viability_measured,
                 "projected": not viability_measured and baseline_via is not None,
@@ -1011,9 +904,6 @@ def get_period_overview(as_of, baseline=None, real_forecasts=None, industry_type
             },
         },
         "forecasts_in_month": n_now,
-        # What the projected months are grounded in, so the page can name
-        # its source on screen instead of asking anyone to take it on
-        # trust. See historical_baseline_service.national_context().
         "basis": national_context(as_of),
     }
 
@@ -1027,10 +917,6 @@ def _viability_from_saturation_shift(current_viability, current_saturation, proj
     if current_viability is None or current_saturation is None or projected_saturation is None:
         return current_viability
     shifted = current_viability + (current_saturation - projected_saturation) / 10.0
-    # Two decimals, not one: the card DISPLAYS one, but the delta between
-    # two consecutive months is a hundredths-scale number, and rounding
-    # here first would flatten every month-over-month change to zero
-    # before it ever reached the card.
     return round(max(0.0, min(10.0, shifted)), 2)
 
 
@@ -1106,11 +992,6 @@ def get_places_api_rows(latest_market=None, limit=500):
         if row.source != "Google Places API":
             continue
         population = get_real_population(row.location)
-        # Skip locations with no real PSA population on file. Those are
-        # names that entered via an upload but don't match any of the 76
-        # real barangays (e.g. a stray "Baras" alongside the actual
-        # "Baras-baras"), so there is nothing verifiable behind them --
-        # see _has_real_population().
         if population is None:
             continue
         rows.append(
@@ -1171,11 +1052,6 @@ def get_barangay_business_table(latest_market=None):
         count = int(row.competitor_count or 0)
         entry["total_businesses"] += count
         entry["industries"] += 1
-        # Credit Places only when Places actually supplied the winning
-        # figure. After reconciliation the freshest row can be the
-        # permit register while the larger, reported count came from
-        # Google -- or the reverse -- so `source` alone would mis-state
-        # how much of this barangay is confirmed by a live lookup.
         winning_source = getattr(row, "competitor_source", row.source)
         if winning_source == "Google Places API":
             entry["from_places_api"] += count
@@ -1183,8 +1059,6 @@ def get_barangay_business_table(latest_market=None):
             entry["_top_count"] = count
             entry["top_industry"] = industry_type
 
-    # Include reference barangays that have no market_data yet, so the
-    # LGU sees all 76 rather than only the ones already looked up.
     for name in BARANGAY_NAMES:
         by_location.setdefault(
             name,
@@ -1311,7 +1185,6 @@ def get_market_quarterly_performance(industry_type=None, quarters=_QUARTERS_BACK
     labels_and_ends = _quarter_end_dates(quarters, as_of=as_of)
     rows = _snapshot_rows(industry_type)
 
-    # Live plans only -- see live_plan_forecasts().
     forecast_query = live_plan_forecasts()
     if industry_type:
         forecast_query = forecast_query.filter(ForecastResult.input_industry_type == industry_type)
@@ -1336,8 +1209,6 @@ def get_market_quarterly_performance(industry_type=None, quarters=_QUARTERS_BACK
         ]
         saturations.append(round(sum(in_quarter) / len(in_quarter), 1) if in_quarter else None)
 
-    # Back-project the leading run of quarters that have no data, from
-    # the earliest quarter that does.
     first_measured = next((i for i, m in enumerate(measured) if m), None)
     projected = [not m for m in measured]
     if first_measured is not None:
@@ -1348,12 +1219,6 @@ def get_market_quarterly_performance(industry_type=None, quarters=_QUARTERS_BACK
                 anchor_total, labels_and_ends[i][1], reference=anchor_end, series_key=industry_type
             )
     else:
-        # EVERY quarter in the window predates the first snapshot -- which
-        # is what happens the moment anyone picks 2020-2025 in the period
-        # calendar. This used to return a row of zeros, so the chart drew
-        # a flat line on the floor and the growth rate read 0% for every
-        # quarter. Project the whole window from today's REAL total
-        # instead, and flag all of it.
         current_total, _combos, reference = _current_market_total(rows)
         if current_total:
             businesses = [
@@ -1364,15 +1229,13 @@ def get_market_quarterly_performance(industry_type=None, quarters=_QUARTERS_BACK
             ]
             projected = [True] * len(businesses)
         else:
-            projected = [False] * len(businesses)  # nothing on file at all -- honest zeros
+            projected = [False] * len(businesses)
 
     growth = [0.0]
     for i in range(1, len(businesses)):
         prev = businesses[i - 1]
         growth.append(round(((businesses[i] - prev) / prev) * 100, 1) if prev else 0.0)
 
-    # Carry the last known saturation forward so the series has no holes,
-    # but never invent one before the first real reading.
     last_seen = None
     saturation_filled = []
     for value in saturations:
@@ -1402,8 +1265,6 @@ def get_top_industries(baseline, monthly_trends):
         avg_viability = _industry_baseline_average(baseline, industry, "viability_score")
         series = monthly_trends["series"][industry]
         change_percent = round(((series[-1] - series[0]) / series[0]) * 100, 1) if series and series[0] else 0.0
-        # Saturation trending up = viability trending down, so flip the
-        # sign for a "market score" change indicator.
         rows.append({"name": industry, "market_score": round(avg_viability, 1), "change_percent": -change_percent})
     return sorted(rows, key=lambda r: r["market_score"], reverse=True)
 
@@ -1425,20 +1286,72 @@ def _trend_delta(monthly_trends, invert=False):
     return round(-avg_delta if invert else avg_delta, 1)
 
 
-# How much of the model's own confidence a quarter of forecast horizon
-# costs. The Random Forest's confidence describes how much its trees
-# agree about ONE feature vector; it says nothing about whether that
-# vector will still describe the market in nine months. Projecting the
-# inputs forward adds uncertainty the model cannot see, so it is
-# subtracted here rather than left for a reader to guess at. 8 points
-# per quarter puts a Q4 figure roughly 24 points below its Q1 sibling,
-# which is the right order for "this is the model's real answer to a
-# question about next year".
 HORIZON_CONFIDENCE_PENALTY = 8.0
+
+
+_OUTLOOK_CACHE = {}
+_OUTLOOK_CACHE_TTL_SECONDS = 300
+_OUTLOOK_CACHE_MAX_ENTRIES = 256
+
+
+def _outlook_plan_key(sme_profile):
+    """Everything about the plan the outlook reads: its own inputs and the
+    forecast whose stored assumptions it holds. Editing a plan writes a
+    new forecast, so a changed plan can never reuse an old outlook."""
+    if sme_profile is None:
+        return None
+    try:
+        latest = sme_profile.latest_forecast()
+        return (
+            sme_profile.sme_id, latest.forecast_id if latest is not None else None,
+            sme_profile.industry_type, sme_profile.location, getattr(sme_profile, "subcategory", None),
+            str(getattr(sme_profile, "startup_capital", None)), getattr(sme_profile, "employee_count", None),
+            getattr(sme_profile, "business_stage", None), str(getattr(sme_profile, "registration_date", None)),
+            getattr(sme_profile, "offering_details", None), getattr(sme_profile, "product_offering", None),
+            getattr(sme_profile, "innovation_idea", None),
+        )
+    except Exception:
+        return False
 
 
 def project_quarterly_outlook(saturation_index, viability_score, location,
                               industry_type=None, quarters=4, sme_profile=None):
+    """Cached front for _project_quarterly_outlook(): the same plan in the
+    same market (the market_data and lgu_data fingerprints) on the same day
+    gets the same eight model runs, so a return visit to the Planning page
+    -- or switching back to a plan -- reuses them instead of querying the
+    market history and re-running both models four times."""
+    import copy
+
+    from app.services.forecasting_service import _scoring_inputs_fingerprint
+
+    plan_key = _outlook_plan_key(sme_profile)
+    if plan_key is False:
+        return _project_quarterly_outlook(saturation_index, viability_score, location,
+                                          industry_type=industry_type, quarters=quarters,
+                                          sme_profile=sme_profile)
+    from app.services.plan_forecast_service import plan_assumptions
+
+    key = (
+        round(float(saturation_index or 0), 6), round(float(viability_score or 0), 6), location,
+        industry_type, quarters, plan_key, _scoring_inputs_fingerprint(), plan_assumptions(),
+        date.today().isoformat(),
+    )
+    hit = _OUTLOOK_CACHE.get(key)
+    if hit is not None and (time.monotonic() - hit[0]) <= _OUTLOOK_CACHE_TTL_SECONDS:
+        return copy.deepcopy(hit[1])
+
+    value = _project_quarterly_outlook(saturation_index, viability_score, location,
+                                       industry_type=industry_type, quarters=quarters,
+                                       sme_profile=sme_profile)
+    if len(_OUTLOOK_CACHE) >= _OUTLOOK_CACHE_MAX_ENTRIES:
+        _OUTLOOK_CACHE.clear()
+    _OUTLOOK_CACHE[key] = (time.monotonic(), copy.deepcopy(value))
+    return value
+
+
+def _project_quarterly_outlook(saturation_index, viability_score, location,
+                               industry_type=None, quarters=4, sme_profile=None):
     """The Home page's "Current vs. Projected Demand & Viability" chart:
     FOUR REAL MODEL RUNS, one per quarter.
 
@@ -1533,11 +1446,6 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
         if current_competitors is None and market is not None:
             current_competitors = market.competitor_count
 
-    # This combo's own observed rate where the history supports one,
-    # the national series otherwise. Which was used is reported in
-    # `assumptions` -- "projected from this barangay's own trend" and
-    # "projected from the national series" are different claims and the
-    # UI should not present them as the same one.
     observed = observed_competitor_growth(industry_type, location) if industry_type else None
 
     plan = _quarterly_plan_context(sme_profile, industry_type, location, market, lgu,
@@ -1547,18 +1455,9 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
     confidence, competitors, basis = [], [], []
 
     for index in range(quarters):
-        # Quarter 1 is now, so its growth is 1.0 and its model run
-        # reproduces the stored forecast. Later quarters are anchored
-        # three months apart.
         if observed is not None:
             growth = (1.0 + observed) ** index
         else:
-            # series_key is deliberately NOT passed. _series_variation
-            # adds a small deterministic wobble so that dozens of
-            # back-projected history lines do not sit on top of each
-            # other -- useful there, wrong here: across four forward
-            # points it made demand fall in Q2 and rise again in Q3,
-            # which reads as a finding and is an artefact.
             growth = growth_index(_add_months(today, 3 * index), reference=today)
 
         quarter_saturation = None
@@ -1583,14 +1482,9 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
             )
 
         if quarter_saturation is None:
-            # No rows for this combo yet (a brand-new database, or a
-            # location the engine has never scored). Fall back to the
-            # stored figure rather than refusing to draw the chart, and
-            # mark the bar so nothing claims it was a model run.
             quarter_saturation = float(saturation_index or 0)
             quarter_confidence = None
             if sme_profile is not None and viability_score is not None:
-                # The stored figure for a plan IS the plan's viability.
                 quarter_viability = round(max(0.0, min(10.0, float(viability_score))), 1)
             basis.append("scaled")
         else:
@@ -1602,10 +1496,6 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
         labels.append(f"Q{index + 1}")
         competitors.append(projected_competitors)
         confidence.append(quarter_confidence)
-        # Demand uses the same establishment index: more businesses
-        # trading in a market is this project's only published proxy
-        # for commercial activity in it. Named in `assumptions` as a
-        # proxy, because it is one.
         demand.append(round(min(60.0, foot_traffic * 0.6 * growth), 1))
         saturation.append(round(min(60.0, quarter_saturation * 0.6), 1))
         viability.append(round(min(60.0, quarter_viability * 6.0), 1))
@@ -1619,8 +1509,6 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
         "competitors": competitors,
         "basis": basis,
         "recalibrated": all(entry == "model" for entry in basis),
-        # "plan": the viability line is the Plan Viability Model's (stage
-        # 2, every plan input held); "market": (100 - saturation) / 10.
         "viability_model": "plan" if sme_profile is not None else "market",
         "assumptions": {
             "projected": "competitor count",
@@ -1631,9 +1519,6 @@ def project_quarterly_outlook(saturation_index, viability_score, location,
                 "the PSA/DTI national MSME establishment series (published "
                 f"2019-2023, continued at {POST_RECOVERY_GROWTH:.0%}/year)"
             ),
-            # The MARKET inputs held. The plan's own inputs, held too in
-            # plan mode, are named under "viability" below, so a caption
-            # quoting both never says the same thing twice.
             "held": "population density, rent, foot traffic, historical success "
                     "rate and business density are held at today's values",
             "demand_proxy": "foot traffic scaled by the same growth rate",
@@ -1675,8 +1560,6 @@ def _quarterly_plan_context(sme_profile, industry_type, location, market, lgu,
     analysis = None
     subcategory = getattr(sme_profile, "subcategory", None)
     if subcategory:
-        # allow_live=False: a chart must never spend a Places call. The
-        # stored forecast already fetched (and saved) any live count.
         analysis = direct_competition(industry_type, subcategory, location, current_competitors,
                                       allow_live=False)
     direct_ratio = None
@@ -1689,7 +1572,6 @@ def _quarterly_plan_context(sme_profile, industry_type, location, market, lgu,
         market,
         get_real_population(location) or 0,
         analysis,
-        # None (no stored payload) -> build_plan_inputs uses today's.
         assumptions=_stored_plan_assumptions(sme_profile),
     )
     return {
@@ -1712,7 +1594,7 @@ def _stored_plan_assumptions(sme_profile):
     try:
         latest = sme_profile.latest_forecast()
         stored = json.loads(latest.recommendation) if latest is not None and latest.recommendation else None
-    except Exception:  # noqa: BLE001 -- a chart must not fail over a stored row
+    except Exception:
         return None
     if not isinstance(stored, dict):
         return None
@@ -1733,8 +1615,6 @@ def _quarterly_plan_run(plan, market, lgu, industry_type, projected_competitors)
 
     if plan["direct_ratio"] is not None:
         plan_competitors = max(0, int(round(projected_competitors * plan["direct_ratio"])))
-        # Re-scored with years 0, exactly as saturation_for_counts() --
-        # and so the stored forecast's MSI* -- does.
         direct_vector = build_feature_vector(
             market, lgu, 0, industry_type, competitor_count=plan_competitors
         )
@@ -1744,18 +1624,8 @@ def _quarterly_plan_run(plan, market, lgu, industry_type, projected_competitors)
     return msi, min(stage1_confidence, result["confidence"]), result["viability_score"]
 
 
-# Widest per-quarter competitor growth this will believe from a
-# barangay's own history, either way. Two refreshes weeks apart can
-# differ for reasons that are not a trend -- a Places lookup that hit
-# the 60-result ceiling, a permit register covering half the city --
-# and an unclamped rate compounded over four quarters turns one such
-# row into a hockey stick. +/-15% a quarter is still a market changing
-# fast; beyond that the evidence is more likely about the measurement
-# than the market.
 MAX_OBSERVED_QUARTERLY_GROWTH = 0.15
 
-# Below this the history is too short to read a rate from: two counts a
-# fortnight apart say almost nothing about a year.
 MIN_HISTORY_DAYS = 60
 
 
@@ -1819,19 +1689,9 @@ def _add_months(anchor, months):
     return date(year, month, min(anchor.day, calendar.monthrange(year, month)[1]))
 
 
-# How many months/quarters of history the charts draw, ending at the
-# month the user picked in the "Select Period" calendar. These are
-# window SIZES, not a menu of dates -- the date itself comes from a real
-# month picker, so any month of any year can be reviewed.
 TREND_WINDOW_MONTHS = 6
 TREND_WINDOW_QUARTERS = 5
 
-# The earliest month the picker will accept: January 2020, so the
-# control offers 2020 through the current month, which is the range the
-# published national establishment series (and therefore the
-# back-projection) actually covers. Going further back would extrapolate
-# below the real data; going less far would hide the pandemic years,
-# which are the most interesting part of any 2020-2026 trend.
 EARLIEST_TREND_MONTH = EARLIEST_HISTORY
 
 
@@ -1915,7 +1775,6 @@ def build_trend_report(industry_type=None, as_of=None,
     cards report `measured: False` rather than a fabricated delta."""
     as_of = as_of or date.today().replace(day=1)
 
-    # Everything that moves with the chosen month, built once.
     period = build_trend_period(industry_type, as_of=as_of, months=months, quarters=quarters)
     baseline = period.pop("_baseline")
     real_forecasts = period.pop("_real_forecasts")
@@ -1925,16 +1784,10 @@ def build_trend_report(industry_type=None, as_of=None,
     overview["saturation_trend_pts"] = _trend_delta(monthly_trends)
     overview["viability_trend"] = round(_trend_delta(monthly_trends, invert=True) / 10, 1)
 
-    # Collapse market_data to one row per (industry, location) ONCE and
-    # share it -- the distribution and the Places verification table
-    # would otherwise each re-run the same full-table scan.
     latest_market = latest_market_data_by_key()
 
     return {
         "overview": overview,
         "industry_distribution": get_industry_distribution(latest_market),
-        # period / period_overview / monthly_trends / market_quarterly /
-        # top_industries -- the month-dependent half, identical to what
-        # /api/trend-period returns on its own.
         **period,
     }

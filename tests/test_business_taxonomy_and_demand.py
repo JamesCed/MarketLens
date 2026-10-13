@@ -37,11 +37,6 @@ from app.services.socio_demographic_service import (
     TARLAC_AVG_ANNUAL_FAMILY_EXPENDITURE_PHP,
 )
 
-# The 20 PSIC top-level sections this system now offers -- see
-# app/ml/constants.py. The earlier 24 broad categories and the 22
-# micro-business categories that briefly sat on top of them are both
-# gone: this DSS targets SMEs, and app/services/industry_migration.py
-# moved every stored row onto the sections below.
 PSIC_SECTIONS = [
     "Agriculture, Forestry, and Fishing",
     "Mining and Quarrying",
@@ -65,8 +60,6 @@ PSIC_SECTIONS = [
     "Activities of Households as Employers",
 ]
 
-# Names that must NOT come back as offered industries -- the micro
-# categories the SME scope excludes, plus the superseded broad ones.
 RETIRED_CATEGORY_NAMES = [
     "Sari-Sari Stores", "Carinderias & Eateries", "Food Carts & Street Food Stalls",
     "Piso WiFi & Internet Cafes", "Meat & Poultry Stalls", "Dry Goods & Apparel Stalls",
@@ -135,11 +128,6 @@ def test_search_terms_target_sme_scale_establishments():
             assert micro_word not in lowered, f"{section!r} search term still asks for {micro_word!r}"
 
 
-# ---------------------------------------------------------------------------
-# Micro-business exclusion filter (places_service)
-# ---------------------------------------------------------------------------
-
-
 def test_micro_businesses_are_identified():
     for name in [
         "Aling Nena's Sari-Sari Store", "Nena Carinderia", "JR Vulcanizing Shop",
@@ -161,11 +149,6 @@ def test_sme_scale_businesses_are_not_filtered_out():
         assert not is_micro_business(name), f"{name!r} must NOT be filtered out"
 
 
-# ---------------------------------------------------------------------------
-# app/services/socio_demographic_service.py -- the FIES "demand" figures
-# ---------------------------------------------------------------------------
-
-
 def test_demand_breakdown_covers_exactly_the_five_requested_categories():
     breakdown = get_demand_breakdown()
     assert [c["key"] for c in breakdown] == DEMAND_TOOLTIP_CATEGORIES
@@ -183,8 +166,6 @@ def test_demand_breakdown_amounts_derive_from_the_real_tarlac_total():
     for entry in breakdown:
         expected = round(TARLAC_AVG_ANNUAL_FAMILY_EXPENDITURE_PHP * entry["national_share_percent"] / 100.0)
         assert entry["estimated_annual_php"] == expected
-        # Every category must be a positive, plausible slice of the real
-        # total -- never larger than the whole, never zero/negative.
         assert 0 < entry["estimated_annual_php"] < TARLAC_AVG_ANNUAL_FAMILY_EXPENDITURE_PHP
 
 
@@ -204,13 +185,6 @@ def test_demand_summary_is_explicit_about_being_city_wide_not_barangay_specific(
     assert "barangay" in summary["geographic_note"].lower()
     assert summary["tarlac_avg_annual_family_expenditure_php"] == TARLAC_AVG_ANNUAL_FAMILY_EXPENDITURE_PHP
     assert len(summary["categories"]) == 5
-
-
-# ---------------------------------------------------------------------------
-# map.js -- OpenStreetMap/Leaflet basemap (string-level checks; the full
-# behavioral port is covered by the Leaflet API-contract test run under
-# node, see README section 9)
-# ---------------------------------------------------------------------------
 
 
 def _map_js():
@@ -277,7 +251,6 @@ def test_leaflet_assets_carry_no_unverified_integrity_hash(subtests=None):
     memory."""
     import re
     here = os.path.dirname(__file__)
-    # The map lives on Planning now; Home is the overview and has none.
     for template in ("saturation_map.html", "planning.html"):
         path = os.path.join(here, "..", "app", "templates", "sme", template)
         with open(path, "r", encoding="utf-8") as f:
@@ -296,8 +269,6 @@ def test_leaflet_stylesheet_is_loaded_from_the_head_block():
         with open(path, "r", encoding="utf-8") as f:
             markup = f.read()
         assert "{% block extra_head %}" in markup, f"{template} has no extra_head block"
-        # Pull out just the extra_head block -- splitting on the first
-        # {% endblock %} would grab the title block instead.
         head_block = markup.split("{% block extra_head %}", 1)[1].split("{% endblock %}", 1)[0]
         assert "leaflet.css" in head_block, f"{template} does not load leaflet.css in <head>"
 
@@ -308,11 +279,6 @@ def test_map_js_normalizes_geometry_to_leaflet_multipolygon_nesting():
     three-level form or its second piece is punched out of its first."""
     contents = _map_js()
     assert "poly.map((ring) => ring.map(([lng, lat]) => ({ lat, lng })))" in contents
-
-
-# ---------------------------------------------------------------------------
-# Saturation Map / Home pages expose window.DSS_DEMAND_SUMMARY
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -356,7 +322,6 @@ def test_home_page_exposes_demand_summary(client, app):
     _login_sme(client, app)
     with app.test_request_context():
         from flask import url_for
-        # The plan workspace (with its mini map) is Planning now.
         url = url_for("sme.planning")
     response = client.get(url)
     assert response.status_code == 200

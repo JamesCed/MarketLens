@@ -98,11 +98,6 @@ def locations_forecast():
     industry_type = request.args.get("industry_type", BUSINESS_TYPES[0])
     locations = _known_locations()
 
-    # ONE batched scoring call, not one per barangay (inside
-    # saturation_map_at). The loop that used to be here ran
-    # compute_scores() 76 times: 228 database round trips, measured at
-    # 4.24s for a page that cannot draw until it returns. Batched it is
-    # 0.05s -- see forecasting_service.compute_scores_batch.
     scored = saturation_map_at(industry_type, locations, as_of=request.args.get("as_of"))
 
     rows = []
@@ -121,14 +116,7 @@ def locations_forecast():
                 "period": entry["period"],
                 "as_of": entry["as_of"],
                 "basis": entry["basis"],
-                # Carried here so the map's hover tooltip can name the
-                # industry and show the barangay's real 2024 PSA
-                # population without a second round trip per hover.
                 "population": get_real_population(location),
-                # REAL (73/76 barangays; 3 use a documented dataset-wide
-                # estimate -- see app/ml/seed_data.py) people/km2, so the
-                # Saturation Map's sociodemographic overlay is grounded in
-                # the same PSA figures as everything else, not invented.
                 "population_density": profile.get("population_density"),
             }
         )
@@ -177,9 +165,6 @@ def lgu_recommendations():
         }
         for location, scores in zip(locations, scored)
     ]
-    # Least saturated first. Ties broken by viability, then by name, so
-    # the list is stable between refreshes -- a "top 3" that reshuffles
-    # on reload with unchanged data reads as noise, not a finding.
     rows.sort(key=lambda row: (row["saturation_index"], -row["viability_score"], row["location"]))
 
     return jsonify({
@@ -210,12 +195,8 @@ def places_nearby():
     location = request.args.get("location", "").strip()
     industry_type = request.args.get("industry_type", BUSINESS_TYPES[0])
     api_key = current_app.config.get("GOOGLE_PLACES_API_KEY", "")
-    max_results = int(SystemSetting.get_float("places_max_results", 0))  # 0 = unlimited
+    max_results = int(SystemSetting.get_float("places_max_results", 0))
 
-    # The detailed call also hands back the micro businesses that were
-    # filtered OUT of the count (this system's scope is SMEs -- see
-    # places_service.MICRO_BUSINESS_PATTERNS). They're returned so the UI
-    # can show what was excluded rather than just asserting a number.
     detail = search_competitors_detailed(
         location, industry_type, api_key=api_key, max_results=max_results
     )
@@ -272,8 +253,6 @@ def barangay_coords():
 
 @api_bp.route("/barangay-choropleth")
 @login_required
-# "-official": a new key, so a deployment does not keep serving the old
-# computed cells from its on-disk cache after this change.
 @cached_on_data("barangay-choropleth-official")
 def barangay_choropleth():
     """The barangay shapes for the Saturation Map's choropleth.
@@ -345,11 +324,6 @@ def places_refresh():
     from app.services.response_cache import clear_response_cache
     from app.services.trend_analytics_service import clear_trend_caches
 
-    # READ-ONLY DEPLOYMENTS. places_service.live_fetch_enabled() already
-    # stops the outbound calls themselves, so nothing can be spent even
-    # without this check -- but a button that appears to work and
-    # silently achieves nothing is its own kind of broken. Refusing here
-    # is what lets the page say WHY.
     if not current_app.config.get("PLACES_LIVE_FETCH", True):
         return (
             jsonify(
@@ -368,9 +342,6 @@ def places_refresh():
 
     limit = request.args.get("limit", default=MAX_BATCH, type=int)
     result = refresh_batch(limit)
-    # A batch rewrites market_data wholesale, so drop the memoised trend
-    # sweep and snapshot rather than waiting for the fingerprint to be
-    # re-read on the next request.
     clear_trend_caches()
     clear_response_cache()
     return jsonify(result)
@@ -385,9 +356,6 @@ def places_refresh_progress():
 
     progress = get_progress()
     progress["configured"] = bool((current_app.config.get("GOOGLE_PLACES_API_KEY") or "").strip())
-    # The page uses this to hide the fetch control and to stop calling
-    # imported rows "simulated" -- on a read-only deployment the data IS
-    # real Google data, it was just collected somewhere else.
     progress["live_fetch_disabled"] = not current_app.config.get("PLACES_LIVE_FETCH", True)
     return jsonify(progress)
 
@@ -440,7 +408,6 @@ def trend_period():
         return jsonify({"error": "Unknown industry_type"}), 400
     as_of = resolve_as_of_month(request.args.get("as_of"))
     payload = build_trend_period(industry_type, as_of=as_of)
-    # Internal handles shared with build_trend_report() -- never sent.
     payload.pop("_baseline", None)
     payload.pop("_real_forecasts", None)
     return jsonify(payload)
@@ -473,9 +440,6 @@ def quarterly_performance():
     )
 
 
-# How many industries the barangay detail panel ranks. Three is what the
-# client asked for: enough to show what a barangay is known for, short
-# enough to read at a glance on the Home page's small map popup.
 TOP_INDUSTRIES_LIMIT = 3
 
 
@@ -513,9 +477,6 @@ def _top_industries(location_rows, limit=TOP_INDUSTRIES_LIMIT):
         count = int(row.competitor_count or 0)
         if count <= 0:
             continue
-        # A reconciled row names the source that supplied the winning
-        # figure; a plain row (no Places/DTI figure at all) only has its
-        # own source, which is by definition not a real one.
         source = getattr(row, "competitor_source", None) or row.source
         ranked.append(
             {
@@ -575,13 +536,6 @@ def barangay_detail():
             "total_businesses": total_businesses,
             "top_industries": _top_industries(location_rows),
             "population": get_real_population(location),
-            # A FIXED, real per-barangay figure (people/km2) -- unlike
-            # every other number in this response, it must never change
-            # when industry_type changes. Kept as its own field, separate
-            # from saturation_index, after the map's detail panel was
-            # found mislabeling saturation_index as "Density Score",
-            # which made it look like population density was shifting
-            # with the industry dropdown when it never actually did.
             "population_density": (get_barangay_profile(location) or {}).get("population_density"),
             "recommended_actions": actions,
         }
@@ -637,9 +591,6 @@ def forecast_transcript(forecast_id):
     forecast = db.session.get(ForecastResult, forecast_id)
     if forecast is None or not current_user.is_sme():
         abort(404)
-    # The ordinary query applies the Trash filter, so a trashed plan's
-    # forecast is treated as not there -- the same rule every plan route
-    # follows (restore first).
     plan = SmeProfile.query.filter_by(sme_id=forecast.sme_id, user_id=current_user.user_id).first()
     if plan is None:
         abort(404)
@@ -649,11 +600,6 @@ def forecast_transcript(forecast_id):
     rec = rec_service.parse_recommendation(forecast.recommendation)
     explanation = rec.get("explanation")
     if stored is None or rec.get("forecast") is None or explanation is None:
-        # A forecast from before the trained plan model has no computation
-        # to transcribe. If it is still the plan's LATEST forecast, re-run
-        # it: the new forecast is scored by both models and Gemini writes
-        # its transcript as part of the run. (An older, superseded row is
-        # left alone -- the plan's current forecast is the one that counts.)
         latest = plan.latest_forecast()
         if latest is None or latest.forecast_id != forecast.forecast_id \
                 or not llm_service.gemini_transcription_available():
@@ -684,8 +630,6 @@ def forecast_transcript(forecast_id):
 
     pending = rec_service.ai_text_pending(rec)
     if not pending:
-        # Already written -- by an earlier request, another tab, or the
-        # forecast run itself. Nothing to spend a call on.
         return answer(explanation)
     if rec_service.transcript_failed_recently(explanation):
         return jsonify({"ok": False, "reason": "retry_later",
@@ -708,17 +652,12 @@ def forecast_transcript(forecast_id):
     return jsonify(body)
 
 
-# The Home and Recommendations templates ask this (through
-# shared/_plan_insights.html) whether to render the transcript upgrade
-# hook for a forecast. Registered from here because this blueprint owns
-# the endpoint the hook calls; see
-# recommendation_service.transcript_upgrade_due.
 def _forecast_transcript_due(rec):
     from app.services.recommendation_service import transcript_upgrade_due
 
     try:
         return transcript_upgrade_due(rec)
-    except Exception:  # noqa: BLE001 -- a page render must never fail on this
+    except Exception:
         return False
 
 
@@ -733,7 +672,7 @@ def _forecast_ai_pending(rec):
 
     try:
         return ai_text_pending(rec)
-    except Exception:  # noqa: BLE001 -- a page render must never fail on this
+    except Exception:
         return set()
 
 
@@ -758,7 +697,7 @@ def _transcript_queue(forecasts):
             if transcript_queue_due(parse_recommendation(forecast.recommendation)):
                 out.append((forecast.forecast_id,
                             url_for("api.forecast_transcript", forecast_id=forecast.forecast_id)))
-    except Exception:  # noqa: BLE001 -- a page render must never fail on this
+    except Exception:
         return []
     return out
 

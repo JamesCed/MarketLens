@@ -51,11 +51,6 @@ STATE_TOURING = "touring"
 STATE_COMPLETED = "completed"
 STATE_SKIPPED = "skipped"
 
-# What each state means, in words, for Settings › Tutorial:
-#   state -> (short label, one sentence, Bootstrap-icon name)
-# Keyed here, next to the states themselves, so the page can never
-# describe a state this module does not set. NULL ("never asked") has
-# its own entry under None.
 _WALKTHROUGH_WORDS = {
     STATE_COMPLETED: (
         "Completed",
@@ -117,8 +112,6 @@ def _progress_note():
 def _set_state(state, action, details):
     current_user.onboarding_state = state
     db.session.commit()
-    # target=the account itself, so the audit page's "Target" column
-    # names whose walkthrough this was rather than leaving it blank.
     log_action(action, details=details, target=current_user._get_current_object())
     return jsonify({"ok": True, "state": state})
 
@@ -163,9 +156,6 @@ def skip():
     return _set_state(STATE_SKIPPED, "onboarding_skipped", details)
 
 
-# ---------------------------------------------------------------------
-# window.DSS_ONBOARDING, for every signed-in page
-# ---------------------------------------------------------------------
 @onboarding_bp.app_context_processor
 def inject_onboarding():
     """Everything tour.js needs, handed over as one object that
@@ -182,11 +172,7 @@ def inject_onboarding():
             "role": current_user.role,
             "userId": current_user.user_id,
             "firstName": (current_user.name or "").split(" ")[0],
-            # The steps name pages as plain paths ("/home"). If the app is
-            # ever mounted under a prefix, tour.js puts this in front.
             "root": request.script_root or "",
-            # True on pages where the prompt must not appear -- see
-            # _suppress_on_error_pages below.
             "suppressed": False,
             "urls": {
                 "start": url_for("onboarding.start"),
@@ -198,21 +184,6 @@ def inject_onboarding():
     }
 
 
-# ---------------------------------------------------------------------
-# Not on error pages
-# ---------------------------------------------------------------------
-# errors/403.html, 404.html and 500.html extend base.html, and for a
-# signed-in visitor they render the full dashboard shell -- so without
-# this, "Welcome to MarketLens!" would pop up over "Page not found", and
-# a tour could try to resume on a page that has none of its targets.
-#
-# The error handlers in app/__init__.py are not this module's to edit,
-# so instead of each of them passing a flag, this listens for any
-# template under errors/ (or auth/, belt and braces: those only render
-# for signed-out visitors today) and marks the onboarding config as
-# suppressed. A [data-tour-replay] button would still work there -- it
-# navigates to the first page of the tour anyway -- though the only one
-# now lives in Settings › Tutorial, which is never an error page.
 SUPPRESSED_TEMPLATE_PREFIXES = ("errors/", "auth/")
 
 
@@ -227,6 +198,4 @@ def _suppress_on_error_pages(sender, template=None, context=None, **_extra):
 
 @onboarding_bp.record_once
 def _connect_signals(state):
-    # Scoped to this app (sender=state.app) so a second app built in the
-    # same process -- every test builds its own -- gets its own hook.
     before_render_template.connect(_suppress_on_error_pages, state.app)

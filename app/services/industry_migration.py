@@ -84,19 +84,9 @@ from app.extensions import db
 from app.models import MarketData, SmeProfile, ForecastResult, SystemSetting, IndustryMigrationLog
 from app.models.archive import get_including_archived
 
-# Set once the migration has run, so it never runs twice.
 MIGRATION_FLAG_KEY = "industry_taxonomy_psic_migrated_at"
 
-# ---------------------------------------------------------------------
-# OLD CATEGORY -> PSIC SECTION
-# ---------------------------------------------------------------------
-# Exhaustive map of every category this project has ever shipped that
-# describes an SME-scale business, onto the PSIC section it belongs to.
-# Anything not listed here and not in MICRO_ONLY below is left alone --
-# an unknown free-text industry an LGU upload introduced is that
-# office's data, not this migration's to rewrite.
 OLD_TO_PSIC = {
-    # --- the original 24 broad categories ---
     "Food & Beverage": "Food and Beverage",
     "Retail": "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles",
     "Service": "Other Service Activities",
@@ -108,65 +98,46 @@ OLD_TO_PSIC = {
     "Information Technology & Communication": "Information and Communication",
     "Health & Wellness": "Human Health and Social Work Activities",
     "Education & Training": "Education",
-    # Salons/spas/barbershops are PSIC S -- "other personal service activities".
     "Beauty & Personal Care": "Other Service Activities",
-    # PSIC G covers "repair of motor vehicles and motorcycles" explicitly.
     "Automotive Services": "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles",
     "Real Estate": "Real Estate Activities",
     "Financial & Insurance Services": "Financial and Insurance Activities",
     "Tourism & Accommodation": "Accommodation and Food Service Activities",
     "Entertainment & Recreation": "Arts, Entertainment, and Recreation",
-    # Making garments/footwear is PSIC C; a shop only SELLING them would
-    # be G, but this category was defined as tailoring/production.
     "Textile, Apparel & Footwear": "Manufacturing",
     "Furniture & Handicrafts": "Manufacturing",
-    # Printing is PSIC C (publishing alone would be J; this category was
-    # predominantly print shops).
     "Printing & Publishing": "Manufacturing",
     "Professional & Technical Services": "Professional, Scientific, and Technical Activities",
     "Warehousing & Storage": "Transportation and Storage",
     "Repair & Maintenance Services": "Other Service Activities",
     "Agri-Business & Farm Supply": "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles",
 
-    # --- the 5 micro-era categories that are genuinely SME-scale ---
-    # A bakeshop with its own production is a small enterprise, not a
-    # front-window counter.
     "Bakeries & Bakeshops": "Food and Beverage",
-    # A wash-dry-fold shop runs commercial machines out of leased space.
     "Laundry Shops": "Other Service Activities",
-    # Samgyupsal/unli-wings houses are sit-down restaurants.
     "Samgyupsal & Grill Eateries": "Accommodation and Food Service Activities",
-    # Hardware and agri-supply stores carry real inventory and are
-    # routinely small-to-medium by DTI asset size.
     "Hardware & Construction Supply Stores":
         "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles",
     "Agri-Supply Stores": "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles",
 }
 
-# ---------------------------------------------------------------------
-# MICRO-ONLY CATEGORIES -- rows deleted, not remapped
-# ---------------------------------------------------------------------
-# Each of these is defined by a form of operation that is micro by
-# nature: a stall, a cart, a kiosk, a front-window counter, a roadside
-# bay, or a backyard. See the module docstring for the standard applied.
 MICRO_ONLY = {
-    "Sari-Sari Stores",                     # front-window neighborhood counter
-    "Carinderias & Eateries",               # turo-turo, a few tables
-    "Milk Tea & Beverage Kiosks",           # kiosk/pop-up stand
-    "Food Carts & Street Food Stalls",      # mobile or fixed street stall
-    "Water Refilling Stations",             # single-room refilling counter
-    "Vulcanizing & Repair Shops",           # roadside tire/repair bay
-    "Sari-Sari Barber Shops & Hair Salons", # one- or two-chair neighborhood shop
-    "Auto & Motorcycle Wash Bays",          # open wash bay
-    "Tailoring & Alteration Shops",         # single-seamstress shop
-    "Piso WiFi & Internet Cafes",           # coin-operated micro digital
-    "Computer Repair & Printing Shops",     # counter-scale repair/print
-    "Dry Goods & Apparel Stalls",           # tiangge/market stall
-    "LPG & Cooking Gas Dealers",            # small retail/delivery counter
-    "Rice Retailing & Milling Outlets",     # public-market rice stall
-    "Meat & Poultry Stalls",                # public-market meat stall
-    "Poultry & Backyard Livestock Farms",   # backyard raising
-    "Pasalubong & Native Delicacy Shops",   # home-production vending
+    "Sari-Sari Stores",
+    "Carinderias & Eateries",
+    "Milk Tea & Beverage Kiosks",
+    "Food Carts & Street Food Stalls",
+    "Water Refilling Stations",
+    "Vulcanizing & Repair Shops",
+    "Sari-Sari Barber Shops & Hair Salons",
+    "Auto & Motorcycle Wash Bays",
+    "Tailoring & Alteration Shops",
+    "Piso WiFi & Internet Cafes",
+    "Computer Repair & Printing Shops",
+    "Dry Goods & Apparel Stalls",
+    "LPG & Cooking Gas Dealers",
+    "Rice Retailing & Milling Outlets",
+    "Meat & Poultry Stalls",
+    "Poultry & Backyard Livestock Farms",
+    "Pasalubong & Native Delicacy Shops",
 }
 
 
@@ -227,12 +198,8 @@ def migrate(force=False):
         summary["skipped"] = True
         return summary
 
-    # The backup table must exist before anything is written to it. This
-    # is checkfirst=True, so it is a no-op when it already does -- an
-    # existing install does not need seed.py re-run.
     IndustryMigrationLog.__table__.create(db.session.get_bind(), checkfirst=True)
 
-    # --- market_data: delete micro rows -------------------------------
     micro_rows = MarketData.query.filter(MarketData.industry_type.in_(tuple(MICRO_ONLY))).all()
     for row in micro_rows:
         _log(
@@ -242,7 +209,6 @@ def migrate(force=False):
         db.session.delete(row)
         summary["deleted_micro"] += 1
 
-    # --- market_data: remap the rest ----------------------------------
     remap_rows = MarketData.query.filter(MarketData.industry_type.in_(tuple(OLD_TO_PSIC))).all()
     for row in remap_rows:
         new_value = OLD_TO_PSIC[row.industry_type]
@@ -255,9 +221,6 @@ def migrate(force=False):
 
     db.session.flush()
 
-    # --- market_data: collapse duplicates the remap just created ------
-    # One row per (industry_type, location, date_recorded) -- keep the
-    # freshest market_id, record and remove the rest.
     seen = {}
     for row in (
         MarketData.query
@@ -276,11 +239,6 @@ def migrate(force=False):
         else:
             seen[key] = row.market_id
 
-    # --- sme_profile / forecast_result: remap their industry text -----
-    # These are the SME's OWN plans and their forecast history. They are
-    # never deleted, even for a micro category: that is a person's saved
-    # work. A micro plan is remapped to the closest section instead, so
-    # it keeps working against the new vocabulary.
     micro_fallbacks = {
         "Sari-Sari Stores": "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles",
         "Carinderias & Eateries": "Accommodation and Food Service Activities",
@@ -310,10 +268,6 @@ def migrate(force=False):
     plan_map = dict(OLD_TO_PSIC)
     plan_map.update(micro_fallbacks)
 
-    # include_archived: a plan sitting in the owner's Trash is still
-    # their plan, and restoring it must bring it back speaking the
-    # current vocabulary -- so it is remapped like every other one. The
-    # archive filter (app/models/archive.py) would otherwise skip it.
     for profile in (
         SmeProfile.query.execution_options(include_archived=True)
         .filter(SmeProfile.industry_type.in_(tuple(plan_map)))
@@ -334,12 +288,6 @@ def migrate(force=False):
         forecast.input_industry_type = new_value
         summary["forecasts_remapped"] += 1
 
-    # --- mark every remapped row for one free re-fetch ----------------
-    # A remapped row's competitor_count came from the OLD category's
-    # search term. Reuse the existing recap-watermark mechanism (see
-    # startup_migrations.py / forecasting_service.find_or_create_market_data):
-    # rows at or below the watermark get exactly one live re-fetch when
-    # the engine next needs them.
     if summary["remapped"]:
         from app.services.startup_migrations import PLACES_RECAP_WATERMARK_KEY
 
@@ -397,7 +345,6 @@ def undo():
                     row.industry_type = entry.old_industry_type
                     summary["reverted_remaps"] += 1
             elif entry.table_name == "sme_profile":
-                # Trashed plans were remapped too, so they are reverted too.
                 row = get_including_archived(SmeProfile, entry.row_id)
                 if row is not None:
                     row.industry_type = entry.old_industry_type

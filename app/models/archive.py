@@ -116,9 +116,6 @@ def install_archive_filter():
     def _hide_archived_rows(state):
         if not state.is_select:
             return
-        # Lazy/relationship loads and deferred-column loads are left
-        # alone -- see the module docstring for why a historical
-        # forecast must still see the row it was built from.
         if state.is_relationship_load or state.is_column_load:
             return
         if state.execution_options.get(INCLUDE_ARCHIVED, False):
@@ -128,14 +125,6 @@ def install_archive_filter():
                 HiddenWhenArchived,
                 lambda cls: cls.archived_at.is_(None),
                 include_aliases=True,
-                # Without this the criteria are stored on every object the
-                # query loads and re-applied to ITS lazy relationship loads
-                # -- so a ForecastResult fetched normally would then load
-                # forecast.market_data as None the moment that row was
-                # archived. The is_relationship_load check above cannot
-                # catch that case, because the option arrives already
-                # attached to the lazy load. Found by
-                # test_a_forecast_survives_its_market_and_lgu_rows_being_archived.
                 propagate_to_loaders=False,
             )
         )

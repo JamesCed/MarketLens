@@ -45,17 +45,17 @@ import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from dotenv import load_dotenv  # noqa: E402
+from dotenv import load_dotenv
 
 load_dotenv()
 
-from app import create_app  # noqa: E402
-from app.services.choropleth_service import (  # noqa: E402
+from app import create_app
+from app.services.choropleth_service import (
     PRECOMPUTED_CELLS_NAME,
     _fingerprint,
     compute_choropleth_geojson,
 )
-from app.services.geocoding_service import load_seed_coords  # noqa: E402
+from app.services.geocoding_service import load_seed_coords
 
 
 def main():
@@ -69,7 +69,6 @@ def main():
         print("Computing cells... (this is the slow part, once)")
 
         started = time.time()
-        # force=True so it never reads back the file it is about to write.
         geojson = compute_choropleth_geojson(coords, app=app, force=True)
         elapsed = time.time() - started
 

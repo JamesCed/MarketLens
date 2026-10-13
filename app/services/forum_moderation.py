@@ -69,16 +69,10 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-# ---------------------------------------------------------------------
-# Verdicts and flags
-# ---------------------------------------------------------------------
 BLOCK = "block"
 REVIEW = "review"
 CLEAN = "clean"
 
-# Stable identifiers stored in filter_flags (comma-separated), and the
-# words the moderation page shows for them. Identifiers, not sentences,
-# so the stored value never needs rewriting when the wording changes.
 FLAG_LABELS = {
     "profanity": "Profanity or slur",
     "rude_language": "Rude or insulting word",
@@ -94,9 +88,6 @@ FLAG_LABELS = {
     "reported": "Reported by members",
 }
 
-# What the AUTHOR is told when a flag holds their post. Short and
-# specific: the point is that they know what to change, not that they
-# feel accused.
 _BLOCK_MESSAGES = {
     "profanity": "Please remove the swear word or offensive term. Everything else can stay.",
     "link_shortener": ("Shortened links (like bit.ly or tinyurl) aren't allowed because nobody can see "
@@ -121,7 +112,6 @@ _REVIEW_MESSAGES = {
 class FilterResult:
     verdict: str = CLEAN
     flags: list = field(default_factory=list)
-    # One friendly line per flag, for the author.
     messages: list = field(default_factory=list)
 
     @property
@@ -149,20 +139,6 @@ def review_messages(flags):
     return [_REVIEW_MESSAGES[f] for f in flags if f in _REVIEW_MESSAGES]
 
 
-# ---------------------------------------------------------------------
-# Word lists
-# ---------------------------------------------------------------------
-# A moderate list, not an exhaustive one. Every entry is matched as a
-# whole word (after normalisation), so the list stays readable and each
-# word has to earn its place.
-#
-# Left out ON PURPOSE, because they are ordinary words in this
-# community's own trade:
-#   "leche"  -- leche flan is on half the menus in Tarlac
-#   "cock"   -- gamefowl and poultry are real businesses here
-#   "puke"   -- English for vomit; "pekpek" covers the vulgar sense
-#   "ass"/"dick" alone -- donkeys, and people called Richard
-#   "shit" as a PREFIX -- "shitake" is how many menus spell shiitake
 _PROFANITY_EN = [
     "fuck", "fucks", "fucked", "fucker", "fuckers", "fucking", "fuckin", "fck", "fcking",
     "motherfucker", "motherfucking", "shit", "shits", "shitty", "bullshit", "bitch", "bitches",
@@ -171,8 +147,6 @@ _PROFANITY_EN = [
     "nigga",
 ]
 
-# Tagalog, plus the two Ilocano curses anyone in Tarlac will recognise
-# (the city sits where Tagalog, Kapampangan and Ilocano meet).
 _PROFANITY_FIL = [
     "putangina", "putang ina", "tangina", "tang ina", "potangina", "kingina", "king ina", "puta",
     "pota", "punyeta", "gago", "ulol", "ulul", "tarantado", "pakyu", "pakyew", "tite", "titi",
@@ -180,12 +154,8 @@ _PROFANITY_FIL = [
     "hayop ka", "ukinnam", "ukininam", "okinnam",
 ]
 
-# Filipino curses are usually glued to a pronoun or the linker -ng
-# ("tanginamo", "gagong", "putanginang"). Allowed as an optional
-# suffix so each root is listed once.
 _FIL_SUFFIX = r"(?:\s*(?:mo|nyo|niyo|mu|ka|ng))?"
 
-# REVIEW, not BLOCK -- see the module docstring.
 _RUDE_WORDS = [
     "tanga", "bobo", "inutil", "shunga", "engot", "gunggong", "stupid", "idiot", "idiots", "moron",
 ]
@@ -214,15 +184,9 @@ _PROFANITY_RE = re.compile(
 _RUDE_RE = _compile_terms(_RUDE_WORDS, _FIL_SUFFIX)
 
 
-# ---------------------------------------------------------------------
-# Normalisation for the word filter
-# ---------------------------------------------------------------------
 _LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t",
                        "@": "a", "$": "s", "!": "i"})
 
-# Punctuation that people wedge between letters to break a word up.
-# Only removed when it sits BETWEEN two word characters, so it never
-# glues two sentences together.
 _WEDGE_RE = re.compile(r"(?<=[a-z0-9@$!])[.\-_*'`~^+|:,]+(?=[a-z0-9@$!])")
 _TOKEN_RE = re.compile(r"[a-z0-9@$!]+")
 
@@ -234,11 +198,8 @@ def _fold(text):
 
 
 def _decode_token(token):
-    # "!" at the edge of a word is punctuation ("gago!"), not a letter.
     token = token.strip("!")
     if not token or not any(ch.isalpha() for ch in token):
-        # A bare number -- a price, a year, a phone number. Decoding it
-        # would only manufacture letters that were never written.
         return token
     return token.translate(_LEET)
 
@@ -257,9 +218,6 @@ def normalise_for_words(text, unwedge=True):
     tokens = [_decode_token(t) for t in _TOKEN_RE.findall(folded)]
     tokens = [t for t in tokens if t]
 
-    # "f u c k" / "p u t a n g i n a": three or more single letters in a
-    # row are joined. Three, not two, because "a" and "i" are words and
-    # two single letters side by side are usually just that.
     joined, run = [], []
     for token in tokens:
         if len(token) == 1 and token.isalpha():
@@ -272,11 +230,6 @@ def normalise_for_words(text, unwedge=True):
     return " ".join(joined)
 
 
-# ---------------------------------------------------------------------
-# Scam / solicitation phrases (REVIEW)
-# ---------------------------------------------------------------------
-# Matched against lightly normalised text (lower case, single spaces).
-# Each is a pattern people in this market actually see in their feeds.
 _SCAM_PATTERNS = [
     r"\bdoubl(?:e|ing)\s+(?:your|ang|yung|ng)?\s*(?:money|pera|investment|puhunan|capital)",
     r"\bguarantee(?:d)?\s+(?:profit|income|returns?|kita|earnings?|tubo)",
@@ -295,16 +248,10 @@ _SCAM_PATTERNS = [
 ]
 _SCAM_RES = [re.compile(p) for p in _SCAM_PATTERNS]
 
-# Paluwagan on its own is a normal, legitimate savings circle that
-# members may well want to talk about. It is only a flag when the same
-# text is also pitching returns.
 _PALUWAGAN_RE = re.compile(r"\bpaluwagan\b")
 _PALUWAGAN_PITCH_RE = re.compile(r"\b(?:invest\w*|profit|tubo|kita|interest|slots?|payout|returns?|join|sali)\b")
 
 
-# ---------------------------------------------------------------------
-# Links
-# ---------------------------------------------------------------------
 _TLDS = ("com|net|org|ph|io|co|info|biz|xyz|ly|me|gl|to|app|site|online|shop|link|store|top|"
          "click|live|cc|gd|at|id|in|us|tk|ml|ga|cf|gq|page|dev|tv|asia")
 _URL_RE = re.compile(
@@ -313,8 +260,6 @@ _URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Written loosely on purpose: "bit . ly", "bit[.]ly" and "bit(dot)ly"
-# are how people get a shortened link past a stricter check.
 _DOT = r"\s*(?:\.|\[\.\]|\(\.\)|\[dot\]|\(dot\))\s*"
 _SHORTENERS = [
     ("bit", "ly"), ("bitly", "com"), ("tinyurl", "com"), ("t", "co"), ("goo", "gl"), ("ow", "ly"),
@@ -328,9 +273,6 @@ _SHORTENER_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Official sources members should be free to cite. Any *.gov.ph host
-# qualifies, which already covers DTI, PSA, BIR, SEC and the city's own
-# site; the named ones are listed so the intent is readable.
 OFFICIAL_DOMAINS = ("gov.ph", "dti.gov.ph", "psa.gov.ph", "bir.gov.ph", "sec.gov.ph")
 
 MAX_LINKS = 5
@@ -347,25 +289,16 @@ def is_official_host(host):
     return any(host == d or host.endswith("." + d) for d in OFFICIAL_DOMAINS)
 
 
-# ---------------------------------------------------------------------
-# Personal data (REVIEW -- protects the poster)
-# ---------------------------------------------------------------------
 _PH_MOBILE_RE = re.compile(r"(?<!\d)(?:\+?63|0)[\s-]*9\d{2}[\s-]*\d{3}[\s-]*\d{4}(?!\d)")
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b", re.IGNORECASE)
 
 
-# ---------------------------------------------------------------------
-# Spam heuristics (REVIEW)
-# ---------------------------------------------------------------------
-# The same character 10+ times. Divider characters (----, ====, ....)
-# are exempt: people draw lines with them, and that is not spam.
 _REPEATED_CHAR_RE = re.compile(r"([^\s\-=_.*~#])\1{9,}")
-_REPEATED_WORD_RE = re.compile(r"\b(\w{2,})\b(?:\W+\1\b){3,}", re.IGNORECASE)  # 4+ in a row
+_REPEATED_WORD_RE = re.compile(r"\b(\w{2,})\b(?:\W+\1\b){3,}", re.IGNORECASE)
 
 
 def _mostly_caps(text):
     letters = [c for c in text if c.isalpha()]
-    # Short text is exempt: "DTI" or "OK NA PO" is not shouting.
     if len(letters) < 20:
         return False
     return sum(1 for c in letters if c.isupper()) / len(letters) > 0.7
@@ -379,9 +312,6 @@ def _one_word_dominates(text):
     return top / len(words) > 0.5
 
 
-# ---------------------------------------------------------------------
-# The filter
-# ---------------------------------------------------------------------
 def check_text(*parts):
     """Run the deterministic filter over a submission (title and body,
     or a comment). Returns a FilterResult. Never raises, never calls
@@ -406,9 +336,6 @@ def check_text(*parts):
     if _SHORTENER_RE.search(plain):
         flag("link_shortener", blocking=True)
 
-    # Email addresses are taken out before looking for links: the
-    # domain in juan@example.com is not a link anyone can click, and
-    # the address is flagged on its own below.
     links = _URL_RE.findall(_EMAIL_RE.sub(" ", text))
     if any(not is_official_host(_host_of(url)) for url in links) and "link_shortener" not in flags:
         flag("external_link")
@@ -437,12 +364,6 @@ def check_text(*parts):
     return FilterResult(CLEAN, [], [])
 
 
-# ---------------------------------------------------------------------
-# Rate limits
-# ---------------------------------------------------------------------
-# Generous for a person, tight for a script. Five posts an hour is more
-# than anyone writes by hand; a flood of fifty is exactly what this
-# stops before a moderator has to wade through it.
 MAX_POSTS_PER_WINDOW = 5
 POST_WINDOW = timedelta(hours=1)
 MAX_COMMENTS_PER_WINDOW = 15
@@ -462,7 +383,6 @@ def rate_limit_wait(model, author_id, limit, window, now=None):
     )
     if len(recent) < limit:
         return None
-    # The wait is until the oldest one in the window drops out of it.
     oldest = recent[len(recent) - limit].created_at
     return max(timedelta(minutes=1), oldest + window - now)
 
@@ -474,9 +394,6 @@ def friendly_wait(delta):
     return f"about {minutes} minute{'s' if minutes != 1 else ''}"
 
 
-# ---------------------------------------------------------------------
-# Optional AI pre-screen
-# ---------------------------------------------------------------------
 AI_SETTING_KEY = "forum_ai_moderation"
 
 COMMUNITY_GUIDELINES = (
@@ -493,8 +410,6 @@ COMMUNITY_GUIDELINES = (
 def ai_setting_enabled():
     from app.models import SystemSetting
 
-    # Default ON: when an LLM is configured, the forum should not make a
-    # moderator hand-approve "Saan po maganda bumili ng supplies?".
     return SystemSetting.get_bool(AI_SETTING_KEY, True)
 
 
@@ -507,14 +422,12 @@ def ai_prescreen_enabled():
         from app.services.recommendation_service import llm_recommendations_enabled
 
         return ai_setting_enabled() and llm_recommendations_enabled()
-    except Exception:  # noqa: BLE001 -- a settings read must not break posting
+    except Exception:
         return False
 
 
 def _ai_prompt(kind, channel_name, title, body):
     def fenced(value):
-        # The member's text must not be able to close the fence and
-        # start writing instructions of its own.
         return re.sub(r"</?\s*submission\s*>", " ", value or "", flags=re.IGNORECASE)
 
     return (
@@ -550,8 +463,6 @@ def _parse_ai_reply(raw_text):
     try:
         payload = json.loads(text)
     except (TypeError, ValueError):
-        # Some models add a sentence around the JSON despite being told
-        # not to. Take the first {...} if there is one.
         match = re.search(r"\{.*\}", text or "", re.DOTALL)
         if match:
             try:
@@ -588,30 +499,24 @@ def ai_prescreen(kind, channel_name, title, body):
                 continue
             try:
                 raw_text = generate(prompt)
-            except Exception:  # noqa: BLE001 -- try the next provider
+            except Exception:
                 continue
             if not raw_text:
                 continue
             parsed = _parse_ai_reply(raw_text)
             if parsed:
                 return parsed
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     return None
 
 
-# ---------------------------------------------------------------------
-# The decision
-# ---------------------------------------------------------------------
 def initial_status(result, ai_verdict, author_is_admin):
     """Where a submission that passed the BLOCK check starts life.
 
     Kept as a small pure function so the whole policy fits on a screen
     and the tests can pin every branch of it."""
     if author_is_admin:
-        # An administrator IS the moderator; holding their own post for
-        # themselves to approve would be theatre. They still went
-        # through the BLOCK check above, like everybody else.
         return "approved"
     if result.is_clean and ai_verdict == "approve":
         return "approved"

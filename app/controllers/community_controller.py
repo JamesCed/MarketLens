@@ -46,7 +46,7 @@ def community_invite_url():
     empty or not a Discord invite."""
     try:
         value = (SystemSetting.get(SETTING_KEY, DEFAULT_INVITE_URL) or "").strip()
-    except Exception:  # noqa: BLE001 -- a settings read must never break the link
+    except Exception:
         value = ""
     return value if is_valid_invite(value) else DEFAULT_INVITE_URL
 

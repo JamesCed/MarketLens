@@ -81,103 +81,171 @@ Sources:
     classification): tarlaccity.gov.ph
 """
 
-# name, population_density (REAL people/km2 for 73/76 -- see docstring),
-# foot_traffic_index (0-100, ESTIMATED), average_rent (PHP/month, ESTIMATED),
-# business_density (LGU-style density figure, ESTIMATED),
-# historical_success_rate (0-1, ESTIMATED), urban(True)/rural(False) per PSA
 BARANGAY_PROFILES = [
-    ("Aguso", 2123.2, 30, 17500, 2.7, 0.72, True),  # pop=8493 (PSA 2024), land=400.00 ha (tarlaccity.gov.ph)
-    ("Alvindia Segundo", 1089.8, 10, 6500, 0.9, 0.78, False),  # pop=1960 (PSA 2024), land=179.85 ha (tarlaccity.gov.ph)
-    ("Amucao", 863.8, 9, 6000, 0.8, 0.79, False),  # pop=2696 (PSA 2024), land=312.12 ha (tarlaccity.gov.ph)
-    ("Armenia", 425.5, 21, 15500, 1.7, 0.75, True),  # pop=5852 (PSA 2024), land=1375.27 ha (tarlaccity.gov.ph)
-    ("Asturias", 624.3, 7, 5500, 0.6, 0.79, False),  # pop=2037 (PSA 2024), land=326.27 ha (tarlaccity.gov.ph)
-    ("Atioc", 2314.8, 16, 8000, 1.7, 0.76, False),  # pop=2712 (PSA 2024), land=117.16 ha (tarlaccity.gov.ph)
-    ("Balanti", 229.6, 5, 5000, 0.4, 0.80, False),  # pop=2012 (PSA 2024), land=876.18 ha (tarlaccity.gov.ph)
-    ("Balete", 990.1, 24, 16000, 2.0, 0.74, True),  # pop=5756 (PSA 2024), land=581.36 ha (tarlaccity.gov.ph)
-    ("Balibago I", 906.7, 9, 6000, 0.8, 0.79, False),  # pop=2148 (PSA 2024), land=236.90 ha (tarlaccity.gov.ph)
-    ("Balibago II", 934.8, 9, 6000, 0.8, 0.79, False),  # pop=4212 (PSA 2024), land=450.56 ha (tarlaccity.gov.ph)
-    ("Balingcanaway", 1718.6, 28, 17000, 2.5, 0.72, True),  # pop=6886 (PSA 2024), land=400.68 ha (tarlaccity.gov.ph)
-    ("Banaba", 580.5, 7, 5500, 0.6, 0.79, False),  # pop=1314 (PSA 2024), land=226.37 ha (tarlaccity.gov.ph)
-    ("Bantog", 479.5, 7, 5500, 0.5, 0.79, False),  # pop=2777 (PSA 2024), land=579.09 ha (tarlaccity.gov.ph)
-    ("Baras-baras", 1752.3, 28, 17000, 2.5, 0.72, True),  # pop=5736 (PSA 2024), land=327.35 ha (tarlaccity.gov.ph)
-    ("Batang-batang", 374.6, 6, 5500, 0.4, 0.80, False),  # pop=2341 (PSA 2024), land=624.90 ha (tarlaccity.gov.ph)
-    ("Binauganan", 3388.3, 36, 19500, 3.5, 0.69, True),  # pop=6163 (PSA 2024), land=181.89 ha (tarlaccity.gov.ph)
-    ("Bora", 1114.9, 10, 6500, 0.9, 0.78, False),  # pop=2134 (PSA 2024), land=191.40 ha (tarlaccity.gov.ph)
-    ("Buenavista", 322.3, 6, 5500, 0.4, 0.80, False),  # pop=1593 (PSA 2024), land=494.24 ha (tarlaccity.gov.ph)
-    ("Buhilit", 886.8, 9, 6000, 0.8, 0.79, False),  # pop=2209 (PSA 2024), land=249.10 ha (tarlaccity.gov.ph)
-    ("Burot", 1780.6, 28, 17500, 2.5, 0.72, True),  # pop=8367 (PSA 2024), land=469.90 ha (tarlaccity.gov.ph)
-    ("Calingcuan", 3796.4, 23, 10000, 2.6, 0.74, False),  # pop=3848 (PSA 2024), land=101.36 ha (tarlaccity.gov.ph)
-    ("Capehan", 959.0, 9, 6000, 0.8, 0.79, False),  # pop=2339 (PSA 2024), land=243.91 ha (tarlaccity.gov.ph)
-    ("Carangian", 7816.6, 57, 25500, 6.3, 0.62, True),  # pop=10443 (PSA 2024), land=133.60 ha (tarlaccity.gov.ph)
-    ("Care", 618.7, 22, 15500, 1.8, 0.74, True),  # pop=5379 (PSA 2024), land=869.46 ha (tarlaccity.gov.ph)
-    ("Central", 579.2, 22, 15500, 1.8, 0.74, True),  # pop=4131 (PSA 2024), land=713.19 ha (tarlaccity.gov.ph)
-    ("Culipat", 1019.8, 9, 6000, 0.8, 0.78, False),  # pop=2943 (PSA 2024), land=288.60 ha (tarlaccity.gov.ph)
-    ("Cut-cut I", 7591.1, 56, 25500, 6.1, 0.62, True),  # pop=479 (PSA 2024), land=6.31 ha (tarlaccity.gov.ph)
-    ("Cut-cut II", 1382.6, 26, 16500, 2.3, 0.73, True),  # pop=8554 (PSA 2024), land=618.67 ha (tarlaccity.gov.ph)
-    ("Dalayap", 1171.9, 10, 6500, 0.9, 0.78, False),  # pop=4057 (PSA 2024), land=346.18 ha (tarlaccity.gov.ph)
-    ("Dela Paz", 1300.5, 11, 6500, 1.0, 0.78, False),  # pop=3762 (PSA 2024), land=289.27 ha (tarlaccity.gov.ph)
-    ("Dolores", 596.4, 7, 5500, 0.6, 0.79, False),  # pop=3984 (PSA 2024), land=667.99 ha (tarlaccity.gov.ph)
-    ("Laoang", 540.6, 7, 5500, 0.5, 0.79, False),  # pop=3487 (PSA 2024), land=645.02 ha (tarlaccity.gov.ph)
-    ("Ligtasan", 5244.0, 45, 22000, 4.7, 0.66, True),  # pop=2257 (PSA 2024), land=43.04 ha (tarlaccity.gov.ph)
-    ("Lourdes", 439.2, 6, 5500, 0.5, 0.79, False),  # pop=2934 (PSA 2024), land=667.99 ha (tarlaccity.gov.ph) -- NOTE: the source page shows the exact same land-area figure as Dolores; likely a copy/paste error on the LGU's own page, flagged for you to spot-check
-    ("Mabini", 6413.7, 50, 23500, 5.4, 0.64, True),  # pop=769 (PSA 2024), land=11.99 ha (tarlaccity.gov.ph)
-    ("Maligaya", 14623.5, 90, 35000, 10.5, 0.50, True),  # pop=4409 (PSA 2024), land=30.15 ha (tarlaccity.gov.ph)
-    ("Maliwalo", 2445.8, 31, 18000, 2.9, 0.71, True),  # pop=17606 (PSA 2024), land=719.84 ha (tarlaccity.gov.ph)
-    ("Mapalacsiao", 3152.9, 35, 19000, 3.4, 0.70, True),  # pop=5960 (PSA 2024), land=189.03 ha (tarlaccity.gov.ph)
-    ("Mapalad", 138.9, 5, 5000, 0.3, 0.80, False),  # pop=750 (PSA 2024), land=540.01 ha (tarlaccity.gov.ph)
-    ("Matadero", 5394.5, 45, 22500, 4.8, 0.66, True),  # pop=2099 (PSA 2024), land=38.91 ha (tarlaccity.gov.ph). Officially also known as "San Juan Bautista" -- see Reference/DATASETS.md re: the San Juan de Bautista / San Juan de Mata confusion in an earlier version of this file.
-    ("Matatalaib", 7006.7, 53, 24500, 5.8, 0.63, True),  # pop=25757 (PSA 2024), land=~367.61 ha ESTIMATED (dataset average -- real figure not published on the barangay's page)
-    ("Paraiso", 12913.1, 67, 22500, 8.2, 0.58, False),  # pop=3431 (PSA 2024), land=26.57 ha (tarlaccity.gov.ph). PSA says Rural; the barangay's own page explicitly says "one of the 19 barangays ... classified as an urban barangay" -- one of several PSA-vs-LGU-page disagreements, see Reference/DATASETS.md
-    ("Poblacion", 1751.5, 28, 17000, 2.5, 0.72, True),  # pop=344 (PSA 2024), land=19.64 ha (tarlaccity.gov.ph)
-    ("Salapungan", 2819.2, 18, 8500, 2.0, 0.75, False),  # pop=2104 (PSA 2024), land=74.63 ha (tarlaccity.gov.ph)
-    ("San Carlos", 888.8, 9, 6000, 0.8, 0.79, False),  # pop=1824 (PSA 2024), land=205.23 ha (tarlaccity.gov.ph)
-    ("San Francisco", 1026.3, 9, 6000, 0.9, 0.78, False),  # pop=2929 (PSA 2024), land=285.40 ha (tarlaccity.gov.ph)
-    ("San Isidro", 4029.3, 39, 20500, 3.9, 0.68, True),  # pop=14812 (PSA 2024), land=~367.61 ha ESTIMATED (dataset average -- the barangay's page gives no total land-area figure)
-    ("San Jose", 2021.8, 29, 17500, 2.7, 0.72, True),  # pop=10254 (PSA 2024), land=507.16 ha (tarlaccity.gov.ph)
-    ("San Jose de Urquico", 1201.3, 10, 6500, 1.0, 0.78, False),  # pop=2729 (PSA 2024), land=227.17 ha (tarlaccity.gov.ph)
-    ("San Juan de Mata", 476.3, 7, 5500, 0.5, 0.79, False),  # pop=4727 (PSA 2024), land=992.54 ha (tarlaccity.gov.ph) -- a real, DIFFERENT barangay from "Matadero" (a.k.a. San Juan Bautista) above; see Reference/DATASETS.md
-    ("San Luis", 1726.2, 13, 7000, 1.3, 0.77, False),  # pop=4363 (PSA 2024), land=252.75 ha (tarlaccity.gov.ph)
-    ("San Manuel", 1191.9, 25, 16500, 2.2, 0.73, True),  # pop=8455 (PSA 2024), land=709.38 ha (tarlaccity.gov.ph)
-    ("San Miguel", 2411.6, 31, 18000, 2.9, 0.71, True),  # pop=8865 (PSA 2024), land=~367.61 ha ESTIMATED (dataset average -- this barangay's page could not be fetched at all, persistent server error)
-    ("San Nicolas", 7192.8, 54, 24500, 5.9, 0.63, True),  # pop=6936 (PSA 2024), land=96.43 ha (tarlaccity.gov.ph)
-    ("San Pablo", 10671.0, 71, 29500, 8.0, 0.57, True),  # pop=4755 (PSA 2024), land=44.56 ha (tarlaccity.gov.ph)
-    ("San Pascual", 1480.2, 11, 7000, 1.1, 0.78, False),  # pop=3844 (PSA 2024), land=259.70 ha (tarlaccity.gov.ph); the barangay's own page has no classification sentence at all
-    ("San Rafael", 4851.0, 43, 21500, 4.4, 0.67, True),  # pop=22111 (PSA 2024), land=455.80 ha (tarlaccity.gov.ph)
-    ("San Roque", 5995.2, 48, 23000, 5.1, 0.65, True),  # pop=5786 (PSA 2024), land=96.51 ha (tarlaccity.gov.ph)
-    ("San Sebastian", 5858.6, 48, 23000, 5.1, 0.65, True),  # pop=4292 (PSA 2024), land=73.26 ha (tarlaccity.gov.ph)
-    ("San Vicente", 6841.9, 52, 24500, 5.7, 0.63, True),  # pop=18473 (PSA 2024), land=270.00 ha (tarlaccity.gov.ph, stated as "approximately")
-    ("Santa Cruz", 1288.1, 11, 6500, 1.0, 0.78, False),  # pop=4463 (PSA 2024), land=346.49 ha (tarlaccity.gov.ph)
-    ("Santa Maria", 809.8, 8, 6000, 0.7, 0.79, False),  # pop=1289 (PSA 2024), land=159.18 ha (tarlaccity.gov.ph)
-    ("Santo Cristo", 7667.1, 56, 25500, 6.2, 0.62, True),  # pop=2902 (PSA 2024), land=37.85 ha (tarlaccity.gov.ph)
-    ("Santo Domingo", 492.0, 7, 5500, 0.5, 0.79, False),  # pop=1357 (PSA 2024), land=275.79 ha (tarlaccity.gov.ph)
-    ("Santo Nino", 308.8, 6, 5000, 0.4, 0.80, False),  # pop=867 (PSA 2024), land=280.77 ha (tarlaccity.gov.ph)
-    ("Sapang Maragul", 913.2, 24, 16000, 2.0, 0.74, True),  # pop=13287 (PSA 2024), land=1455.00 ha (tarlaccity.gov.ph)
-    ("Sapang Tagalog", 1552.9, 27, 17000, 2.4, 0.73, True),  # pop=4960 (PSA 2024), land=319.41 ha (tarlaccity.gov.ph)
-    ("Sepung Calzada", 11695.9, 76, 31000, 8.7, 0.55, True),  # pop=4869 (PSA 2024), land=41.63 ha (tarlaccity.gov.ph)
-    ("Sinait", 601.1, 7, 5500, 0.6, 0.79, False),  # pop=2547 (PSA 2024), land=423.73 ha (tarlaccity.gov.ph)
-    ("Suizo", 2096.5, 14, 7500, 1.5, 0.77, False),  # pop=3914 (PSA 2024), land=186.69 ha (tarlaccity.gov.ph). PSA says Rural; the barangay's own page explicitly says "Urban Barangay" -- another PSA-vs-LGU-page disagreement, see Reference/DATASETS.md
-    ("Tariji", 1217.5, 10, 6500, 1.0, 0.78, False),  # pop=3191 (PSA 2024), land=262.09 ha (tarlaccity.gov.ph)
-    ("Tibag", 2320.0, 31, 18000, 2.9, 0.71, True),  # pop=17936 (PSA 2024), land=773.12 ha (tarlaccity.gov.ph)
-    ("Tibagan", 919.0, 24, 16000, 2.0, 0.74, True),  # pop=7025 (PSA 2024), land=764.38 ha (tarlaccity.gov.ph)
-    ("Trinidad", 583.3, 7, 5500, 0.6, 0.79, False),  # pop=2148 (PSA 2024), land=368.27 ha (tarlaccity.gov.ph)
-    ("Ungot", 897.4, 9, 6000, 0.8, 0.79, False),  # pop=4077 (PSA 2024), land=454.30 ha (tarlaccity.gov.ph)
-    ("Villa Bacolor", 825.7, 8, 6000, 0.7, 0.79, False),  # pop=2681 (PSA 2024), land=324.68 ha (tarlaccity.gov.ph)
+    ("Aguso", 2123.2, 30, 17500, 2.7, 0.72, True),
+    ("Alvindia Segundo", 1089.8, 10, 6500, 0.9, 0.78, False),
+    ("Amucao", 863.8, 9, 6000, 0.8, 0.79, False),
+    ("Armenia", 425.5, 21, 15500, 1.7, 0.75, True),
+    ("Asturias", 624.3, 7, 5500, 0.6, 0.79, False),
+    ("Atioc", 2314.8, 16, 8000, 1.7, 0.76, False),
+    ("Balanti", 229.6, 5, 5000, 0.4, 0.80, False),
+    ("Balete", 990.1, 24, 16000, 2.0, 0.74, True),
+    ("Balibago I", 906.7, 9, 6000, 0.8, 0.79, False),
+    ("Balibago II", 934.8, 9, 6000, 0.8, 0.79, False),
+    ("Balingcanaway", 1718.6, 28, 17000, 2.5, 0.72, True),
+    ("Banaba", 580.5, 7, 5500, 0.6, 0.79, False),
+    ("Bantog", 479.5, 7, 5500, 0.5, 0.79, False),
+    ("Baras-baras", 1752.3, 28, 17000, 2.5, 0.72, True),
+    ("Batang-batang", 374.6, 6, 5500, 0.4, 0.80, False),
+    ("Binauganan", 3388.3, 36, 19500, 3.5, 0.69, True),
+    ("Bora", 1114.9, 10, 6500, 0.9, 0.78, False),
+    ("Buenavista", 322.3, 6, 5500, 0.4, 0.80, False),
+    ("Buhilit", 886.8, 9, 6000, 0.8, 0.79, False),
+    ("Burot", 1780.6, 28, 17500, 2.5, 0.72, True),
+    ("Calingcuan", 3796.4, 23, 10000, 2.6, 0.74, False),
+    ("Capehan", 959.0, 9, 6000, 0.8, 0.79, False),
+    ("Carangian", 7816.6, 57, 25500, 6.3, 0.62, True),
+    ("Care", 618.7, 22, 15500, 1.8, 0.74, True),
+    ("Central", 579.2, 22, 15500, 1.8, 0.74, True),
+    ("Culipat", 1019.8, 9, 6000, 0.8, 0.78, False),
+    ("Cut-cut I", 7591.1, 56, 25500, 6.1, 0.62, True),
+    ("Cut-cut II", 1382.6, 26, 16500, 2.3, 0.73, True),
+    ("Dalayap", 1171.9, 10, 6500, 0.9, 0.78, False),
+    ("Dela Paz", 1300.5, 11, 6500, 1.0, 0.78, False),
+    ("Dolores", 596.4, 7, 5500, 0.6, 0.79, False),
+    ("Laoang", 540.6, 7, 5500, 0.5, 0.79, False),
+    ("Ligtasan", 5244.0, 45, 22000, 4.7, 0.66, True),
+    ("Lourdes", 439.2, 6, 5500, 0.5, 0.79, False),
+    ("Mabini", 6413.7, 50, 23500, 5.4, 0.64, True),
+    ("Maligaya", 14623.5, 90, 35000, 10.5, 0.50, True),
+    ("Maliwalo", 2445.8, 31, 18000, 2.9, 0.71, True),
+    ("Mapalacsiao", 3152.9, 35, 19000, 3.4, 0.70, True),
+    ("Mapalad", 138.9, 5, 5000, 0.3, 0.80, False),
+    ("Matadero", 5394.5, 45, 22500, 4.8, 0.66, True),
+    ("Matatalaib", 7006.7, 53, 24500, 5.8, 0.63, True),
+    ("Paraiso", 12913.1, 67, 22500, 8.2, 0.58, False),
+    ("Poblacion", 1751.5, 28, 17000, 2.5, 0.72, True),
+    ("Salapungan", 2819.2, 18, 8500, 2.0, 0.75, False),
+    ("San Carlos", 888.8, 9, 6000, 0.8, 0.79, False),
+    ("San Francisco", 1026.3, 9, 6000, 0.9, 0.78, False),
+    ("San Isidro", 4029.3, 39, 20500, 3.9, 0.68, True),
+    ("San Jose", 2021.8, 29, 17500, 2.7, 0.72, True),
+    ("San Jose de Urquico", 1201.3, 10, 6500, 1.0, 0.78, False),
+    ("San Juan de Mata", 476.3, 7, 5500, 0.5, 0.79, False),
+    ("San Luis", 1726.2, 13, 7000, 1.3, 0.77, False),
+    ("San Manuel", 1191.9, 25, 16500, 2.2, 0.73, True),
+    ("San Miguel", 2411.6, 31, 18000, 2.9, 0.71, True),
+    ("San Nicolas", 7192.8, 54, 24500, 5.9, 0.63, True),
+    ("San Pablo", 10671.0, 71, 29500, 8.0, 0.57, True),
+    ("San Pascual", 1480.2, 11, 7000, 1.1, 0.78, False),
+    ("San Rafael", 4851.0, 43, 21500, 4.4, 0.67, True),
+    ("San Roque", 5995.2, 48, 23000, 5.1, 0.65, True),
+    ("San Sebastian", 5858.6, 48, 23000, 5.1, 0.65, True),
+    ("San Vicente", 6841.9, 52, 24500, 5.7, 0.63, True),
+    ("Santa Cruz", 1288.1, 11, 6500, 1.0, 0.78, False),
+    ("Santa Maria", 809.8, 8, 6000, 0.7, 0.79, False),
+    ("Santo Cristo", 7667.1, 56, 25500, 6.2, 0.62, True),
+    ("Santo Domingo", 492.0, 7, 5500, 0.5, 0.79, False),
+    ("Santo Nino", 308.8, 6, 5000, 0.4, 0.80, False),
+    ("Sapang Maragul", 913.2, 24, 16000, 2.0, 0.74, True),
+    ("Sapang Tagalog", 1552.9, 27, 17000, 2.4, 0.73, True),
+    ("Sepung Calzada", 11695.9, 76, 31000, 8.7, 0.55, True),
+    ("Sinait", 601.1, 7, 5500, 0.6, 0.79, False),
+    ("Suizo", 2096.5, 14, 7500, 1.5, 0.77, False),
+    ("Tariji", 1217.5, 10, 6500, 1.0, 0.78, False),
+    ("Tibag", 2320.0, 31, 18000, 2.9, 0.71, True),
+    ("Tibagan", 919.0, 24, 16000, 2.0, 0.74, True),
+    ("Trinidad", 583.3, 7, 5500, 0.6, 0.79, False),
+    ("Ungot", 897.4, 9, 6000, 0.8, 0.79, False),
+    ("Villa Bacolor", 825.7, 8, 6000, 0.7, 0.79, False),
 ]
+
+BARANGAY_SOURCE_NOTES = {
+    "Aguso": "pop=8493 (PSA 2024), land=400.00 ha (tarlaccity.gov.ph)",
+    "Alvindia Segundo": "pop=1960 (PSA 2024), land=179.85 ha (tarlaccity.gov.ph)",
+    "Amucao": "pop=2696 (PSA 2024), land=312.12 ha (tarlaccity.gov.ph)",
+    "Armenia": "pop=5852 (PSA 2024), land=1375.27 ha (tarlaccity.gov.ph)",
+    "Asturias": "pop=2037 (PSA 2024), land=326.27 ha (tarlaccity.gov.ph)",
+    "Atioc": "pop=2712 (PSA 2024), land=117.16 ha (tarlaccity.gov.ph)",
+    "Balanti": "pop=2012 (PSA 2024), land=876.18 ha (tarlaccity.gov.ph)",
+    "Balete": "pop=5756 (PSA 2024), land=581.36 ha (tarlaccity.gov.ph)",
+    "Balibago I": "pop=2148 (PSA 2024), land=236.90 ha (tarlaccity.gov.ph)",
+    "Balibago II": "pop=4212 (PSA 2024), land=450.56 ha (tarlaccity.gov.ph)",
+    "Balingcanaway": "pop=6886 (PSA 2024), land=400.68 ha (tarlaccity.gov.ph)",
+    "Banaba": "pop=1314 (PSA 2024), land=226.37 ha (tarlaccity.gov.ph)",
+    "Bantog": "pop=2777 (PSA 2024), land=579.09 ha (tarlaccity.gov.ph)",
+    "Baras-baras": "pop=5736 (PSA 2024), land=327.35 ha (tarlaccity.gov.ph)",
+    "Batang-batang": "pop=2341 (PSA 2024), land=624.90 ha (tarlaccity.gov.ph)",
+    "Binauganan": "pop=6163 (PSA 2024), land=181.89 ha (tarlaccity.gov.ph)",
+    "Bora": "pop=2134 (PSA 2024), land=191.40 ha (tarlaccity.gov.ph)",
+    "Buenavista": "pop=1593 (PSA 2024), land=494.24 ha (tarlaccity.gov.ph)",
+    "Buhilit": "pop=2209 (PSA 2024), land=249.10 ha (tarlaccity.gov.ph)",
+    "Burot": "pop=8367 (PSA 2024), land=469.90 ha (tarlaccity.gov.ph)",
+    "Calingcuan": "pop=3848 (PSA 2024), land=101.36 ha (tarlaccity.gov.ph)",
+    "Capehan": "pop=2339 (PSA 2024), land=243.91 ha (tarlaccity.gov.ph)",
+    "Carangian": "pop=10443 (PSA 2024), land=133.60 ha (tarlaccity.gov.ph)",
+    "Care": "pop=5379 (PSA 2024), land=869.46 ha (tarlaccity.gov.ph)",
+    "Central": "pop=4131 (PSA 2024), land=713.19 ha (tarlaccity.gov.ph)",
+    "Culipat": "pop=2943 (PSA 2024), land=288.60 ha (tarlaccity.gov.ph)",
+    "Cut-cut I": "pop=479 (PSA 2024), land=6.31 ha (tarlaccity.gov.ph)",
+    "Cut-cut II": "pop=8554 (PSA 2024), land=618.67 ha (tarlaccity.gov.ph)",
+    "Dalayap": "pop=4057 (PSA 2024), land=346.18 ha (tarlaccity.gov.ph)",
+    "Dela Paz": "pop=3762 (PSA 2024), land=289.27 ha (tarlaccity.gov.ph)",
+    "Dolores": "pop=3984 (PSA 2024), land=667.99 ha (tarlaccity.gov.ph)",
+    "Laoang": "pop=3487 (PSA 2024), land=645.02 ha (tarlaccity.gov.ph)",
+    "Ligtasan": "pop=2257 (PSA 2024), land=43.04 ha (tarlaccity.gov.ph)",
+    "Lourdes": "pop=2934 (PSA 2024), land=667.99 ha (tarlaccity.gov.ph) -- NOTE: the source page shows the exact same land-area figure as Dolores; likely a copy/paste error on the LGU's own page, flagged for you to spot-check",
+    "Mabini": "pop=769 (PSA 2024), land=11.99 ha (tarlaccity.gov.ph)",
+    "Maligaya": "pop=4409 (PSA 2024), land=30.15 ha (tarlaccity.gov.ph)",
+    "Maliwalo": "pop=17606 (PSA 2024), land=719.84 ha (tarlaccity.gov.ph)",
+    "Mapalacsiao": "pop=5960 (PSA 2024), land=189.03 ha (tarlaccity.gov.ph)",
+    "Mapalad": "pop=750 (PSA 2024), land=540.01 ha (tarlaccity.gov.ph)",
+    "Matadero": "pop=2099 (PSA 2024), land=38.91 ha (tarlaccity.gov.ph). Officially also known as \"San Juan Bautista\" -- see Reference/DATASETS.md re: the San Juan de Bautista / San Juan de Mata confusion in an earlier version of this file.",
+    "Matatalaib": "pop=25757 (PSA 2024), land=~367.61 ha ESTIMATED (dataset average -- real figure not published on the barangay's page)",
+    "Paraiso": "pop=3431 (PSA 2024), land=26.57 ha (tarlaccity.gov.ph). PSA says Rural; the barangay's own page explicitly says \"one of the 19 barangays ... classified as an urban barangay\" -- one of several PSA-vs-LGU-page disagreements, see Reference/DATASETS.md",
+    "Poblacion": "pop=344 (PSA 2024), land=19.64 ha (tarlaccity.gov.ph)",
+    "Salapungan": "pop=2104 (PSA 2024), land=74.63 ha (tarlaccity.gov.ph)",
+    "San Carlos": "pop=1824 (PSA 2024), land=205.23 ha (tarlaccity.gov.ph)",
+    "San Francisco": "pop=2929 (PSA 2024), land=285.40 ha (tarlaccity.gov.ph)",
+    "San Isidro": "pop=14812 (PSA 2024), land=~367.61 ha ESTIMATED (dataset average -- the barangay's page gives no total land-area figure)",
+    "San Jose": "pop=10254 (PSA 2024), land=507.16 ha (tarlaccity.gov.ph)",
+    "San Jose de Urquico": "pop=2729 (PSA 2024), land=227.17 ha (tarlaccity.gov.ph)",
+    "San Juan de Mata": "pop=4727 (PSA 2024), land=992.54 ha (tarlaccity.gov.ph) -- a real, DIFFERENT barangay from \"Matadero\" (a.k.a. San Juan Bautista) above; see Reference/DATASETS.md",
+    "San Luis": "pop=4363 (PSA 2024), land=252.75 ha (tarlaccity.gov.ph)",
+    "San Manuel": "pop=8455 (PSA 2024), land=709.38 ha (tarlaccity.gov.ph)",
+    "San Miguel": "pop=8865 (PSA 2024), land=~367.61 ha ESTIMATED (dataset average -- this barangay's page could not be fetched at all, persistent server error)",
+    "San Nicolas": "pop=6936 (PSA 2024), land=96.43 ha (tarlaccity.gov.ph)",
+    "San Pablo": "pop=4755 (PSA 2024), land=44.56 ha (tarlaccity.gov.ph)",
+    "San Pascual": "pop=3844 (PSA 2024), land=259.70 ha (tarlaccity.gov.ph); the barangay's own page has no classification sentence at all",
+    "San Rafael": "pop=22111 (PSA 2024), land=455.80 ha (tarlaccity.gov.ph)",
+    "San Roque": "pop=5786 (PSA 2024), land=96.51 ha (tarlaccity.gov.ph)",
+    "San Sebastian": "pop=4292 (PSA 2024), land=73.26 ha (tarlaccity.gov.ph)",
+    "San Vicente": "pop=18473 (PSA 2024), land=270.00 ha (tarlaccity.gov.ph, stated as \"approximately\")",
+    "Santa Cruz": "pop=4463 (PSA 2024), land=346.49 ha (tarlaccity.gov.ph)",
+    "Santa Maria": "pop=1289 (PSA 2024), land=159.18 ha (tarlaccity.gov.ph)",
+    "Santo Cristo": "pop=2902 (PSA 2024), land=37.85 ha (tarlaccity.gov.ph)",
+    "Santo Domingo": "pop=1357 (PSA 2024), land=275.79 ha (tarlaccity.gov.ph)",
+    "Santo Nino": "pop=867 (PSA 2024), land=280.77 ha (tarlaccity.gov.ph)",
+    "Sapang Maragul": "pop=13287 (PSA 2024), land=1455.00 ha (tarlaccity.gov.ph)",
+    "Sapang Tagalog": "pop=4960 (PSA 2024), land=319.41 ha (tarlaccity.gov.ph)",
+    "Sepung Calzada": "pop=4869 (PSA 2024), land=41.63 ha (tarlaccity.gov.ph)",
+    "Sinait": "pop=2547 (PSA 2024), land=423.73 ha (tarlaccity.gov.ph)",
+    "Suizo": "pop=3914 (PSA 2024), land=186.69 ha (tarlaccity.gov.ph). PSA says Rural; the barangay's own page explicitly says \"Urban Barangay\" -- another PSA-vs-LGU-page disagreement, see Reference/DATASETS.md",
+    "Tariji": "pop=3191 (PSA 2024), land=262.09 ha (tarlaccity.gov.ph)",
+    "Tibag": "pop=17936 (PSA 2024), land=773.12 ha (tarlaccity.gov.ph)",
+    "Tibagan": "pop=7025 (PSA 2024), land=764.38 ha (tarlaccity.gov.ph)",
+    "Trinidad": "pop=2148 (PSA 2024), land=368.27 ha (tarlaccity.gov.ph)",
+    "Ungot": "pop=4077 (PSA 2024), land=454.30 ha (tarlaccity.gov.ph)",
+    "Villa Bacolor": "pop=2681 (PSA 2024), land=324.68 ha (tarlaccity.gov.ph)",
+}
 
 assert len(BARANGAY_PROFILES) == 76
 _urban_count = sum(1 for row in BARANGAY_PROFILES if row[6])
-assert _urban_count == 36, _urban_count  # PSA/PSGC's own classification -- see docstring re: the contested urban/rural column
+assert _urban_count == 36, _urban_count
 
 BARANGAY_NAMES = [row[0] for row in BARANGAY_PROFILES]
 
 
-# Other ways the same 76 barangays get written -- in permit registers,
-# Places results and older uploads. Keys are normalised (see
-# _normalise_barangay); values are the canonical names above. "Baras"
-# is the one that reached the map as a 77th barangay: it is Baras-baras.
-# The parenthesised alternates are the ones PSA itself prints
-# ("Buhilit (Bubulit)", "Santa Cruz (Alvindia Primero)", "Trinidad
-# (Trinidad Primero)").
 BARANGAY_ALIASES = {
     "baras": "Baras-baras",
     "bubulit": "Buhilit",
@@ -247,10 +315,11 @@ def _canonical_lookup():
 def get_real_population(name):
     """Returns the REAL 2024 PSA population headcount for a barangay
     (an int), or None if the name isn't recognized / not parseable.
-    Reuses _parse_source_comments() (below) -- the same inline
-    "# pop=... " comments already parsed for the CSV export -- so the
-    Saturation Map's detail panel can show a real "Population: 12,450"
-    figure without duplicating that data anywhere else."""
+    Reuses _parse_source_comments() (below) -- the same
+    BARANGAY_SOURCE_NOTES "pop=..." figures already parsed for the CSV
+    export -- so the Saturation Map's detail panel can show a real
+    "Population: 12,450" figure without duplicating that data anywhere
+    else."""
     notes = _parse_source_comments().get(name)
     if not notes or not notes.get("population_2024_psa"):
         return None
@@ -275,24 +344,9 @@ def get_barangay_profile(name):
     return None
 
 
-# ---------------------------------------------------------------------
-# CSV export -- "give me a copy of the 76-barangay seed dataset".
-#
-# Every field actually seeded into the AI training data (train_model.py)
-# comes straight from BARANGAY_PROFILES above (name, population_density,
-# foot_traffic_index, average_rent, business_density,
-# historical_success_rate, urban). This module also re-parses its OWN
-# source file to pull the 2024 PSA population and land area figures that
-# are documented in each row's trailing "# pop=... land=... ha" comment
-# (see the docstring at the top of this file) -- so the export carries
-# every number this project actually sourced for each barangay, not just
-# the subset the ML model consumes, with nothing left out ("no missing").
-# ---------------------------------------------------------------------
-
 import csv
 import re
 
-_SOURCE_LINE_RE = re.compile(r'^\s*\(\s*"([^"]+)".*?\)\s*,\s*#\s*(.*)$')
 _POP_RE = re.compile(r"pop=(\d+)")
 _LAND_RE = re.compile(r"land=(~?[\d.]+)\s*ha")
 
@@ -316,16 +370,16 @@ _SOURCE_NOTES_CACHE = {}
 
 def _parse_source_comments():
     """Returns {barangay_name: {"population_2024_psa", "land_area_ha",
-    "land_area_estimated", "source_notes"}} by re-reading this file's own
-    source text -- the pop=/land= figures only exist as inline comments
-    next to BARANGAY_PROFILES, not as separate Python data.
+    "land_area_estimated", "source_notes"}} parsed from the source note
+    each barangay carries in BARANGAY_SOURCE_NOTES (the PSA 2024 pop= and
+    land= figures and where they came from).
 
     PARSED ONCE PER PROCESS. get_real_population() calls this, and it is
     called for every barangay on the LGU dashboard, the Diversification
     Plan, the location ranking and the map panel -- 974 times across one
-    pass of the main pages. Re-reading and regex-scanning this file on
-    each of those calls was 35% of the app's own CPU time on those pages.
-    The file cannot change while the process runs, so one parse is exact.
+    pass of the main pages. Regex-scanning the notes on each of those
+    calls was 35% of the app's own CPU time on those pages. The notes
+    cannot change while the process runs, so one parse is exact.
     Callers treat the result as read-only."""
     if _SOURCE_NOTES_CACHE:
         return _SOURCE_NOTES_CACHE
@@ -337,17 +391,7 @@ def _parse_source_comments():
 
 def _read_source_comments():
     notes_by_name = {}
-    try:
-        with open(__file__, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-    except OSError:
-        return notes_by_name
-
-    for line in lines:
-        match = _SOURCE_LINE_RE.match(line)
-        if not match:
-            continue
-        name, comment = match.group(1), match.group(2).strip()
+    for name, comment in BARANGAY_SOURCE_NOTES.items():
         pop_match = _POP_RE.search(comment)
         land_match = _LAND_RE.search(comment)
         land_value = land_match.group(1) if land_match else ""
@@ -363,7 +407,7 @@ def _read_source_comments():
 def export_seed_data_rows():
     """Returns one dict per barangay (all 76), merging the structured
     BARANGAY_PROFILES fields with the sourced pop/land-area figures
-    parsed from this file's own comments -- ready to hand to
+    parsed from BARANGAY_SOURCE_NOTES -- ready to hand to
     csv.DictWriter."""
     notes_by_name = _parse_source_comments()
     rows = []

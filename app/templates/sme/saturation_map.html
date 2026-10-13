@@ -16,6 +16,10 @@
      type them from memory. #}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
       crossorigin="anonymous" referrerpolicy="no-referrer">
+{# The map's shapes start downloading while the page is still being read,
+   instead of after every script has run (map.js then gets them at once). #}
+<link rel="preload" href="{{ url_for('api.barangay_choropleth') }}" as="fetch" crossorigin="anonymous">
+<link rel="preload" href="{{ url_for('api.tarlac_city_boundary') }}" as="fetch" crossorigin="anonymous">
 {# Layout for the legend, caption and "About this map's data" note
      below the map. Page-specific, so it lives here rather than in the
      site-wide style.css. #}
@@ -53,10 +57,10 @@
 </div>
 
 {#
-  The map and the side panel (barangay details + the list). The map card
-  stretches to the side panel's height, so there is no empty band under
-  it. The side panel can be folded away with the tab on its edge, and the
-  map then takes the full width.
+  The map and the side panel (barangay details + the list). Each keeps
+  its own height: opening a section in the side panel never stretches the
+  map. The side panel can be folded away with the tab on its edge, and
+  the map then takes the full width.
 #}
 <div class="dss-sat-layout" id="satLayout">
   <div class="dss-sat-main">

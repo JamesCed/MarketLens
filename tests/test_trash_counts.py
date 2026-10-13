@@ -121,10 +121,6 @@ def _restore(sme_id):
     db.session.expire_all()
 
 
-# ---------------------------------------------------------------------
-# The shared query
-# ---------------------------------------------------------------------
-
 def test_live_plan_forecasts_is_every_forecast_until_a_plan_is_trashed(app, plans):
     assert tas.live_plan_forecasts().count() == ForecastResult.query.count() == 4
 
@@ -132,16 +128,11 @@ def test_live_plan_forecasts_is_every_forecast_until_a_plan_is_trashed(app, plan
     live = tas.live_plan_forecasts().all()
     assert len(live) == 3
     assert plans["trashed"] not in {f.sme_id for f in live}
-    # The rows themselves are kept -- that is what Restore relies on.
     assert ForecastResult.query.count() == 4
 
     _restore(plans["trashed"])
     assert tas.live_plan_forecasts().count() == 4
 
-
-# ---------------------------------------------------------------------
-# LGU dashboard tallies
-# ---------------------------------------------------------------------
 
 def _dashboard_tallies(app, monkeypatch):
     """The dashboard's three forecast tallies, read from the template
@@ -177,7 +168,6 @@ def test_the_lgu_dashboard_tallies_are_unchanged_with_nothing_in_trash(app, plan
 
 def test_the_lgu_dashboard_does_not_count_a_trashed_plan(app, plans, monkeypatch):
     _trash(plans["trashed"], plans["owner"])
-    # The binned plan was the only saturated zone.
     assert _dashboard_tallies(app, monkeypatch) == (3, 0, 1)
 
 
@@ -187,26 +177,18 @@ def test_a_restored_plan_counts_on_the_lgu_dashboard_again(app, plans, monkeypat
     assert _dashboard_tallies(app, monkeypatch) == (4, 1, 1)
 
 
-# ---------------------------------------------------------------------
-# Trend pages
-# ---------------------------------------------------------------------
-
 def test_the_trend_forecast_series_drops_a_trashed_plan(app, plans):
     assert len(tas._real_forecasts()) == 4
     assert {f.sme_id for f in tas._real_forecasts(FOOD)} == {plans["kept"], plans["trashed"]}
 
     _trash(plans["trashed"], plans["owner"])
     assert len(tas._real_forecasts()) == 3
-    # The industry filter still filters on the FORECAST's industry after
-    # the join (filter_by would have read it off SmeProfile).
     assert {f.sme_id for f in tas._real_forecasts(FOOD)} == {plans["kept"]}
     assert {f.sme_id for f in tas._real_forecasts(RETAIL)} == {plans["retail"]}
 
 
 def test_the_month_averages_drop_a_trashed_plan(app, plans):
-    # All four: saturation (30 + 20 + 90 + 60) / 4 = 50.0.
     assert tas._forecast_averages_in_month(date.today()) == (50.0, 5.0, 4)
-    # Food only: (30 + 20 + 90) / 3 = 46.7.
     assert tas._forecast_averages_in_month(date.today(), FOOD)[2] == 3
 
     _trash(plans["trashed"], plans["owner"])

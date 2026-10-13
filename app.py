@@ -46,7 +46,7 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv()  # reads .env into environment variables before the app reads config
+load_dotenv()
 
 
 def _assert_app_means_the_package():
@@ -68,7 +68,7 @@ def _assert_app_means_the_package():
     """
     spec = importlib.util.find_spec("app")
     if spec is not None and spec.submodule_search_locations is not None:
-        return  # `app` is the package, as it should be
+        return
     raise ImportError(
         "The name 'app' resolved to this file (app.py) instead of the app/ package.\n"
         "That means app/__init__.py is missing or was not committed. Without it, app/ is a\n"
@@ -80,7 +80,7 @@ def _assert_app_means_the_package():
 
 _assert_app_means_the_package()
 
-from app import create_app  # noqa: E402  -- resolves to the app/ PACKAGE; see above
+from app import create_app
 
 app = create_app(os.environ.get("FLASK_CONFIG", "development"))
 

@@ -32,18 +32,12 @@ class IndustryMigrationLog(db.Model):
     __tablename__ = "industry_migration_log"
 
     id = db.Column(db.Integer, primary_key=True)
-    # Which real table the affected row lives in: "market_data",
-    # "sme_profile" or "forecast_result".
     table_name = db.Column(db.String(64), nullable=False)
     row_id = db.Column(db.Integer, nullable=False)
     old_industry_type = db.Column(db.String(150), nullable=False)
-    # NULL for a deleted row -- there is no "new" value for one.
     new_industry_type = db.Column(db.String(150))
-    # "remapped", "deleted_micro", or "deleted_duplicate".
     action = db.Column(db.String(32), nullable=False)
     location = db.Column(db.String(150))
-    # Full original row as JSON, so a deleted row can be put back
-    # exactly as it was.
     row_json = db.Column(db.Text)
     migrated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 

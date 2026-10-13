@@ -82,11 +82,6 @@ def _a_user():
     return user
 
 
-# ---------------------------------------------------------------------------
-# 1. The industry taxonomy migration
-# ---------------------------------------------------------------------------
-
-
 def test_micro_rows_are_deleted_and_sme_scale_rows_are_remapped(app):
     with app.app_context():
         db.session.add_all([
@@ -104,12 +99,10 @@ def test_micro_rows_are_deleted_and_sme_scale_rows_are_remapped(app):
         remaining = {(r.industry_type, r.location) for r in MarketData.query.all()}
         assert ("Sari-Sari Stores", "Poblacion") not in remaining
         assert ("Carinderias & Eateries", "Tibag") not in remaining
-        # Non-micro rows keep their data, under a PSIC section name.
         assert (
             "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles", "Poblacion"
         ) in remaining
         assert ("Human Health and Social Work Activities", "San Nicolas") in remaining
-        # A hardware store is SME-scale, so it is remapped, not deleted.
         assert (
             "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles", "Tibag"
         ) in remaining
@@ -125,10 +118,6 @@ def test_every_remaining_row_speaks_the_new_vocabulary(app):
 
         im.migrate()
 
-        # A few section names are identical in both taxonomies
-        # ("Construction", "Manufacturing"), so the test is "is every
-        # surviving row a valid PSIC section", not "is its name absent
-        # from the old map".
         surviving = {r.industry_type for r in MarketData.query.all()}
         assert surviving <= set(BUSINESS_TYPES), (
             f"rows left speaking the old vocabulary: {surviving - set(BUSINESS_TYPES)}"
@@ -211,7 +200,6 @@ def test_every_change_is_recorded_for_audit(app):
         assert len(entries) == 2
         actions = {e.action for e in entries}
         assert actions == {"remapped", "deleted_micro"}
-        # A deleted row must be recoverable from its stored JSON.
         deleted = next(e for e in entries if e.action == "deleted_micro")
         assert deleted.row_json and "58" in deleted.row_json
 
@@ -235,11 +223,6 @@ def test_undo_restores_deleted_rows_and_original_names(app):
         assert SmeProfile.query.one().industry_type == "Health & Wellness"
         assert IndustryMigrationLog.query.count() == 0
         assert im.has_run() is False
-
-
-# ---------------------------------------------------------------------------
-# 2. The location opportunity engine behind the Recommendations page
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -299,12 +282,8 @@ def test_every_card_carries_the_real_figures_it_reasons_from(app, sme_plan):
             assert opp["opportunity_type"] in (
                 "High Opportunity", "Moderate Opportunity", "Low Opportunity", "High Saturation",
             )
-            # The storyboard's two lists, and they must never be empty --
-            # an empty "Why This Works" is what a fabricated card looks
-            # like when its data is missing.
             assert opp["reasons"], f"{opp['location']} has no reasons"
             assert opp["risks"], f"{opp['location']} has no considerations"
-            # Percentiles back the ranking up.
             assert set(opp["percentiles"]) == {"viability", "residents_per_business", "population"}
 
 

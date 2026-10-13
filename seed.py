@@ -103,10 +103,6 @@ import os
 import secrets
 import sys
 
-# This script prepares the database and trains models; it serves no pages,
-# so the boot-time warm-up (loading models, compiling templates -- see
-# app/services/warmup.py) would only slow it down. Must be set before the
-# app's config is imported.
 os.environ.setdefault("WARM_ON_BOOT", "false")
 
 from app import create_app
@@ -116,9 +112,6 @@ from app.services.forecasting_service import SYSTEM_USER_EMAIL
 
 MODEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "app", "ml", "model_store", "rf_model.pkl")
-# Stage 2 of the forecast, the Plan Viability Model. Checked separately
-# because an install that predates it has rf_model.pkl and not this --
-# and that install needs stage 2 trained, not stage 1 retrained.
 PLAN_MODEL_FILE = os.path.join(os.path.dirname(MODEL_FILE), "plan_model.pkl")
 
 DEMO_ACCOUNTS = [
@@ -192,8 +185,6 @@ def run(argv=None):
     config_name = os.environ.get("FLASK_CONFIG", "development")
     is_production = config_name.strip().lower() == "production"
 
-    # Precedence, most explicit first: the command-line flag, then the
-    # environment variable, then "off in production, on everywhere else".
     if args.demo is not None:
         seed_demo = args.demo
     else:
@@ -212,8 +203,6 @@ def run(argv=None):
         if User.query.filter_by(email=SYSTEM_USER_EMAIL).first() is None:
             system_user = User(name="System (auto-generated data owner)", role="Admin",
                                email=SYSTEM_USER_EMAIL)
-            # Nobody is meant to log in as this account, so it gets a
-            # password nobody -- including us -- ever sees.
             system_user.set_password(secrets.token_urlsafe(32))
             db.session.add(system_user)
             print(f"  created system account: {SYSTEM_USER_EMAIL}")

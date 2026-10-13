@@ -49,9 +49,6 @@ SME_PLAN = {
 }
 
 
-# =====================================================================
-# Passwords: 1 upper, 1 lower, 1 number, 1 special (and 8 characters)
-# =====================================================================
 @pytest.mark.parametrize("weak", ["password123", "PASSWORD123!", "Password!!", "Pass1!", "Password123"])
 def test_a_weak_password_is_refused_at_sign_up(app, weak):
     client = app.test_client()
@@ -112,9 +109,6 @@ def test_an_admin_cannot_create_an_account_with_a_weak_password(app):
     assert created.name == "Ana Reyes" and created.first_name == "Ana"
 
 
-# =====================================================================
-# Registration: full personal information, encrypted; Terms; dropdowns
-# =====================================================================
 def test_sign_up_stores_the_full_personal_information(app):
     app.test_client().post("/register", data={**SME_PLAN, **account_fields("full@x.test", suffix="Jr.")})
     user = User.query.filter_by(email="full@x.test").one()
@@ -138,7 +132,7 @@ def test_personal_details_are_encrypted_in_the_database(app):
     for plain in ("09171234567", "Male", "1990-05-14", "Rizal", "Poblacion"):
         assert plain not in stored, f"{plain} is stored in plain text"
     assert all(str(v).startswith("enc1:") for v in row[:5])
-    assert row[5] is None  # nothing left in the old plain-text column
+    assert row[5] is None
 
 
 def test_details_written_under_the_secret_key_still_read_after_a_dedicated_key_is_added(app):
@@ -225,9 +219,6 @@ def test_a_contact_number_left_in_plain_text_is_encrypted_at_start_up(app):
     assert User.query.get(user.user_id).contact_number == "09170000001"
 
 
-# =====================================================================
-# Plans: a real minimum capital, and barangays from the list
-# =====================================================================
 def test_a_one_peso_capital_is_refused_and_five_thousand_is_accepted(app):
     from app.services.plan_params import parse_plan_form
 
@@ -250,9 +241,6 @@ def test_a_plan_location_must_be_one_of_the_76_barangays(app):
     assert not errors
 
 
-# =====================================================================
-# Admin panel: no internals on screen, confidential values masked
-# =====================================================================
 INTERNALS = ("_API_KEY", "LLM_PROVIDER", "USE_LLM", ".env", ".py", "find_or_create", "<code>competitor_count",
              "market_data rows")
 
@@ -285,18 +273,16 @@ def test_masking_helpers():
     assert mask_phone("09171234567") == "0917•••4567"
 
 
-# =====================================================================
-# Navigation: footer links are top-bar icons; loading screen everywhere
-# =====================================================================
 @pytest.mark.parametrize("role,path", [("SME", "/home"), ("SME", "/recommendations"), ("LGU", "/lgu/dashboard"),
                                        ("Admin", "/admin/audit-log")])
 def test_every_signed_in_page_has_the_quick_links_and_no_footer_bar(app, role, path):
     _user(f"{role.lower()}-nav@x.test", role=role)
     page = _login(app, f"{role.lower()}-nav@x.test").get(path).get_data(as_text=True)
     assert 'class="dss-quick-links"' in page
-    for label in ("PSA Data Source", "DTI-Verified", "Community Forum", "Contact Us"):
+    for label in ("PSA Data Source", "Community Forum", "Contact Us"):
         assert f'aria-label="{label}"' in page
     assert "dss-home-footer" not in page
+    assert "DTI-Verified" not in page and "dti.gov.ph" not in page
 
 
 @pytest.mark.parametrize("path", ["/login", "/register", "/forgot-password"])
@@ -313,9 +299,6 @@ def test_the_loading_screen_script_skips_downloads_and_new_tabs():
     assert "DOWNLOAD_RE" in source and "data-no-loader" in source
 
 
-# =====================================================================
-# Saturation Map and Trend Reports
-# =====================================================================
 def test_one_tier_vocabulary_on_the_map(app):
     import os
 
@@ -326,7 +309,6 @@ def test_one_tier_vocabulary_on_the_map(app):
         assert f'data-tier-filter="{tier}"' in page
     source = open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "js", "map.js"), encoding="utf-8").read()
     assert 'Moderate: "Moderate saturation"' in source and 'High: "High saturation"' in source
-    # The legend counts follow an isolated barangay; the panel labels the period.
     assert "dssIsolatedLocation !== null && location !== dssIsolatedLocation" in source
     assert "function periodGuidanceHtml" in source and "Saturation now" in source
 
@@ -350,9 +332,6 @@ def test_the_quarterly_legend_uses_the_series_colours_and_the_guide_is_a_dialog(
     assert 'id="topIndustriesModal"' in page and "TOP_INDUSTRIES_SHOWN = 5" in page
 
 
-# =====================================================================
-# LGU: the barangay count matches the 76
-# =====================================================================
 def test_the_lgu_dashboard_counts_only_official_barangays(app):
     officer = _user("lgu-count@x.test", role="LGU")
     for name in ("Poblacion", "poblacion", "Baras", "Not A Barangay"):
@@ -365,9 +344,6 @@ def test_the_lgu_dashboard_counts_only_official_barangays(app):
     assert "1 uploaded name(s) not matched" in tile
 
 
-# =====================================================================
-# Speed: warm-up, static caching, gzip, per-request memo
-# =====================================================================
 def test_warm_up_loads_models_and_compiles_templates(app):
     from app.services.warmup import warm_up
 
@@ -438,9 +414,6 @@ def test_the_population_figures_are_parsed_once():
     assert calls["n"] == 0
 
 
-# =====================================================================
-# Recommendations: score colours, the brief, folded detail
-# =====================================================================
 def test_a_low_score_is_red_and_the_recommendation_has_a_brief(app):
     from app.services.forecasting_service import generate_forecast_for_profile
 
@@ -463,9 +436,6 @@ def test_score_tone_cuts():
     assert (tone(3.3), tone(4), tone(6.4), tone(6.5), tone("x")) == ("low", "fair", "fair", "good", "fair")
 
 
-# =====================================================================
-# Follow-ups from the code review of this change
-# =====================================================================
 def test_the_request_memo_forgets_after_a_bulk_update(app):
     from app.models import Notification
 

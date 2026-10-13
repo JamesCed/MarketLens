@@ -74,59 +74,18 @@ from datetime import datetime, timedelta, timezone
 
 from app.models import SystemSetting
 
-# Every recommendation dict -- rule-based, LLM-generated, or parsed back
-# out of storage -- has exactly these keys, so every template that
-# reads one (recommendations.html, home.html) can rely on the shape
-# without checking for missing pieces.
-#
-# "forecast" is the trained model's payload (plan_forecast_service.
-# forecast_plan) and "explanation" is {"text", "generated_by"}. Both are
-# None on rows written before the two-stage model existed, and on any
-# context built without a plan forecast.
 _KEYS = ("headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
          "subcategory_analysis", "innovation", "forecast", "explanation", "competitor_insight")
 
-# The provenance stamp on a transcript nobody's LLM wrote -- the
-# rule-based model summary. Hyphenated (unlike the recommendation's own
-# "rule_based") because it is matched by the templates as a label.
 RULE_BASED_EXPLANATION = "rule-based"
 
-# How long an AI transcript may run. The prompt asks for 5-8 sentences
-# (two short paragraphs at most); this is the ceiling past which a reply
-# is something other than that.
 TRANSCRIPT_MAX_CHARS = 2000
-# The least that still counts as a transcript once sentences quoting
-# unverifiable figures have been dropped: fewer than this and what is
-# left is a fragment, and the model summary is the better thing to show.
 TRANSCRIPT_MIN_SENTENCES = 3
-# After a failed upgrade of a stored forecast's AI text, how long the
-# page waits before asking again. Each upgrade already retries a busy
-# Gemini several times (llm_service), so a failure means a minute of
-# trouble at least -- and every page view retrying it at once would
-# spend whatever is left of the free tier's per-minute quota on requests
-# that fail. Long enough for that window to pass, short enough that an
-# owner looking at the plan sees Gemini's text appear (the page itself
-# asks again when the wait is over, see forecast_transcript.js).
 TRANSCRIPT_RETRY_AFTER = timedelta(minutes=2)
-# The version of the Gemini request a failure stamp was made with. A
-# stamp from an OLDER request says nothing about whether the current
-# one works, so it is ignored and the forecast is retried at once. Bump
-# this whenever the request itself is fixed. 3: retried sends, the
-# longer timeout, and the recommendation upgraded with the transcript.
 TRANSCRIPT_REQUEST_VERSION = 3
-# The time one forecast run (plan saved or edited) may spend on the AI,
-# and the time one background upgrade may (POST /api/forecasts/<id>/
-# transcript). Each covers the recommendation call and the dedicated
-# transcript call together -- see llm_service.ai_time_budget.
 AI_TIME_BUDGET_AT_FORECAST = 80
 AI_TIME_BUDGET_FOR_UPGRADE = 95
 
-
-# ---------------------------------------------------------------------
-# 1. Context building -- gathers the SME's OWN input parameters and the
-#    real comparison data (competitor sample, population) into the one
-#    dict both the rule-based generator and the LLM prompt read from.
-# ---------------------------------------------------------------------
 
 def price_summary(items):
     """{count, priced, low, high} for the optional price list, or None.
@@ -226,11 +185,6 @@ def build_recommendation_context(sme_profile, scores, competitor_sample=None, co
         "forecast": plan_forecast if isinstance(plan_forecast, dict) else None,
     }
 
-
-# ---------------------------------------------------------------------
-# 2. Rule-based generator -- always available, no API key needed. This
-#    is also what every LLM call ultimately falls back to.
-# ---------------------------------------------------------------------
 
 def _headline_and_type_for(cluster_label):
     if cluster_label == "Saturated":
@@ -438,8 +392,6 @@ def _reasons_for(context):
             f"{industry_lower} businesses would normally hold"
         )
     if _forecast(context) is not None:
-        # The plan model weighed the capital against the ramp-up, so
-        # say what it found rather than only that a figure exists.
         reasons.extend(_capital_and_pricing_lines(context)[0])
     elif _capital(context):
         reasons.append(f"your capital of PHP {_capital(context):,.0f} is on file for this plan")
@@ -478,10 +430,6 @@ def _risks_for(context):
     return risks
 
 
-# How much a new entrant has to stand out, by the saturation tier the
-# model put this plan in. Read from the model's own output -- the only
-# market fact the rule-based writer has -- not from the idea's wording,
-# which it cannot judge. Judging the idea itself is the LLM's job.
 _DIFFERENTIATION_NEED = {
     "Saturated": "Very high",
     "High": "High",
@@ -553,26 +501,6 @@ def _rule_based_innovation(context):
         "generated_by": "rule_based",
     }
 
-
-# ---------------------------------------------------------------------
-# 2a. The competitor insight -- "how many of you are already here, and
-#     can this plan still win?"
-# ---------------------------------------------------------------------
-# The Planning page shows it SHORT (one or two sentences next to the
-# direct-competitor count) and the Recommendations page shows it IN FULL,
-# so the two pages say the same thing at two lengths rather than two
-# different things.
-#
-# The AI writes both (llm_service asks for "competitor_insight"), because
-# the judgement it needs -- is THIS pandesal idea new against the
-# pandesal shops already trading here? -- is a reading of words, which a
-# template cannot do. This rule-based version is what stands when the AI
-# is off or its text quotes a figure it was not given; it says only what
-# the numbers say, and names the novelty only when the AI rated it.
-#
-# Built from STORED fields alone (the sub-category analysis, the market
-# payload, the innovation read), so parse_recommendation() can give a
-# forecast written before this existed the same insight.
 
 def competitor_insight_from(analysis, competitor_count, industry_type, location, innovation):
     """{"short", "detail", "generated_by", "label", "direct_count",
@@ -675,11 +603,6 @@ def _choose_competitor_insight(llm_value, writer, rule_insight, context):
     return {**rule_insight, "short": short, "detail": detail, "generated_by": writer}
 
 
-# ---------------------------------------------------------------------
-# 2b. The forecast explanation -- a transcription of what the trained
-#     model said and why, written from the payload alone.
-# ---------------------------------------------------------------------
-
 def _rule_based_explanation_text(context):
     """Four to six plain sentences built ONLY from the forecast payload:
     the plan's viability and confidence, the market saturation and its
@@ -702,13 +625,6 @@ def _rule_based_explanation_text(context):
     trained = _plan_model_is_trained(forecast)
     sentences = []
 
-    # 1. The verdict. Each confidence is credited to the stage that
-    #    produced it: the plan stage's own figure goes with the plan's
-    #    viability, and when the market stage is the less sure of the
-    #    two, the forecast's overall confidence -- the lower of the two,
-    #    since a forecast is only as sure as its weaker half, and the
-    #    figure stored on the forecast and shown beside it -- is named
-    #    as the market stage's rather than passed off as the plan's.
     viability = _number(plan.get("viability_score"), _number(context.get("viability_score"), 0.0))
     market_confidence = _number(market.get("confidence"))
     plan_confidence = _number(plan.get("confidence"))
@@ -725,9 +641,6 @@ def _rule_based_explanation_text(context):
         verdict += f"; the forecast's overall confidence is {_figure(market_confidence)}%, the {market_stage}'s"
     sentences.append(verdict + ".")
 
-    # 2. The market stage it started from -- named for what produced it:
-    #    the trained market forest, or the weighted formula that stands
-    #    in for it while no rf_model.pkl exists.
     saturation = _number(market.get("saturation_index"), _number(context.get("saturation_index"), 0.0))
     tier = market.get("cluster_label") or context.get("cluster_label")
     location = inputs.get("location") or context.get("location")
@@ -741,8 +654,6 @@ def _rule_based_explanation_text(context):
         market_line += f", against {_figure(industry)}% for the industry as a whole"
     sentences.append(market_line + ".")
 
-    # 3. The drivers -- the exact decomposition of the forest's answer,
-    #    or the scorecard's weighted components when no forest exists.
     drivers = [d for d in (forecast.get("drivers") or [])
                if isinstance(d, dict) and d.get("label") and abs(_number(d.get("points"), 0.0)) >= 0.05][:3]
     if drivers:
@@ -761,7 +672,6 @@ def _rule_based_explanation_text(context):
             parts = [f"{_label(d)} ({_figure(abs(_number(d['points'])))} points)" for d in drivers]
             sentences.append(f"The largest parts of the scorecard were {_join(parts)}.")
 
-    # 4. Capital against the ramp-up, with the fixed cost broken down.
     fixed_cost = _number(financials.get("monthly_fixed_cost"))
     ramp = _number(financials.get("ramp_up_months"))
     if fixed_cost is not None and ramp is not None:
@@ -788,7 +698,6 @@ def _rule_based_explanation_text(context):
                 f"{_figure(runway)} months -- {comparison} the ~{_figure(ramp)}-month ramp-up the model expects."
             )
 
-    # 5. Pricing, when there is a price list to read.
     priced = int(_number(inputs.get("priced_item_count"), 0) or 0)
     required = _number(financials.get("required_daily_sales"), 0.0)
     if priced > 0 and required > 0:
@@ -803,13 +712,6 @@ def _rule_based_explanation_text(context):
                         f"this barangay's residents could plausibly support")
         sentences.append(pricing + ".")
     elif fixed_cost is not None:
-        # "Neutral" is true only of the scorecard, which gives an unknown
-        # price coverage a middle score (C3 = 0.5). The trained forest
-        # measures every input against its baseline -- the average plan
-        # it learned from -- so a missing price list can and usually does
-        # cost points there, and the drivers sentence above already says
-        # so with its sign. Calling that "neutral" would contradict the
-        # very paragraph it sits in; say only what is true either way.
         if trained:
             sentences.append("No prices are listed yet, so your prices could not be checked against your "
                              "fixed costs or what local demand can support.")
@@ -817,7 +719,6 @@ def _rule_based_explanation_text(context):
             sentences.append("No prices are listed yet, so the scorecard treated pricing as neutral "
                              "(a middle score).")
 
-    # 6. Where it all lands.
     break_even = financials.get("break_even") or {}
     if isinstance(break_even, dict) and break_even.get("label"):
         sentences.append(f"Taken together, the model's break-even window for this plan is {break_even['label']}.")
@@ -831,66 +732,6 @@ def _rule_based_explanation(context):
         return None
     return {"text": text, "generated_by": RULE_BASED_EXPLANATION}
 
-
-# THE GROUNDING CHECK.
-#
-# The LLM is asked to transcribe the model's output "using only the
-# numbers given". Asking is not checking: a fluent paragraph with one
-# invented figure in it ("you will break even in 6 months") reads exactly
-# as convincingly as a faithful one, and is precisely the failure an
-# explanation must never have. So every number in the LLM's text --
-# written in digits OR in words ("six months", "two million pesos") -- is
-# matched against the numbers the model and the owner actually supplied.
-# One that matches nothing discards the whole explanation in favour of
-# the rule-based one.
-#
-# WHICH numbers it may match is the first half of the check: the figures
-# the prompt SHOWS the LLM -- the context (the owner's inputs and the
-# market comparison) and the payload -- less the few payload figures the
-# prompt never prints (_UNSHOWN_PAYLOAD below) and the sub-category
-# analysis's internals (_UNSHOWN_ANALYSIS). Those are real, but the
-# LLM has never seen them, so a sentence that "matches" one matched by
-# accident: the scorecard's seven component weights (0.40, 0.20, 0.10,
-# 0.08, 0.07...) and scores sit in every payload, and counting them
-# grounded "break even in 8 months" and "scores 8/10" on every plan.
-#
-# WHAT counts as a match is the second half, deliberately narrow, and
-# each allowance has a reason:
-#   * +/-0.6 absolute or +/-2% relative -- the payload holds 8.2 and the
-#     text says "8.2", or 61,020 written as "61,020"; 42.1% quoted as
-#     "42%" is rounding, not invention;
-#   * x10 / /10, for the viability only -- it is shown both as a 0-100
-#     index and as a 0-10 score, and "6.1" and "61" are the same figure;
-#   * the gross margin as a percentage -- the prompt prints 0.4 as
-#     "40%", so "40%" matches it; but only a number written WITH a
-#     percent sign (or "percent") does, so the margin cannot ground "40
-#     months". No other fraction becomes a percentage;
-#   * an INTEGER of 12 or less ("3 employees", "8 months", "six") gets
-#     none of the slack above -- no x10, no /10, no percentage -- only
-#     ordinary rounding of a value the context itself holds: small
-#     integers are cheap to hit by accident, so "3" passes only when the
-#     context holds something between 2.5 and 3.5.
-# Denominators ("/10", "out of 100", "out of ten") are not figures and
-# are dropped first; nor is "one" used as a pronoun ("one of the
-# drivers", "no one"). What the check cannot read -- "twice", "half the
-# ceiling", a unit converted ("a year" for 12 months) -- it does not
-# pretend to; those are left to the prompt's instruction to copy every
-# figure exactly as written.
-#
-# HOW MONEY IS WRITTEN is read generously, because the cost of reading
-# too little is an invented figure on the page, and the cost of reading
-# too much is only the rule-based paragraph instead of the LLM's:
-#   * a peso prefix in any case, glued or spaced -- "PHP500", "Php
-#     2,400,000", "php500", "P500" -- is the peso sign;
-#   * a magnitude suffix in any case: glued "500k", "3.4m", "2.4bn",
-#     "1.5mil"; spaced "8.3 M", "2.4 mn", "2 Bn"; or a word, "1.5
-#     million", "2 mil". "k" counts only glued to the digits, and a
-#     lone spaced "m" or "b" not at all, so "5 km" and "a 5 m frontage"
-#     are not read as thousands or millions;
-#   * digits glued to letters ARE figures -- "x25", "USD500" -- unless
-#     the word they sit in is a code: a version or identifier ("v1",
-#     "rf_v1", anything with an underscore), a quarter ("Q1".."Q4"), or
-#     digits between letters ("B2B").
 
 _DENOMINATOR_RE = re.compile(r"\s*(?:/|\bout of)\s*(?:10{1,2}|ten|(?:a|one) hundred)\b", re.I)
 _NUMBER_RE = re.compile(
@@ -909,8 +750,6 @@ _MAGNITUDES = {
 _PERCENT_RE = re.compile(r"\s?(?:%|per\s?cent\b)", re.I)
 _SMALL_INTEGER = 12
 
-# Numbers written in words. Ordinals ("first", "second") are positions,
-# not figures, and are deliberately absent.
 _WORD_VALUES = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
     "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
@@ -921,15 +760,9 @@ _WORD_VALUES = {
 _WORD_SCALES = {"hundred": 100, "thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
 _NUMBER_WORDS = frozenset(_WORD_VALUES) | frozenset(_WORD_SCALES) | {"dozen"}
 _WORD_RE = re.compile(r"[A-Za-z]+")
-# "one" in this company is a pronoun ("no one", "each one", "one of the
-# drivers"), not a count -- and it is common enough in plain prose that
-# reading it as the figure 1 would discard honest paragraphs for nothing.
 _PRONOUN_ONE_AFTER = frozenset({"no", "any", "each", "every", "the", "this", "that", "which"})
 _PRONOUN_ONE_BEFORE = frozenset({"of", "another"})
 
-# A number as the check reads it: its value, whether it is a small
-# integer (see above), whether it was written as a percentage, and the
-# text exactly as written (what the log line reports).
 _Figure = namedtuple("_Figure", "value small percent written")
 
 
@@ -951,7 +784,6 @@ def _spelled_numbers(text):
     found, i = [], 0
     while i < len(words):
         k, run = i, []
-        # "a dozen", "a hundred", "a million": the article is the one.
         if words[k][0] in ("a", "an") and k + 1 < len(words) and joined(k, k + 1) \
                 and (words[k + 1][0] in _WORD_SCALES or words[k + 1][0] == "dozen"):
             run.append("one")
@@ -1034,8 +866,6 @@ def _numbers_in(text):
         value = float(digits.replace(",", "")) * _MAGNITUDES.get(suffix, 1)
         small = not suffix and "." not in digits and value <= _SMALL_INTEGER
         found.append((match.start(), match.end(), value, small, match.group(0)))
-    # The scale word of "1.5 million" is already part of that figure;
-    # read on its own as a word it would be a second, phantom million.
     digit_spans = [(row[0], row[1]) for row in found]
     for start, end, value, scaled in _spelled_numbers(text):
         if any(start < span_end and span_start < end for span_start, span_end in digit_spans):
@@ -1047,31 +877,13 @@ def _numbers_in(text):
             for _start, end, value, small, written in found]
 
 
-# Payload figures llm_service._model_output_prompt never prints, by path
-# from the context root. They are the model's own and true, but the LLM
-# has not seen them, so matching one can only be an accident -- see the
-# note above. (The scorecard_index equals the printed viability_index on
-# the formula path anyway, and there the components' points reach the
-# prompt as the drivers.)
 _UNSHOWN_PAYLOAD = frozenset({
     ("forecast", "components"),
     ("forecast", "plan", "scorecard_index"),
     ("forecast", "financials", "capital_adequacy"),
     ("forecast", "inputs", "residents_per_business"),
 })
-# The same holds for the sub-category analysis, which rides in the
-# context whole: llm_service._plan_detail_prompt prints only its
-# direct-competitor count (with its label and source), and the two
-# saturation figures it quotes beside it are the context's own. The
-# adjusted competitor count, the expected share, the density ratio, the
-# industry-level viability score and the rest are never shown -- yet on
-# any plan with a sub-category they would ground "break even in 4
-# months" or "an index of 36". So the analysis is skipped whole and its
-# direct_count added back by name (_grounding_numbers).
 _UNSHOWN_ANALYSIS = frozenset({("subcategory_analysis",)})
-# ...and the pricing figures, on a plan with no price list: the prompt
-# then prints "No price list" instead of the pricing line, so the demand
-# ceiling (and the zeros beside it) never reach the LLM either.
 _PRICING_PAYLOAD = frozenset({
     ("forecast", "inputs", "average_price"),
     ("forecast", "financials", "gross_margin"),
@@ -1187,21 +999,11 @@ def _choose_explanation(llm_text, llm_generated_by, rule_explanation, context):
                 "rule-based model summary stands",
                 f"numbers not in the model output: {', '.join(invented)}" if invented else "too long",
             )
-        except Exception:  # pragma: no cover - no app context
+        except Exception:
             pass
         return rule_explanation
     return {"text": text, "generated_by": llm_generated_by}
 
-
-# ---------------------------------------------------------------------
-# 2c. Checking a DEDICATED transcript (llm_service.transcribe_forecast)
-# ---------------------------------------------------------------------
-# The dedicated call shows Gemini more than the one-call prompt does --
-# the seven scorecard parts, the capital adequacy, the residents per
-# business -- so its transcript is checked against a different pool: the
-# figures in the very block it was shown, read with the same _numbers_in
-# and matched with the same _matches as above. Nothing it was not shown
-# can ground it; everything it was shown can.
 
 def transcript_allowed_figures(lines, forecast):
     """(plain, scaled, percents) for _matches, from the FORECAST
@@ -1365,7 +1167,7 @@ def llm_recommendations_enabled():
     return SystemSetting.get_bool("use_llm_recommendations", False)
 
 
-def build_recommendation(context):
+def build_recommendation(context, defer_ai=False):
     """Returns a structured recommendation dict -- {headline,
     opportunity_type, summary, reasons, risks, generated_by,
     subcategory_analysis, innovation, forecast, explanation} -- ready
@@ -1397,6 +1199,12 @@ def build_recommendation(context):
     asked, since nothing would be different the second time."""
     recommendation = _rule_based_recommendation(context)
 
+    if defer_ai and _forecast(context) is not None:
+        from app.services import llm_service
+
+        if llm_service.gemini_transcription_available():
+            return recommendation
+
     if llm_recommendations_enabled():
         from app.services import llm_service
         from app.services.llm_service import generate_recommendation_json
@@ -1415,10 +1223,6 @@ def build_recommendation(context):
 
         if _forecast(context) is not None and ai_text_pending(recommendation) and \
                 isinstance(recommendation.get("explanation"), dict):
-            # Gemini was just asked and failed for part of it. Stamp it
-            # as mark_transcript_failed would, so the page that shows
-            # this forecast waits TRANSCRIPT_RETRY_AFTER before asking
-            # again -- and then upgrades what is still the template.
             recommendation["explanation"] = _stamped(recommendation["explanation"])
 
     return recommendation
@@ -1453,27 +1257,18 @@ def _apply_llm_payload(recommendation, llm_payload, context):
     llm_model = llm_payload.pop("model", None)
     llm_payload.pop("forecast", None)
     merged = dict(llm_payload)
-    # The sub-category figures are measurements, never the model's
-    # words -- they always come from the context.
     merged["subcategory_analysis"] = context.get("subcategory_analysis")
-    # Likewise the forecast: the trained model's output, never anything
-    # the LLM said about it.
     merged["forecast"] = _forecast(context)
-    # "llm:gemini:gemini-3.8-flash" -- the provider AND the exact model,
-    # because "explained by Gemini" should be checkable.
     writer = llm_payload.get("generated_by") or "llm"
     if llm_model:
         writer = f"{writer}:{llm_model}"
     if _is_ai(rule_explanation):
-        merged["explanation"] = rule_explanation  # already transcribed: kept
+        merged["explanation"] = rule_explanation
     else:
         merged["explanation"] = _choose_explanation(llm_explanation, writer, rule_explanation, context)
     has_idea = bool(rule_innovation.get("has_idea"))
     if llm_innovation and (llm_innovation["novelty"] if has_idea else llm_innovation["summary"]) \
             and not ungrounded_numbers(llm_innovation["summary"], context):
-        # The LLM judges the idea -- or, with none on the plan yet, says
-        # what could set the business apart; the differentiation need
-        # stays the one read from the saturation model.
         merged["innovation"] = {
             **rule_innovation,
             "novelty": llm_innovation["novelty"] if has_idea else None,
@@ -1483,8 +1278,6 @@ def _apply_llm_payload(recommendation, llm_payload, context):
         }
     else:
         merged["innovation"] = rule_innovation
-    # Judged AFTER the innovation, so the rule-based fallback can name the
-    # novelty the AI just rated.
     merged["competitor_insight"] = _choose_competitor_insight(
         llm_competitor_insight, writer,
         _rule_based_competitor_insight(context, merged["innovation"]), context,
@@ -1556,16 +1349,10 @@ def upgrade_ai_text(forecast_row, sme_profile):
     if still and isinstance(stored.get("explanation"), dict):
         stored["explanation"] = _stamped(stored["explanation"])
     elif not still and isinstance(stored.get("explanation"), dict):
-        # Done: the retry stamp of an earlier failure goes with it.
         stored["explanation"] = {key: value for key, value in stored["explanation"].items()
                                  if key not in ("transcript_failed_at", "transcript_failed_version")}
     return {"raw": json.dumps(stored, ensure_ascii=False), "changed": changed, "pending": still}
 
-
-# ---------------------------------------------------------------------
-# 3. Storage -- JSON-in-a-TEXT-column, with backward-compatible parsing
-#    for rows written before this change existed.
-# ---------------------------------------------------------------------
 
 def serialize_recommendation(recommendation):
     """Ready to store directly in forecast_result.recommendation."""
@@ -1628,18 +1415,6 @@ def _parse_explanation(value):
         parsed["transcript_failed_version"] = value.get("transcript_failed_version")
     return parsed
 
-
-# ---------------------------------------------------------------------
-# 3b. Upgrading a STORED forecast's transcript
-# ---------------------------------------------------------------------
-# A forecast stored with the rule-based model summary -- made while no
-# Gemini key was configured, or before the transcript existed -- is
-# upgraded after the fact, from the page, without blocking its render:
-# the page shows the summary with a "Gemini is transcribing..." note,
-# and static/js/forecast_transcript.js asks
-# POST /api/forecasts/<id>/transcript (api_controller). Nothing is
-# re-scored: the context is rebuilt from the stored payload and the
-# plan, and only the stored "explanation" changes.
 
 def _utc(stamp):
     """An ISO timestamp as an aware UTC datetime, or None. A naive one is
@@ -1820,21 +1595,16 @@ def parse_recommendation(raw_text):
                 "reasons": [str(r) for r in (payload.get("reasons") or [])],
                 "risks": [str(r) for r in (payload.get("risks") or [])],
                 "generated_by": payload.get("generated_by") or "rule_based",
-                # Absent on forecasts written before sub-categories and
-                # the innovation read existed; templates check for None.
                 "subcategory_analysis": payload.get("subcategory_analysis")
                 if isinstance(payload.get("subcategory_analysis"), dict) else None,
                 "innovation": payload.get("innovation")
                 if isinstance(payload.get("innovation"), dict) else None,
-                # Absent on forecasts written before the trained plan
-                # model; the Home page regenerates those once.
                 "forecast": payload.get("forecast")
                 if isinstance(payload.get("forecast"), dict) else None,
                 "explanation": _parse_explanation(payload.get("explanation")),
                 "competitor_insight": _parse_competitor_insight(payload),
             }
 
-    # Legacy plain-text fallback (pre-JSON format).
     headline = text.split("\n", 1)[0].strip()
 
     summary_match = re.search(r"\n\n(.*?)\n\nWhy:", text, re.DOTALL)
@@ -1860,11 +1630,6 @@ def parse_recommendation(raw_text):
         "competitor_insight": None,
     }
 
-
-# ---------------------------------------------------------------------
-# 4. Small display-only helpers for the Recommendations page -- derived
-#    from real numbers already on file, never fabricated ranges.
-# ---------------------------------------------------------------------
 
 def competition_level_label(competitor_count):
     count = int(competitor_count or 0)

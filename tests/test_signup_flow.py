@@ -65,10 +65,6 @@ def _signup(client, **overrides):
     return client.post("/register", data=data, follow_redirects=True)
 
 
-# ---------------------------------------------------------------------
-# 1. The plan is created, exactly once
-# ---------------------------------------------------------------------
-
 def test_signup_creates_the_first_business_plan(app, client):
     assert _signup(client).status_code == 200
 
@@ -85,7 +81,6 @@ def test_signup_creates_the_first_business_plan(app, client):
         assert profile.subcategory == "coffee_shop"
         assert profile.product_offering == "Brewed coffee and pastries"
         assert profile.innovation_idea.startswith("Kapampangan")
-        # Monthly revenue is no longer collected.
         assert profile.monthly_revenue_est is None
 
 
@@ -156,7 +151,7 @@ def test_signing_up_twice_with_the_same_email_adds_no_second_plan(app, client):
     refreshes the confirmation. The second attempt is refused on the
     email, and must not leave an extra sme_profile behind."""
     _signup(client)
-    _signup(client)  # same email
+    _signup(client)
 
     with app.app_context():
         assert User.query.filter_by(email="juan@example.com").count() == 1
@@ -191,8 +186,6 @@ def test_the_profile_guard_refuses_a_second_plan_for_the_same_account(app):
         user = _create_user_from_pending(pending)
         assert SmeProfile.query.filter_by(user_id=user.user_id).count() == 1
 
-        # Run the profile half a second time for the SAME user, which is
-        # what a replayed request would do.
         business = pending["business"]
         if business and not SmeProfile.query.filter_by(user_id=user.user_id).first():
             db.session.add(SmeProfile(user_id=user.user_id, **{
@@ -213,10 +206,6 @@ def test_an_existing_business_gets_a_registration_date(app, client):
         assert profile.registration_date is not None
 
 
-# ---------------------------------------------------------------------
-# 2. LGU accounts skip the business step
-# ---------------------------------------------------------------------
-
 def test_lgu_signup_needs_no_business_fields(app, client):
     response = client.post(
         "/register",
@@ -230,10 +219,6 @@ def test_lgu_signup_needs_no_business_fields(app, client):
         assert user.role == "LGU"
         assert SmeProfile.query.filter_by(user_id=user.user_id).count() == 0
 
-
-# ---------------------------------------------------------------------
-# 3. Nothing is half-created
-# ---------------------------------------------------------------------
 
 @pytest.mark.parametrize("missing", ["business_name", "industry_type", "location"])
 def test_a_missing_business_field_blocks_the_whole_signup(app, client, missing):
@@ -292,10 +277,6 @@ def test_a_mismatched_password_still_blocks_everything(app, client):
         assert SmeProfile.query.count() == 0
 
 
-# ---------------------------------------------------------------------
-# The pages themselves
-# ---------------------------------------------------------------------
-
 def test_get_started_goes_to_sign_up(client):
     """It used to scroll to the sign-in card, which is no use to someone
     who does not have an account yet."""
@@ -312,11 +293,8 @@ def test_the_register_page_asks_for_a_required_capital(client):
     assert 'name="startup_capital"' not in body
     assert "Capital (&#8369;)" in body
     assert "Startup capital" not in body
-    # required is applied per step by the wizard's script, not the markup
-    # (a hidden required field would block an LGU sign-up).
     assert '2: ["business_name", "industry_type", "location", "capital"]' in body
     assert "Capital is required" in body
-    # Plans are managed on Home now, not in Settings.
     assert "Business Preferences" not in body
 
 
@@ -324,6 +302,5 @@ def test_the_register_page_asks_for_the_business_before_the_account(client):
     body = client.get("/register").get_data(as_text=True)
     assert body.index('name="business_name"') < body.index('name="email"')
     assert body.index('name="industry_type"') < body.index('name="password"')
-    # And it offers the real industry list and barangays, not free text.
     assert "Food and Beverage" in body
     assert "Poblacion" in body

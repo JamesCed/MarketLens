@@ -67,10 +67,6 @@ def _seed(industries=4, barangays=12, refreshes=3):
     return [(i, b) for i in BUSINESS_TYPES[:industries] for b in BARANGAY_NAMES[:barangays]]
 
 
-# ---------------------------------------------------------------------
-# 1. The batched scorer
-# ---------------------------------------------------------------------
-
 def test_batched_scores_are_identical_to_per_pair_scores(app):
     """The whole optimisation rests on this. If the numbers differ at
     all, the page is faster and wrong."""
@@ -95,7 +91,7 @@ def test_the_batch_does_not_scale_its_query_count_with_the_batch(app):
 
     with app.app_context():
         pairs = _seed()
-        compute_scores_batch(pairs)  # warm any row creation first
+        compute_scores_batch(pairs)
 
         counter = {"n": 0}
 
@@ -104,9 +100,6 @@ def test_the_batch_does_not_scale_its_query_count_with_the_batch(app):
 
         event.listen(db.engine, "before_cursor_execute", count)
         try:
-            # Measured with the two-minute result cache emptied, so this
-            # is the cost of actually scoring -- the cache has its own
-            # test below.
             clear_batch_cache()
             compute_scores_batch(pairs)
             many = counter["n"]
@@ -133,7 +126,7 @@ def test_the_forest_is_asked_once_per_tree_not_once_per_row(app):
 
     with app.app_context():
         pairs = _seed()
-        fs.compute_scores_batch(pairs)  # ensure rows + model are loaded
+        fs.compute_scores_batch(pairs)
 
         fs._load_models()
         model = fs._MODEL_CACHE["rf"]
@@ -154,31 +147,12 @@ def test_the_forest_is_asked_once_per_tree_not_once_per_row(app):
             type(model.estimators_[0]).predict = real_predict
 
     trees = len(model.estimators_)
-    # TWO passes over the forest are expected, not one:
-    #   1. rf_model.predict() visits every tree to produce the mean;
-    #   2. _tree_predictions() visits every tree again for the spread
-    #      that confidence_level is derived from.
-    #
-    # They could be collapsed into one -- the forest's prediction IS
-    # the mean over trees -- and measured that way they agree to about
-    # 3e-14. But floating-point accumulation order differs, so the two
-    # are not bit-identical, and a value sitting exactly on a rounding
-    # or cluster-threshold boundary could flip. The batch already
-    # turned ~20s into ~0.07s; halving that again is not worth trading
-    # away "the fast path returns exactly what the slow path returns".
-    #
-    # What matters is that this is a function of the FOREST SIZE and
-    # not of the batch size. Before batching it was 500 x trees.
     assert calls["n"] <= 2 * trees, (
         f"{calls['n']} per-tree predicts for {len(pairs)} pairs over {trees} trees "
         f"-- expected at most two passes over the forest regardless of batch size, "
         f"so the per-row predicts are back"
     )
 
-
-# ---------------------------------------------------------------------
-# 2. Newest-per-combo is resolved by the database
-# ---------------------------------------------------------------------
 
 def test_latest_market_data_returns_the_newest_row_per_combo(app):
     """Behaviour first: the SQL version has to agree with what the old
@@ -228,10 +202,6 @@ def test_the_whole_history_is_not_loaded_to_answer_it(app):
     assert len(latest) == 15
     assert loaded["n"] <= 5, f"{loaded['n']} separate market_data SELECTs to build 15 rows"
 
-
-# ---------------------------------------------------------------------
-# 3. The response cache keys on the data, not on a clock
-# ---------------------------------------------------------------------
 
 class _FakeCache:
     """Stands in for Flask-Caching so the KEYING logic can be tested
@@ -396,7 +366,6 @@ def test_a_repeated_batch_is_served_from_the_result_cache_until_the_data_changes
         assert again == first
         assert cached_queries <= 2, f"a cached batch still took {cached_queries} queries"
 
-        # Callers get copies: editing one result must not edit the cache.
         again[0]["saturation_index"] = -1
         assert compute_scores_batch(pairs)[0]["saturation_index"] == first[0]["saturation_index"]
 

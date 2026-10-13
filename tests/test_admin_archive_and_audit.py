@@ -56,15 +56,6 @@ CHROME_ON_WINDOWS = (
 def app():
     app = create_app("testing")
 
-    # ONE CLIENT'S SIGN-IN MUST NOT LEAK INTO ANOTHER'S REQUEST.
-    # The fixture keeps a single app context pushed for the whole test,
-    # and Flask reuses an already-pushed app context for every request
-    # instead of creating one per request as it does in production. So
-    # flask.g -- where Flask-Login caches the signed-in user -- survives
-    # from one request to the next, and the admin's identity would
-    # carry into the SME's request (and vice versa). These tests sign
-    # in as several people, so each request starts from its own cookie,
-    # exactly as it would on a real server.
     @app.before_request
     def _forget_cached_login():
         from flask import g
@@ -129,10 +120,6 @@ def _is_archived(model, pk):
     return get_including_archived(model, pk).is_archived
 
 
-# =====================================================================
-# 1. The delete routes are gone
-# =====================================================================
-
 def test_no_delete_endpoint_is_registered(app):
     endpoints = set(app.view_functions)
     for gone in ("admin.delete_user", "admin.delete_lgu_data", "admin.delete_market_data"):
@@ -166,12 +153,6 @@ def test_no_page_offers_a_delete_button(app, admin_client, sme):
         assert "confirm(" not in body, f"{url} still uses a browser confirm() dialog"
 
 
-# =====================================================================
-# 2. WHY is required
-# =====================================================================
-
-# Each of these must be refused. "a     b" collapses to "a b" -- two
-# letters padded out with spaces are not a five-character reason.
 NOT_A_REASON = ["", "    ", "ok", "abcd", "a     b", "  abcd  ", "\n\n\t  \n"]
 
 
@@ -242,10 +223,6 @@ def test_archiving_and_restoring_a_data_row_require_a_reason(app, admin_client, 
     assert not _is_archived(model, pk)
 
 
-# =====================================================================
-# 3. Archived accounts
-# =====================================================================
-
 def test_an_archived_account_cannot_sign_in_and_can_after_restore(app, admin_client, sme):
     admin_client.post(f"/admin/users/{sme.user_id}/archive", data={"reason": "Duplicate account"})
 
@@ -301,8 +278,6 @@ def test_the_users_page_splits_current_and_archived(app, admin_client, sme, admi
     assert sme.email not in current
     assert sme.email in archived
     assert "Closed the business" in archived
-    # Who archived it: the administrator's name, with the email masked
-    # on screen (IT expert review: confidential values are not displayed).
     from app.utils.privacy import mask_email
 
     assert admin.name in archived and mask_email(admin.email) in archived, (
@@ -329,16 +304,10 @@ def test_the_dashboard_counts_active_and_archived_users_separately(app, admin_cl
     db.session.commit()
 
     body = admin_client.get("/admin/dashboard").get_data(as_text=True)
-    # The Accounts card counts accounts in circulation; the archived one is
-    # counted on the Suspended card's "N archived" line instead.
     card = re.sub(r"\s+", " ", body[body.index("> Accounts</div>"):body.index("Online now")])
-    assert re.search(r'dss-stat-value">\s*2\s*<', card), card     # admin + two@, not the archived one
+    assert re.search(r'dss-stat-value">\s*2\s*<', card), card
     assert "1 archived" in re.sub(r"\s+", " ", body)
 
-
-# =====================================================================
-# 4. Archived data rows leave the analysis -- and nothing is destroyed
-# =====================================================================
 
 def test_an_archived_market_row_leaves_the_scoring_lookups(app, admin_client):
     from app.services.forecasting_service import _latest_market_rows, reconciled_competitor_counts
@@ -415,9 +384,6 @@ def test_a_forecast_survives_its_market_and_lgu_rows_being_archived(app, admin_c
     assert kept.market_data is not None and kept.market_data.market_id == market_id
     assert kept.market_data.competitor_count == 33
     assert kept.lgu_data is not None and kept.lgu_data.lgu_id == lgu_id
-    # ...while the row itself really is out of circulation. A query, not
-    # session.get(): the lazy load above put the row in the identity
-    # map, and get() would hand that back without asking the database.
     assert MarketData.query.filter_by(market_id=market_id).first() is None
 
 
@@ -453,10 +419,6 @@ def test_the_datasets_page_lists_archived_records_with_restore(app, admin_client
     assert "cascade" not in body.lower(), "the old deletion copy is still on the page"
 
 
-# =====================================================================
-# 5. The five W's
-# =====================================================================
-
 def test_an_admin_archive_writes_all_five_ws(app, admin_client, admin, sme):
     before = datetime.utcnow() - timedelta(seconds=5)
     admin_client.post(
@@ -469,23 +431,18 @@ def test_an_admin_archive_writes_all_five_ws(app, admin_client, admin, sme):
     assert len(rows) == 1
     row = rows[0]
 
-    # WHO
     assert row.user_id == admin.user_id
     assert row.actor_name == "Ada Admin"
     assert row.actor_role == "Admin"
-    # WHAT
     assert row.action == "admin_archive_user"
     assert row.target_type == "User"
     assert row.target_id == str(sme.user_id)
     assert row.target_label == sme.email
-    # WHEN
     assert row.created_at is not None and row.created_at >= before
-    # WHERE
     assert row.ip_address == "127.0.0.1"
     assert row.http_method == "POST"
     assert row.route == f"/admin/users/{sme.user_id}/archive"
     assert row.user_agent == CHROME_ON_WINDOWS
-    # WHY -- exactly what the admin typed
     assert row.reason == "Duplicate account, owner confirmed by phone"
 
 
@@ -503,7 +460,7 @@ def test_a_dataset_archive_names_the_row_it_touched(app, admin_client):
 def test_log_action_outside_a_request_still_writes_and_invents_no_where(app, sme):
     from app.utils.audit import log_action
 
-    log_action("nightly_sweep", details="background job")   # must not raise
+    log_action("nightly_sweep", details="background job")
     log_action("register", details="from a script", user_id=sme.user_id)
 
     job = _audit_rows("nightly_sweep")[0]
@@ -528,7 +485,7 @@ def test_a_target_is_logged_with_its_own_primary_key(app, admin, sme):
     )
     db.session.add(profile)
     db.session.commit()
-    assert profile.sme_id != sme.user_id    # otherwise this test proves nothing
+    assert profile.sme_id != sme.user_id
 
     log_action("update_plan", target=profile)
     entry = _audit_rows("update_plan")[0]
@@ -564,10 +521,6 @@ def test_describe_device():
     assert describe_device(None) is None
     assert describe_device("") is None
 
-
-# =====================================================================
-# 6. The audit page: filters, legacy rows, export
-# =====================================================================
 
 def _entry(action, details, *, user=None, role=None, when=None, **extra):
     row = AuditLog(
@@ -634,7 +587,6 @@ def test_an_unknown_action_still_renders(app, admin_client):
 
 
 def test_the_date_filter_uses_philippine_dates(app, admin_client, sme):
-    # 17:00 UTC on Sep 30 is 01:00 on Oct 1 in Tarlac.
     _entry("run_forecast", "MARK-late-night", user=sme, role="SME", when=datetime(2026, 9, 30, 17, 0))
 
     assert "MARK-late-night" in _audit_body(admin_client, date_from="2026-10-01", date_to="2026-10-01")
@@ -677,10 +629,6 @@ def test_the_csv_export_is_the_filtered_set(app, admin_client, sme):
     exported = _audit_rows("export_audit_log")
     assert len(exported) == 1 and "action=run_forecast" in exported[0].details
 
-
-# =====================================================================
-# 7. Admin only
-# =====================================================================
 
 @pytest.mark.parametrize("role", ["SME", "LGU"])
 def test_every_new_admin_route_refuses_non_admins(app, role, sme):

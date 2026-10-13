@@ -19,9 +19,6 @@ from app.models.archive import HiddenWhenArchived
 
 
 class MarketData(HiddenWhenArchived, db.Model):
-    # Archived rather than deleted -- see app/models/archive.py. Deleting
-    # used to CASCADE through forecast_result.market_id and silently remove
-    # every forecast ever built on the row.
     __tablename__ = "market_data"
 
     market_id = db.Column(db.Integer, primary_key=True)
@@ -29,7 +26,7 @@ class MarketData(HiddenWhenArchived, db.Model):
     location = db.Column(db.String(150), nullable=False)
     competitor_count = db.Column(db.Integer)
     population_density = db.Column(db.Numeric(10, 2))
-    historical_success_rate = db.Column(db.Numeric(5, 2))  # 0.00-1.00 fraction
+    historical_success_rate = db.Column(db.Numeric(5, 2))
     foot_traffic_index = db.Column(db.Numeric(6, 2))
     average_rent = db.Column(db.Numeric(10, 2))
     source = db.Column(

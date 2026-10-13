@@ -63,11 +63,6 @@ def _url(app, endpoint, **kwargs):
         return url_for(endpoint, **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# 1. Saturation map tooltip
-# ---------------------------------------------------------------------------
-
-
 def _map_js():
     path = os.path.join(os.path.dirname(__file__), "..", "app", "static", "js", "map.js")
     with open(path, "r", encoding="utf-8") as f:
@@ -85,11 +80,6 @@ def test_detail_panel_still_shows_the_demand_figures():
     """Removing it from the tooltip must not take it off the detail
     panel, where it is a tidy labelled row rather than an overlay."""
     assert "demandDetailHtml" in _map_js()
-
-
-# ---------------------------------------------------------------------------
-# 2. ROI timeframe
-# ---------------------------------------------------------------------------
 
 
 def test_roi_takes_no_revenue_input():
@@ -131,11 +121,6 @@ def test_roi_always_returns_a_range_not_a_point():
     assert roi["label"] == f"{roi['low_months']}-{roi['high_months']} months"
 
 
-# ---------------------------------------------------------------------------
-# 3. Recommendations page
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def sme_with_plan(app):
     with app.app_context():
@@ -163,7 +148,6 @@ def test_summary_counts_cover_every_barangay_scored_not_the_saved_plans(app):
             + result["low_opportunity_count"] + result["saturated_count"]
         )
         assert tier_total == len(locations), "every scored barangay lands in exactly one tier"
-        # The counts must describe the whole city, not just the page.
         assert result["high_opportunity_count"] >= len(
             [o for o in result["opportunities"] if o["opportunity_type"] == "High Opportunity"]
         )
@@ -203,7 +187,6 @@ def test_only_enterable_tiers_are_ever_recommended(app):
         )
         offered = {o["opportunity_type"] for o in result["opportunities"]}
         assert offered <= set(RECOMMENDABLE_TIERS)
-        # And the count matches the two recommendable tiers exactly.
         assert result["recommended_count"] == (
             result["high_opportunity_count"] + result["moderate_opportunity_count"]
         )
@@ -217,11 +200,9 @@ def test_recommendations_page_shows_roi_and_explore_all(app, sme_with_plan):
         body = client.get(url).get_data(as_text=True)
         assert "ROI Timeframe" in body
         assert "Est. Break-even" not in body, "the old label should be gone everywhere"
-        # No explanatory caption under the ROI value any more.
         assert "assumed net margin, adjusted" not in body
         assert "Explore More Recommendations" in body
         assert "AI-Recommended Locations" in body
-        # At least five cards, per the page's own guarantee.
         assert body.count("Ranked on") >= 5
 
         expanded = client.get(url + "?all=1").get_data(as_text=True)
@@ -244,9 +225,7 @@ def test_an_ai_recommendation_can_be_saved_as_a_real_plan(app, sme_with_plan):
         assert SmeProfile.query.count() == before + 1
         created = SmeProfile.query.filter_by(location="Matatalaib").one()
         assert created.industry_type == "Food and Beverage"
-        # Parameters carry over from the plan it was scored against.
         assert float(created.startup_capital or 0) == 20000
-        # And it is forecast + bookmarked, so it behaves like any plan.
         assert ForecastResult.query.filter_by(sme_id=created.sme_id).count() >= 1
         assert PlanSave.query.count() >= 1
 
@@ -272,11 +251,6 @@ def test_saving_rejects_a_location_the_system_does_not_know(app, sme_with_plan):
             "industry_type": "Food and Beverage", "location": "${p.location}",
         }, follow_redirects=True)
         assert SmeProfile.query.count() == before
-
-
-# ---------------------------------------------------------------------------
-# 4. Trend Reports -- one dashboard, and the period control
-# ---------------------------------------------------------------------------
 
 
 def test_sme_and_lgu_get_the_same_city_wide_dashboard(app):
@@ -314,8 +288,6 @@ def test_the_month_picker_moves_the_whole_window(app):
 
         assert march["period"]["as_of"] == "2026-03"
         assert august["period"]["as_of"] == "2026-08"
-        # Labels carry the YEAR now -- the picker reaches back to 2020,
-        # so a bare "Mar" would not say WHICH March.
         assert march["monthly_trends"]["labels"][-1] == "Mar 2026"
         assert august["monthly_trends"]["labels"][-1] == "Aug 2026"
         assert march["market_quarterly"]["labels"] != august["market_quarterly"]["labels"]
@@ -350,7 +322,7 @@ def test_kpi_cards_report_a_real_month_over_month_change(app):
         assert overview["as_of_label"] == "August 2026"
         assert overview["previous_label"] == "July 2026"
         assert card["value"] == 130
-        assert card["delta_percent"] == 30.0  # 100 -> 130
+        assert card["delta_percent"] == 30.0
         assert card["measured"] is True
 
 
@@ -383,7 +355,6 @@ def test_trend_page_uses_a_real_month_picker_not_a_dropdown(app):
         assert 'type="month"' in body
         assert 'id="trendMonth"' in body
         assert 'id="trendPeriod"' not in body, "the old dropdown should be gone"
-        # Bounded so nobody can ask for a month that hasn't happened.
         assert 'max="' in body and 'min="' in body
 
 
@@ -402,7 +373,6 @@ def test_a_longer_window_does_not_invent_history(app):
         long = trends.get_market_quarterly_performance("Food and Beverage", quarters=13)
 
         assert len(long["labels"]) > len(short["labels"])
-        # The extra depth is projection, not newly-discovered measurement.
         assert long["measured_quarters"] == short["measured_quarters"]
         assert sum(long["projected"]) > sum(short["projected"])
 
@@ -419,6 +389,5 @@ def test_quarterly_endpoint_honours_the_chosen_month(app):
         assert march["labels"] != august["labels"]
         assert march["labels"][-1] == "Q1 2026"
         assert august["labels"][-1] == "Q3 2026"
-        # Both series the combined Figure 4.1 chart draws.
         for payload in (march, august):
             assert "businesses" in payload and "growth_rate_percent" in payload

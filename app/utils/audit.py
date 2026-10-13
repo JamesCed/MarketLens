@@ -49,7 +49,7 @@ def _primary_key(target):
         values = [v for v in values if v is not None]
         if values:
             return values[0] if len(values) == 1 else "/".join(str(v) for v in values)
-    except Exception:  # noqa: BLE001 -- not a mapped class; fall through
+    except Exception:
         pass
     return getattr(target, "id", None)
 
@@ -92,7 +92,7 @@ def _actor(user_id):
             user = db.session.get(User, user_id)
             if user is not None:
                 return user.user_id, user.name, user.role
-    except Exception:  # noqa: BLE001 -- identifying the actor must never break logging
+    except Exception:
         pass
     return user_id, None, None
 
@@ -104,11 +104,8 @@ def _where():
         return None, None, None, None
     try:
         agent = (request.headers.get("User-Agent") or "")[:255] or None
-        # request.path, not the full URL: a query string can carry an
-        # email address or a search term that has no business in a
-        # permanent log.
         return request.remote_addr, request.method, (request.path or "")[:255], agent
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None, None, None, None
 
 
@@ -119,7 +116,7 @@ def default_reason(action):
         from app.utils.audit_labels import purpose_for
 
         return purpose_for(action)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -140,7 +137,7 @@ def _changes_json(changes):
 
     try:
         return json.dumps(changes, ensure_ascii=False, default=str)[:20000]
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -190,5 +187,5 @@ def log_action(action, details=None, user_id=None, *, target=None, target_type=N
         )
         db.session.add(entry)
         db.session.commit()
-    except Exception:  # noqa: BLE001
+    except Exception:
         db.session.rollback()

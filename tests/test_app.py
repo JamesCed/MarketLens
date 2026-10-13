@@ -41,8 +41,6 @@ def test_login_page_loads(client):
 
 
 def test_register_and_login_sme(client, app):
-    # SME sign-up now carries the first business plan -- business name,
-    # industry and location are required. See tests/test_signup_flow.py.
     response = client.post(
         "/register",
         data={
@@ -52,7 +50,6 @@ def test_register_and_login_sme(client, app):
             "industry_type": "Food and Beverage",
             "location": "Poblacion",
             "business_stage": "startup",
-            # Required since the plan viability model reads it.
             "capital": "100000",
         },
         follow_redirects=True,

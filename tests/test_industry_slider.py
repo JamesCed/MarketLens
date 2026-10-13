@@ -38,14 +38,9 @@ from app.ml.seed_data import BARANGAY_NAMES
 from app.models import SmeProfile, SystemSetting, User
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EDUCATION = "Education"                      # not one of the featured eight
-RETAIL = "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"  # featured, 2nd
+EDUCATION = "Education"
+RETAIL = "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles"
 
-# Every `bi` name below was checked against bootstrap-icons 1.11.3 -- the
-# version base.html loads -- by finding `.bi-<name>::before` in that
-# release's CSS (fetched from cdn.jsdelivr.net). A test cannot fetch the
-# CDN, so the checked set is written down here: changing an icon in
-# INDUSTRY_DISPLAY means checking the new name the same way and adding it.
 ICONS_VERIFIED_IN_1_11_3 = frozenset({
     "bi-tree-fill", "bi-minecart-loaded", "bi-gear-wide-connected", "bi-lightning-charge-fill",
     "bi-droplet-fill", "bi-cone-striped", "bi-shop", "bi-truck", "bi-building", "bi-cup-hot-fill",
@@ -54,8 +49,6 @@ ICONS_VERIFIED_IN_1_11_3 = frozenset({
     "bi-bar-chart-fill", "bi-chevron-left", "bi-chevron-right",
 })
 
-# Emoji and pictographs, plus the variation selector that turns a plain
-# symbol into an emoji ("⚙" + U+FE0F).
 EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️]")
 
 
@@ -121,10 +114,6 @@ def education_plan(app):
         return _plan(user, "Tibag Review Center", EDUCATION, "Tibag").sme_id
 
 
-# ---------------------------------------------------------------------
-# What is on the slider, and in what order
-# ---------------------------------------------------------------------
-
 def test_all_twenty_industries_are_cards_once_each(app, education_plan):
     with app.app_context():
         page = _client(app).get("/planning").get_data(as_text=True)
@@ -139,8 +128,6 @@ def test_the_plans_industry_leads_then_featured_then_the_rest(app, education_pla
     cards = _cards(page)
     assert [_industry(card) for card in cards] == _expected_order(EDUCATION)
 
-    # Only the plan's own card is current -- marked for a screen reader
-    # (aria-current) and for the eye (the ring and the "Your plan" tag).
     current = [card for card in cards if 'aria-current="true"' in card]
     assert len(current) == 1 and _industry(current[0]) == EDUCATION
     assert "dss-card-current" in current[0] and "Your plan" in current[0]
@@ -191,15 +178,9 @@ def test_the_page_still_renders_with_no_plans(app):
     assert response.status_code == 200
     cards = _cards(page)
     assert [_industry(card) for card in cards] == _expected_order()
-    # No plan, so nothing is "your plan's industry".
     assert not any('aria-current="true"' in card or "dss-card-current" in card for card in cards)
-    # The scores are for the first barangay, and the caption says so.
     assert f"These market scores are for <strong>{BARANGAY_NAMES[0]}</strong>" in page
 
-
-# ---------------------------------------------------------------------
-# The slider's controls
-# ---------------------------------------------------------------------
 
 def test_the_track_is_a_focusable_labelled_region(app, education_plan):
     with app.app_context():
@@ -210,9 +191,7 @@ def test_the_track_is_a_focusable_labelled_region(app, education_plan):
     attrs = track.group(1)
     for attr in ('id="industryTrack"', 'tabindex="0"', 'role="region"', 'aria-label="Industries"'):
         assert attr in attrs, attr
-    # The tour step still finds the slider.
     assert 'data-tour="industry-cards"' in page
-    # The position count is a polite live region.
     assert re.search(r'id="industrySliderStatus"[^>]*aria-live="polite"', slider)
     assert "js/industry_slider.js" in page
 
@@ -232,7 +211,6 @@ def test_previous_and_next_are_icon_only_and_labelled(app, education_plan, which
     assert f'aria-label="{label}"' in attrs and f'title="{label}"' in attrs
     assert 'aria-controls="industryTrack"' in attrs
     assert re.search(rf'<i class="bi {icon}" aria-hidden="true"></i>', inner)
-    # Icon only: nothing but the icon inside the button.
     assert re.sub(r"<[^>]+>", "", inner).strip() == ""
 
 
@@ -243,10 +221,6 @@ def test_the_buttons_are_hidden_until_the_script_runs(app, education_plan):
         page = _client(app).get("/planning").get_data(as_text=True)
     assert re.search(r'<div class="dss-industry-slider-nav" data-industry-slider-nav hidden>', _slider(page))
 
-
-# ---------------------------------------------------------------------
-# Icons and scores on the cards
-# ---------------------------------------------------------------------
 
 def test_every_card_has_a_bootstrap_icon_and_no_emoji(app, education_plan):
     with app.app_context():
@@ -262,7 +236,6 @@ def test_every_card_has_a_bootstrap_icon_and_no_emoji(app, education_plan):
             card)
         assert tile, f"{name}: no icon tile"
         assert tile.groups() == (display["hue"], display["bi"])
-        # The short label is the visible name; the full one is in the tooltip.
         assert f'<span class="dss-industry-name">{display["short"].replace("&", "&amp;")}</span>' in card
 
 
@@ -296,8 +269,6 @@ def test_the_arrow_and_score_colour_are_described_in_words(app, education_plan, 
         assert re.search(rf'<strong class="dss-stat-pill {pill}">{score:.1f}</strong>', card), (i, score)
         assert re.search(rf'<i class="bi {arrow} [^"]*" aria-hidden="true"></i>', card), (i, score)
         assert f'<span class="visually-hidden">({words})</span>' in card
-        # The arrow encodes the score's level, not a change over time,
-        # so nothing on the card claims it is "rising" or "falling".
         assert "rising" not in card and "falling" not in card
 
 
@@ -313,8 +284,6 @@ def test_all_twenty_are_scored_in_one_batch_call(app, education_plan, monkeypatc
         return real(pairs, *args, **kwargs)
 
     with app.app_context():
-        # Signed in first: signing in lands on Home, which is a visit of
-        # its own and not the one being counted.
         client = _client(app)
         monkeypatch.setattr(sme_controller, "compute_scores_batch", spy)
         page = client.get("/planning").get_data(as_text=True)
@@ -325,16 +294,11 @@ def test_all_twenty_are_scored_in_one_batch_call(app, education_plan, monkeypatc
     assert len(_cards(page)) == len(pairs)
 
 
-# ---------------------------------------------------------------------
-# The display table behind the icons
-# ---------------------------------------------------------------------
-
 def test_every_section_has_its_own_icon_and_hue():
     icons = [INDUSTRY_DISPLAY[name]["bi"] for name in BUSINESS_TYPES]
     hues = [INDUSTRY_DISPLAY[name]["hue"] for name in BUSINESS_TYPES]
     assert len(set(icons)) == len(BUSINESS_TYPES), "two sections share an icon"
     assert len(set(hues)) == len(BUSINESS_TYPES), "two sections share a colour"
-    # The emoji stays for the pages that still use it (the LGU dashboard).
     assert all(INDUSTRY_DISPLAY[name]["icon"] for name in BUSINESS_TYPES)
     assert DEFAULT_INDUSTRY_DISPLAY["bi"] and DEFAULT_INDUSTRY_DISPLAY["hue"] not in hues
 
@@ -374,7 +338,6 @@ def test_the_track_snaps_scrolls_on_its_own_and_respects_reduced_motion():
     assert "overflow-x: auto" in track
     assert "scroll-snap-type: x mandatory" in track
     assert re.search(r"\.dss-industry-item\s*\{[^}]*scroll-snap-align: start", css)
-    # 4 / 3 / 2 cards from 1200 / 992 / 576px, and one and a bit below.
     assert "flex: 0 0 calc((100% - 1rem) / 1.2)" in css
     for width, basis in (("576px", "(100% - 1rem) / 2"), ("992px", "(100% - 2rem) / 3"),
                          ("1200px", "(100% - 3rem) / 4")):
@@ -397,14 +360,9 @@ def test_the_sidebar_footer_settings_link_is_white_when_active():
         r"body\.dss-skin \.dss-sidebar-footer \.dss-nav-link:hover,\s*"
         r"body\.dss-skin \.dss-sidebar-footer \.dss-nav-link\.active \{ color: #fff; \}", skin)
     assert rule
-    # ...and it comes AFTER the dimmer footer colour it has to beat.
     assert skin.index(rule.group(0)) > skin.index(
         "body.dss-skin .dss-sidebar-footer .dss-nav-link { color: rgba(226,236,246,.72); }")
 
-
-# ---------------------------------------------------------------------
-# The script's pure arithmetic (when a JavaScript runtime is available)
-# ---------------------------------------------------------------------
 
 def _js_runtime():
     """`node`, or VS Code's Electron run as Node -- whichever exists."""
@@ -444,7 +402,6 @@ console.log(JSON.stringify(out));
     assert result.returncode == 0, result.stderr[-600:]
     out = json.loads(result.stdout.strip().splitlines()[-1])
     assert out["four"] == {"first": 0, "last": 3}
-    # A 20px sliver of the second card is a hint, not "showing" it.
     assert out["peek"] == {"first": 0, "last": 0}
     assert out["none"] is None
     assert out["label4"] == "Showing 1–4 of 20"

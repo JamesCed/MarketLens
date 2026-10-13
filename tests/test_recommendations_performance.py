@@ -116,10 +116,6 @@ def _login(app):
     return client
 
 
-# ---------------------------------------------------------------------
-# 1. The batch is the same scorer
-# ---------------------------------------------------------------------
-
 def test_the_city_sweep_returns_what_the_per_barangay_loop_returned(app):
     """The whole optimisation rests on this. Recommendations are what
     an SME acts on; if the fast path disagrees with the slow one by so
@@ -144,7 +140,7 @@ def test_the_page_does_not_issue_a_query_per_barangay(app):
     with app.app_context():
         _seed()
         client = _login(app)
-        client.get("/recommendations")  # warm the model and the sweep
+        client.get("/recommendations")
 
         counter, stop = _counting(app)
         try:
@@ -173,7 +169,7 @@ def test_the_forest_is_entered_once_for_the_whole_city(app):
             pytest.skip("no trained model on disk in this environment")
 
         client = _login(app)
-        client.get("/recommendations")  # warm everything
+        client.get("/recommendations")
 
         from app.services.trend_analytics_service import clear_trend_caches
 
@@ -197,10 +193,6 @@ def test_the_forest_is_entered_once_for_the_whole_city(app):
         f"expected one batched pass regardless of how many barangays there are"
     )
 
-
-# ---------------------------------------------------------------------
-# 2. The sweep is memoised on the data, never on a clock
-# ---------------------------------------------------------------------
 
 def test_a_reload_does_not_re_score_the_city(app):
     from app.services import location_opportunity_service as los
@@ -332,10 +324,6 @@ def test_a_different_barangay_list_is_not_served_another_ones_scores(app):
     assert {r["location"] for r in second} == set(BARANGAY_NAMES[6:12])
 
 
-# ---------------------------------------------------------------------
-# 3. The forest predicts on one thread, reproducibly
-# ---------------------------------------------------------------------
-
 def test_the_loaded_forest_predicts_on_one_thread(app):
     """n_jobs=-1 is right for training and wrong for serving. See
     forecasting_service._pin_to_one_thread for all three reasons."""
@@ -373,10 +361,6 @@ def test_the_same_plan_scores_the_same_way_twice(app):
             )
 
 
-# ---------------------------------------------------------------------
-# 4. Boot footprint
-# ---------------------------------------------------------------------
-
 def test_pandas_is_not_imported_just_by_starting_the_app():
     """40.3 MB measured, for a library used on one admin upload page.
     It has to be loaded on first use, not on every boot of every
@@ -404,10 +388,6 @@ def test_pandas_is_not_imported_just_by_starting_the_app():
         env={
             **os.environ,
             "TEST_DATABASE_URL": "sqlite:///:memory:",
-            # A fresh interpreter has to be able to import what this one
-            # can. Handing it this process's sys.path covers a plain
-            # virtualenv and a test runner that assembled the path
-            # itself, without the test caring which it is running under.
             "PYTHONPATH": os.pathsep.join(p for p in sys.path if p),
         },
     )
@@ -431,10 +411,6 @@ def test_the_upload_page_still_gets_its_pandas(app):
     assert hasattr(data_import_service._pandas(), "read_csv")
 
 
-# ---------------------------------------------------------------------
-# 5. The other pages built on the same engine
-# ---------------------------------------------------------------------
-
 def test_the_home_page_scores_its_industry_cards_in_one_batch(app):
     """SME Home draws a card per featured industry for one barangay. It
     is the first page after signing in, and it had the same per-card
@@ -444,7 +420,7 @@ def test_the_home_page_scores_its_industry_cards_in_one_batch(app):
     with app.app_context():
         _seed()
         client = _login(app)
-        client.get("/planning")  # warm
+        client.get("/planning")
 
         calls = {"n": 0}
         real = fs.compute_scores

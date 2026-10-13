@@ -1,8 +1,12 @@
 {#
   shared/_quick_links.html
   --------------------------
-  PSA data source, DTI, the Discord community and Contact Us, as icons in
-  the top bar of every signed-in page.
+  PSA data source, the Discord community and Contact Us, as icons in the
+  top bar of every signed-in page.
+
+  The "DTI-Verified" link was removed (developer's note, October 2026):
+  MarketLens is not verified or endorsed by the DTI, and a badge saying
+  so could mislead users into thinking it is.
 
   They used to be a dark footer bar at the foot of the dashboards. The IT
   expert's review: the footer looked random, and on long pages nobody
@@ -19,10 +23,6 @@
   <a href="https://psa.gov.ph" target="_blank" rel="noopener" class="dss-quick-link"
      title="PSA Data Source (opens psa.gov.ph)" aria-label="PSA Data Source">
     <i class="bi bi-globe2" aria-hidden="true"></i>
-  </a>
-  <a href="https://www.dti.gov.ph" target="_blank" rel="noopener" class="dss-quick-link"
-     title="DTI-Verified industry categories (opens dti.gov.ph)" aria-label="DTI-Verified">
-    <i class="bi bi-patch-check" aria-hidden="true"></i>
   </a>
   <a href="{{ url_for('community.discord') }}" target="_blank" rel="noopener" class="dss-quick-link"
      data-tour="community-link" title="Community Forum on Discord (opens in a new tab)" aria-label="Community Forum">

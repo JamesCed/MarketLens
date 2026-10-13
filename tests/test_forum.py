@@ -34,9 +34,6 @@ import pytest
 from app.services import forum_moderation as fm
 
 
-# =====================================================================
-# 1. The content filter
-# =====================================================================
 @pytest.mark.parametrize("text", [
     "puta", "puuuuta ka", "P.U.T.A", "p-u-t-a", "p u t a n g i n a", "Putang ina", "Tanginamo talaga",
     "put4ngin4", "putá", "GAGO!", "okay,gago", "ulol", "Ukinnam",
@@ -46,7 +43,6 @@ def test_profanity_is_blocked_including_disguises(text):
     result = fm.check_text(text)
     assert result.verdict == fm.BLOCK, f"{text!r} was not blocked"
     assert "profanity" in result.flags
-    # The author is told what to change, not just "no".
     assert result.messages and "swear" in result.messages[0].lower()
 
 
@@ -127,7 +123,6 @@ def test_personal_contact_details_are_held(text, flag):
     result = fm.check_text(text)
     assert result.verdict == fm.REVIEW
     assert flag in result.flags
-    # An email's domain is not also reported as a link.
     assert "external_link" not in result.flags
 
 
@@ -141,7 +136,6 @@ def test_spam_heuristics_hold_content():
     assert "repeated_text" in fm.check_text("buy buy buy buy now").flags
     many = " ".join(f"https://www.dti.gov.ph/page{i}" for i in range(6))
     assert fm.check_text(many).flags == ["too_many_links"]
-    # Short shouting and divider lines are not spam.
     assert fm.check_text("DTI OK NA PO").is_clean
     assert fm.check_text("Menu\n----------\nAdobo").is_clean
 
@@ -149,10 +143,10 @@ def test_spam_heuristics_hold_content():
 @pytest.mark.parametrize("verdict, ai, is_admin, expected", [
     (fm.CLEAN, "approve", False, "approved"),
     (fm.CLEAN, "review", False, "pending"),
-    (fm.CLEAN, "reject", False, "pending"),     # the AI never rejects
-    (fm.CLEAN, None, False, "pending"),         # AI off or failed -> a person approves
-    (fm.REVIEW, "approve", False, "pending"),   # the AI cannot overrule the filter
-    (fm.REVIEW, None, True, "approved"),        # admins are the moderators
+    (fm.CLEAN, "reject", False, "pending"),
+    (fm.CLEAN, None, False, "pending"),
+    (fm.REVIEW, "approve", False, "pending"),
+    (fm.REVIEW, None, True, "approved"),
 ])
 def test_initial_status_policy(verdict, ai, is_admin, expected):
     result = fm.FilterResult(verdict, ["x"] if verdict != fm.CLEAN else [], [])

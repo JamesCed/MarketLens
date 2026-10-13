@@ -60,10 +60,6 @@ def _clean_llm_state():
     llm_service.reset_client_cache()
 
 
-# ---------------------------------------------------------------------
-# 1. The dependency that made all of this moot
-# ---------------------------------------------------------------------
-
 def test_httpx_is_held_below_the_release_that_breaks_the_openai_client():
     """openai 1.51.2 calls httpx.Client(proxies=...) whether or not a
     proxy is configured. httpx 0.28.0 removed that argument, so the
@@ -88,10 +84,6 @@ def test_httpx_is_held_below_the_release_that_breaks_the_openai_client():
         f"while openai=={openai_pin.group(1)} is in use"
     )
 
-
-# ---------------------------------------------------------------------
-# 2. The switch the deployment guide promises
-# ---------------------------------------------------------------------
 
 def test_the_environment_variable_turns_the_llm_on(app, monkeypatch):
     """USE_LLM_RECOMMENDATIONS is what .env, render.yaml and
@@ -133,10 +125,6 @@ def test_without_the_variable_the_admin_toggle_still_decides(app, monkeypatch):
         SystemSetting.set("use_llm_recommendations", "false")
         assert llm_recommendations_enabled() is False
 
-
-# ---------------------------------------------------------------------
-# 3. Failures are recorded, not swallowed
-# ---------------------------------------------------------------------
 
 def test_a_missing_key_says_so_instead_of_saying_nothing(app):
     from app.services import llm_service
@@ -208,18 +196,6 @@ def test_a_reply_that_is_not_json_is_reported_as_a_parse_failure(app, monkeypatc
 
     assert failure["stage"] == "parse"
 
-
-# ---------------------------------------------------------------------
-# 3b. The native Gemini provider
-# ---------------------------------------------------------------------
-# Google AI Studio changed key issuance on 28 May 2026: new keys are
-# "auth keys" (AQ.Ab...) bound to a Cloud service account. Sent the way
-# the OpenAI SDK sends a key -- Authorization: Bearer -- Gemini's
-# OpenAI-compatible endpoint refuses them, with 400 "Multiple
-# authentication credentials received" or a 401 that reads like a bad
-# key. The native endpoint takes the same key as x-goog-api-key and
-# works. The older AIza keys that did work over Bearer are being
-# retired, so this is the path that has a future.
 
 class _FakeResponse:
     def __init__(self, status_code, payload=None, text=""):
@@ -313,7 +289,6 @@ def test_gemini_request_is_written_for_gemini_3_models(app, monkeypatch):
         monkeypatch.setattr(requests, "post", fake_post)
         assert llm_service._generate_with_gemini("hi") == '{"ok": true}'
         connect, read = seen["timeout"]
-        # Inside a request's time budget, no send waits past its end.
         with llm_service.ai_time_budget(20):
             assert llm_service._generate_with_gemini("hi") == '{"ok": true}'
         budgeted = seen["timeout"][1]
@@ -454,10 +429,6 @@ def test_no_warning_when_the_setup_is_coherent(app):
         assert "warning" not in llm_service.llm_status()
 
 
-# ---------------------------------------------------------------------
-# 4. The diagnostics endpoint, and what it must never print
-# ---------------------------------------------------------------------
-
 def test_the_status_never_returns_the_api_key(app):
     """It reports set/not-set, the length and the first four
     characters. Four is enough to tell an AI Studio key ("AIza") from
@@ -577,7 +548,7 @@ def test_a_missing_client_is_not_replaced_by_a_fallbacks_rejection(app, monkeypa
         app.config["OPENAI_API_KEY"] = "sk-or-v1-0000000000000000"
         app.config["GEMINI_API_KEY"] = "sk-or-v1-0000000000000000"
         app.config["ANTHROPIC_API_KEY"] = ""
-        monkeypatch.setitem(sys.modules, "openai", None)  # `from openai import OpenAI` now fails
+        monkeypatch.setitem(sys.modules, "openai", None)
         monkeypatch.setattr(requests, "post", lambda *a, **k: _Rejected())
 
         assert llm_service.generate_alert_summary("anything") is None
@@ -623,10 +594,6 @@ def test_an_admin_gets_the_configuration_back(app):
     assert "enabled" in payload["status"]
 
 
-# ---------------------------------------------------------------------
-# 5. The write-up is cached, because the free tier is 10 requests/minute
-# ---------------------------------------------------------------------
-
 def test_the_write_up_is_not_regenerated_for_an_unchanged_page(app, monkeypatch):
     """Google AI Studio's free Gemini tier allows roughly 10 requests a
     minute. Without caching, clicking between plans during a demo
@@ -669,7 +636,7 @@ def test_a_failed_write_up_is_not_cached(app, monkeypatch):
     def flaky(_industry, _city, cards):
         calls["n"] += 1
         if calls["n"] == 1:
-            return {}          # rate limited
+            return {}
         return {card["location"]: {"reasons": ["ai reason"], "risks": ["ai risk"],
                                    "generated_by": "llm:openai"} for card in cards}
 
@@ -686,10 +653,6 @@ def test_a_failed_write_up_is_not_cached(app, monkeypatch):
     assert calls["n"] == 2, "the empty result was cached, so the retry never happened"
     assert second["Poblacion"]["generated_by"] == "llm:openai"
 
-
-# ---------------------------------------------------------------------
-# 6. The numbers stay the model's, not the LLM's
-# ---------------------------------------------------------------------
 
 def test_the_llm_only_rewrites_wording_never_the_figures(app, monkeypatch):
     """The point of the whole design. An LLM that could move the
@@ -709,7 +672,6 @@ def test_the_llm_only_rewrites_wording_never_the_figures(app, monkeypatch):
     lying_response = _json.dumps({"cards": [{
         "location": "Poblacion",
         "reasons": ["rewritten"], "risks": ["rewritten"],
-        # every field below is an attempt to move a number
         "saturation_index": 0.0, "viability_score": 10.0,
         "competitor_count": 0, "population": 999999,
         "roi_timeframe": "immediately, honestly",
@@ -723,7 +685,6 @@ def test_the_llm_only_rewrites_wording_never_the_figures(app, monkeypatch):
 
     entry = written["Poblacion"]
 
-    # Only wording and provenance survive the parser.
     assert entry["reasons"] == ["rewritten"]
     assert entry["generated_by"] == "llm:openai"
     assert set(entry) <= {"reasons", "risks", "generated_by", "roi_timeframe"}, (
@@ -754,24 +715,6 @@ def test_a_sane_roi_window_from_the_model_is_accepted(app, monkeypatch):
 
     assert written["Poblacion"]["roi_timeframe"] == "9-14 months"
 
-
-# ---------------------------------------------------------------------
-# THE KEY FORMAT DECIDES THE TRANSPORT
-# ---------------------------------------------------------------------
-# Google retired the `AIza` Standard key for the Gemini API -- unrestricted
-# ones began being rejected on 19 June 2026, the format was end-of-lifed
-# through September 2026 -- so an AI Studio key is now an `AQ.`-prefixed
-# auth key. That format is accepted on the NATIVE endpoint
-# (x-goog-api-key) and refused on the OpenAI-compatibility endpoint,
-# where the same key sent as `Authorization: Bearer` returns HTTP 400
-# "Multiple authentication credentials received" or a 401 calling the key
-# invalid.
-#
-# A deployment that sets LLM_PROVIDER=openai, points OPENAI_BASE_URL at
-# Gemini's /openai/ path and supplies an `AQ.` key is therefore
-# guaranteed to fail its first attempt on every single call. The key's
-# own prefix says which transport can carry it, so _provider_order()
-# corrects for it.
 
 def test_an_aq_key_is_sent_natively_rather_than_as_a_bearer_token(app):
     """The correction, which is what makes an AQ. key work at all."""
@@ -815,7 +758,7 @@ def test_an_unknown_provider_name_does_not_lose_every_fallback(app):
     from app.services.llm_service import _GENERATORS, _provider_order
 
     with app.app_context():
-        app.config["LLM_PROVIDER"] = "gemeni"  # typo
+        app.config["LLM_PROVIDER"] = "gemeni"
         app.config["OPENAI_API_KEY"] = "sk-proj-0000000000000000"
 
         order = _provider_order()
@@ -834,13 +777,6 @@ def test_every_generator_is_reachable_as_a_fallback(app):
             app.config["OPENAI_API_KEY"] = "AQ.Ab0000000000000000000000000000"
             assert set(_provider_order()) == set(_GENERATORS), provider
 
-
-# ---------------------------------------------------------------------
-# THE MODEL NAME
-# ---------------------------------------------------------------------
-# A 404 on a model name and a 401 on a key produce the same visible
-# symptom -- rule-based text with no explanation -- and the natural
-# response to both is to regenerate the key, which fixes only one.
 
 def test_the_default_model_is_not_the_name_that_does_not_exist(app):
     """The default was `gemini-3-flash`, which Google does not serve:

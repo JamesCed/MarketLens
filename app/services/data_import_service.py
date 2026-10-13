@@ -33,32 +33,11 @@ on the inserted row rather than raising an error):
 """
 
 import datetime
+import functools
 
 from app.extensions import db
 from app.models import LguData, MarketData
 
-# ---------------------------------------------------------------------
-# PANDAS IS IMPORTED LAZILY, AND THAT IS WORTH 40 MB
-# ---------------------------------------------------------------------
-# pandas is used in this module and nowhere else in the application:
-# it reads the spreadsheet an LGU officer uploads on the Government
-# Data Upload page. That is an occasional administrative action, but
-# this module is imported by lgu_controller, which is registered as a
-# blueprint in create_app() -- so `import pandas` at the top of this
-# file ran on EVERY boot, in every gunicorn worker, whether or not
-# anyone ever uploaded anything.
-#
-# Measured on this codebase: bare interpreter 7.8 MB, +numpy 25.3 MB,
-# +pandas 65.6 MB. pandas alone is 40.3 MB resident, which is 8% of a
-# free Render instance's entire 512 MB, held permanently to serve a
-# page most users never open.
-#
-# So it is loaded on first use instead. The first upload of a process
-# pays the import; every other request in the app's life does not. The
-# accessor exists rather than a bare import inside each function
-# because half a dozen helpers below need it, and one cached lookup
-# reads better than six import statements -- sys.modules makes the
-# repeat calls free.
 _pd = None
 
 
@@ -81,10 +60,40 @@ MARKET_NUMERIC_COLUMNS = [
 ]
 
 
+_READ_CACHE = {}
+
+
 def _read_any(file_path):
+    """The uploaded file as a DataFrame. One upload reads the same file
+    three times (the lgu_data rows, the industry counts, the sub-category
+    counts) and parsing a large .xlsx is the slowest step of the whole
+    import, so the parsed frame is kept for the duration of the upload,
+    keyed on the file's path, size and modification time, and each caller
+    gets its own copy. process_upload drops it when the upload ends."""
+    import os
+
+    try:
+        stat = os.stat(file_path)
+        key = (os.path.abspath(file_path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        key = None
+    hit = _READ_CACHE.get("frame")
+    if key is not None and hit is not None and hit[0] == key:
+        return hit[1].copy()
     if file_path.lower().endswith(".csv"):
-        return _pandas().read_csv(file_path)
-    return _pandas().read_excel(file_path)
+        frame = _pandas().read_csv(file_path)
+    else:
+        frame = _pandas().read_excel(file_path)
+    if key is not None:
+        _READ_CACHE["frame"] = (key, frame.copy())
+    return frame
+
+
+def _records(df):
+    """Every row as a plain dict. Much faster than DataFrame.iterrows(),
+    which builds a pandas Series for each row; the loops below only ever
+    call row.get(column), which a dict answers the same way."""
+    return df.to_dict("records")
 
 
 def _normalize_columns(df):
@@ -117,7 +126,6 @@ def _impute_numeric(df, columns, errors=None):
         converted = pd.to_numeric(original, errors="coerce")
 
         if errors is not None:
-            # Became NaN but was not blank to begin with => unreadable.
             unreadable = converted.isna() & original.notna() & (
                 original.astype(str).str.strip() != ""
             )
@@ -140,25 +148,36 @@ def _impute_numeric(df, columns, errors=None):
 def _parse_date(value, default):
     if value is None or (isinstance(value, float) and _pandas().isna(value)):
         return default
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    if isinstance(value, str):
+        parsed = _parse_date_text(value.strip())
+        return default if parsed is None else parsed
     try:
         return _pandas().to_datetime(value).date()
     except Exception:
         return default
 
 
+@functools.lru_cache(maxsize=512)
+def _parse_date_text(text):
+    """A date written in a cell, or None. Cached: a register repeats the
+    same few dates on thousands of rows, and pandas' general date parser
+    is slow enough to dominate a large CSV import when called per row."""
+    try:
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        pass
+    try:
+        return _pandas().to_datetime(text).date()
+    except Exception:
+        return None
+
+
 def _cell(row, df, column):
     return row.get(column) if column in df.columns and _pandas().notna(row.get(column)) else None
-
-
-# ---------------------------------------------------------------------
-# ROW-LEVEL VALIDATION
-# ---------------------------------------------------------------------
-# The old pipeline reported one string for a whole file -- "invalid
-# literal for int() with base 10: 'N/A'" -- with no row number and no
-# column. On a 76-row barangay register that is not an error message,
-# it is a scavenger hunt. Every problem found below carries the row as
-# the uploader sees it in their spreadsheet, the column, and what was
-# actually in the cell.
 
 
 class RowError:
@@ -184,13 +203,10 @@ class RowError:
         shown = "" if self.value in (None, "") else f" (found {self.value!r})"
         return f"{where}: {self.message}{shown}"
 
-    def __repr__(self):  # pragma: no cover - debugging aid
+    def __repr__(self):
         return f"<RowError {self}>"
 
 
-# A spreadsheet's first data row is row 2 to the person looking at it:
-# row 1 is the header. Reporting pandas' 0-based index would send them
-# to the wrong line.
 _SPREADSHEET_ROW_OFFSET = 2
 
 
@@ -249,8 +265,6 @@ def _resolve_barangay(raw_value, row_number, errors):
     from app.ml.seed_data import canonical_barangay
 
     lookup = {b.casefold(): b for b in BARANGAY_NAMES}
-    # Official name however written, a known alias ("Baras" is
-    # Baras-baras), or the alternate PSA prints in parentheses.
     canonical = lookup.get(name.casefold()) or canonical_barangay(name)
     if canonical:
         return canonical
@@ -282,11 +296,9 @@ def import_lgu_data(file_path, source, uploaded_by_user_id, errors=None):
     today = datetime.date.today()
     staged = 0
 
-    for position, (_index, row) in enumerate(df.iterrows()):
+    for position, row in enumerate(_records(df)):
         row_number = position + _SPREADSHEET_ROW_OFFSET
 
-        # A wholly blank line is spreadsheet debris, not an error --
-        # trailing empty rows are almost universal in hand-kept files.
         if all(_cell(row, df, column) is None for column in df.columns):
             continue
 
@@ -335,7 +347,7 @@ def import_market_data(file_path, source, errors=None):
     today = datetime.date.today()
     staged = 0
 
-    for position, (_index, row) in enumerate(df.iterrows()):
+    for position, row in enumerate(_records(df)):
         row_number = position + _SPREADSHEET_ROW_OFFSET
 
         if all(_cell(row, df, column) is None for column in df.columns):
@@ -349,11 +361,6 @@ def import_market_data(file_path, source, errors=None):
         if location is None or not industry_type:
             continue
 
-        # historical_success_rate is a 0-1 FRACTION in the schema. A
-        # register that writes it as a percentage would silently store
-        # 85.0 where the model expects 0.85, which moves the feature by
-        # two orders of magnitude and quietly poisons every score for
-        # that barangay. Caught here rather than discovered later.
         success_rate = _as_float(_cell(row, df, "historical_success_rate"), row_number,
                                  "historical_success_rate", errors)
         if success_rate is not None and success_rate > 1.0:
@@ -383,13 +390,6 @@ def import_market_data(file_path, source, errors=None):
     return staged
 
 
-# ---------------------------------------------------------------------
-# PERMITS -> PER-INDUSTRY COMPETITOR COUNTS
-# ---------------------------------------------------------------------
-# The column names a Philippine LGU business-permit register actually
-# uses for "what trade is this". PSIC is the Philippine Standard
-# Industrial Classification; the others are what the same column gets
-# called when somebody exports it from a different system.
 _INDUSTRY_COLUMNS = ("psic_code", "psic", "industry_type", "industry",
                      "line_of_business", "business_type", "nature_of_business")
 
@@ -435,24 +435,16 @@ def derive_permit_counts(file_path):
     from app.ml.seed_data import canonical_barangay
 
     counts = {}
-    for _index, row in df.iterrows():
-        # Filed under the official name ("Baras" -> "Baras-baras"); a
-        # name that is not a Tarlac City barangay is not counted at all.
+    for row in _records(df):
         barangay = canonical_barangay(row.get("barangay"))
         raw_industry = row.get(column)
         if not barangay or raw_industry is None or str(raw_industry).strip() == "":
             continue
 
-        # A permit register writes trades however the clerk typed them
-        # ("Coffee Shop", "coffee shop / cafe", a bare PSIC code). The
-        # app's own taxonomy is the only vocabulary the rest of the
-        # system understands, so anything that cannot be mapped into it
-        # is counted nowhere rather than counted wrongly.
         industry = canonical_industry_for(str(raw_industry).strip())
         if not industry:
             continue
 
-        # Only permits that are actually in force count as competitors.
         if not _permit_in_force(row):
             continue
 
@@ -469,12 +461,24 @@ def _permit_in_force(row):
     return not status or status in _IN_FORCE_STATUSES
 
 
-# Columns that can say WHAT KIND of business a permit is for, below the
-# industry section. business_name is included on purpose: a register
-# that only says "Food and Beverage" often still names the shop
-# "Aling Nena's Bakeshop", and that is exactly the evidence needed.
 _SUBCATEGORY_TEXT_COLUMNS = ("subcategory", "line_of_business", "nature_of_business",
                              "business_type", "business_name")
+
+
+def _is_industry_identifier(raw_value):
+    """True when an industry cell is a code rather than a description:
+    an exact section name, a single section letter, or a numeric PSIC
+    code. Those say WHICH section, never what kind of business."""
+    from app.ml.constants import BUSINESS_TYPES
+
+    text = str(raw_value or "").strip()
+    if not text:
+        return True
+    if text.casefold() in {name.casefold() for name in BUSINESS_TYPES}:
+        return True
+    if len(text) == 1 and text.isalpha():
+        return True
+    return text.replace(".", "").replace("-", "").isdigit()
 
 
 def derive_permit_subcategory_counts(file_path):
@@ -500,15 +504,12 @@ def derive_permit_subcategory_counts(file_path):
     from app.ml.subcategories import match_subcategory
 
     text_columns = [c for c in _SUBCATEGORY_TEXT_COLUMNS if c in df.columns]
-    if column not in text_columns:
-        text_columns.append(column)
+    industry_is_text_column = column in text_columns
 
     from app.ml.seed_data import canonical_barangay
 
     counts = {}
-    for _index, row in df.iterrows():
-        # Filed under the official name ("Baras" -> "Baras-baras"); a
-        # name that is not a Tarlac City barangay is not counted at all.
+    for row in _records(df):
         barangay = canonical_barangay(row.get("barangay"))
         raw_industry = row.get(column)
         if not barangay or raw_industry is None or str(raw_industry).strip() == "":
@@ -516,13 +517,75 @@ def derive_permit_subcategory_counts(file_path):
         industry = canonical_industry_for(str(raw_industry).strip())
         if not industry or not _permit_in_force(row):
             continue
-        text = " ".join(str(row.get(c) or "") for c in text_columns if row.get(c) is not None)
+        parts = [str(row.get(c) or "") for c in text_columns if row.get(c) is not None]
+        if not industry_is_text_column and not _is_industry_identifier(raw_industry):
+            parts.append(str(raw_industry))
+        text = " ".join(parts)
         subcategory = match_subcategory(industry, text)
         if not subcategory:
             continue
         key = (industry, subcategory, barangay)
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+AREA_FEATURE_FIELDS = ("population_density", "foot_traffic_index", "average_rent", "historical_success_rate")
+
+
+def area_features_for(pairs):
+    """{(industry, location): {field: value}} for the four area figures a
+    market row carries besides its competitor count.
+
+    A permit register only says how many businesses hold a permit, so a
+    row derived from it has no population density, foot traffic, rent or
+    success rate of its own. It becomes the newest row for its pair the
+    moment it is written, though, and every scoring path reads the newest
+    row's figures -- left empty, they would reach the model as zeros. The
+    figures are taken from the freshest earlier row for the same pair
+    that has them, else from the barangay's reference profile.
+    """
+    from app.ml.seed_data import get_barangay_profile
+
+    pairs = set(pairs)
+    if not pairs:
+        return {}
+    industries = sorted({industry for industry, _ in pairs})
+    locations = sorted({location for _, location in pairs})
+    rows = (
+        db.session.query(
+            MarketData.industry_type,
+            MarketData.location,
+            MarketData.date_recorded,
+            MarketData.market_id,
+            *(getattr(MarketData, field) for field in AREA_FEATURE_FIELDS),
+        )
+        .filter(
+            MarketData.industry_type.in_(industries),
+            MarketData.location.in_(locations),
+            MarketData.population_density.isnot(None),
+        )
+        .all()
+    )
+    freshest = {}
+    for industry, location, recorded, market_id, *values in rows:
+        key = (industry, location)
+        if key not in pairs:
+            continue
+        rank = (recorded or datetime.date.min, market_id or 0)
+        if key not in freshest or rank > freshest[key][0]:
+            freshest[key] = (rank, values)
+
+    features = {}
+    for key in pairs:
+        if key in freshest:
+            values = freshest[key][1]
+            if all(value is not None for value in values):
+                features[key] = dict(zip(AREA_FEATURE_FIELDS, values))
+                continue
+        profile = get_barangay_profile(key[1])
+        if profile:
+            features[key] = {field: profile[field] for field in AREA_FEATURE_FIELDS}
+    return features
 
 
 def stage_permit_derived_market_rows(file_path, uploaded_by_user_id=None):
@@ -545,26 +608,27 @@ def stage_permit_derived_market_rows(file_path, uploaded_by_user_id=None):
 
     today = datetime.date.today()
     errors = []
-    staged = 0
+    resolved = []
     for (industry, barangay), count in sorted(counts.items()):
         canonical = _resolve_barangay(barangay, 0, errors)
         if canonical is None:
-            errors.clear()   # already reported by the lgu_data pass
+            errors.clear()
             continue
+        resolved.append((industry, canonical, count))
+
+    features = area_features_for((industry, canonical) for industry, canonical, _ in resolved)
+    staged = 0
+    for industry, canonical, count in resolved:
         db.session.add(MarketData(
             industry_type=industry,
             location=canonical,
             competitor_count=count,
             source="DTI",
             date_recorded=today,
+            **features.get((industry, canonical), {}),
         ))
         staged += 1
 
-    # The same register, one level down: direct-competitor counts per
-    # sub-category. Same transaction -- they are the same fact about the
-    # city at a finer grain, and must land or roll back together. Not
-    # added to `staged`, which the upload summary reports as industry
-    # rows; these are a by-product of the same rows, not extra records.
     from app.models import SubcategoryMarketData
 
     for (industry, subcategory, barangay), count in sorted(derive_permit_subcategory_counts(file_path).items()):
@@ -615,10 +679,6 @@ def process_upload(dataset_type, file_path, source, uploaded_by_user_id):
     try:
         if dataset_type == "LGU_DATA":
             count = import_lgu_data(file_path, source, uploaded_by_user_id, errors=errors)
-            # A register with a PSIC/line-of-business column also
-            # yields per-industry competitor counts. Same transaction:
-            # the permits and the counts derived from them are one fact
-            # about the city and must not half-land.
             count += stage_permit_derived_market_rows(file_path, uploaded_by_user_id)
         else:
             count = import_market_data(file_path, source, errors=errors)
@@ -632,9 +692,11 @@ def process_upload(dataset_type, file_path, source, uploaded_by_user_id):
             return 0, "failed", "No usable data rows were found in that file."
 
         db.session.commit()
-    except Exception as exc:  # noqa: BLE001 - surfaced to the LGU user
+    except Exception as exc:
         db.session.rollback()
         return 0, "failed", str(exc)
+    finally:
+        _READ_CACHE.clear()
 
     _clear_analytics_caches()
     _run_alert_sweeps()
@@ -661,16 +723,13 @@ def _run_alert_sweeps():
         from app.services.market_alert_service import run_all_alert_sweeps
 
         run_all_alert_sweeps()
-    except Exception:  # pragma: no cover - defensive
+    except Exception:
         from flask import current_app
 
         current_app.logger.warning("could not run market alert sweep after upload",
                                    exc_info=True)
 
 
-# How many bad rows to name before summarising. A file with 300
-# problems does not need 300 lines -- the uploader has a systematic
-# mistake and the first few show it.
 _MAX_REPORTED_ERRORS = 8
 
 
@@ -684,10 +743,6 @@ def _format_errors(errors):
         f"your data is unchanged. " + " ".join(shown)
     )
 
-
-# =====================================================================
-# COLD START: IS THERE REAL LGU DATA YET?
-# =====================================================================
 
 def has_active_lgu_data():
     """True once an LGU account has actually uploaded government data.
@@ -784,9 +839,13 @@ def _system_user_id_or_none():
     does NOT create it -- a read-only question must not write a row."""
     from app.models.user import User
     from app.services.forecasting_service import SYSTEM_USER_EMAIL
+    from app.utils.request_memo import request_memo
 
-    row = db.session.query(User.user_id).filter_by(email=SYSTEM_USER_EMAIL).first()
-    return row[0] if row else None
+    def lookup():
+        row = db.session.query(User.user_id).filter_by(email=SYSTEM_USER_EMAIL).first()
+        return row[0] if row else None
+
+    return request_memo("system_user_id", lookup)
 
 
 def _clear_analytics_caches():
@@ -799,7 +858,7 @@ def _clear_analytics_caches():
 
         clear_trend_caches()
         clear_response_cache()
-    except Exception:  # pragma: no cover - defensive
+    except Exception:
         from flask import current_app
 
         current_app.logger.warning("could not clear analytics caches after upload", exc_info=True)

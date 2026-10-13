@@ -64,68 +64,13 @@ from app.ml.seed_data import get_real_population, get_barangay_profile
 from app.services.forecasting_service import compute_scores_batch
 from app.services.recommendation_service import competition_level_label
 
-# How many recommendation cards to show before the "Explore more"
-# button. Five is the floor the page guarantees; everything the AI
-# recommended beyond that is one click away.
 DEFAULT_LIMIT = 5
 
-# A RECOMMENDATION IS A PLACE YOU COULD ACTUALLY OPEN.
-#
-# The engine scores every barangay in the city, but scoring is not
-# recommending. A barangay the model rates "High Saturation" is a real
-# result and it belongs on the Saturation Map -- it does not belong on a
-# page headed "AI-Powered Recommendations", because recommending a
-# market the same model just called saturated is advice that contradicts
-# itself. So only these two tiers are ever offered as recommendations:
-# somewhere ready to enter now, and somewhere workable with a niche
-# strategy. The other two tiers are still counted and still reported
-# (see `scored_by_tier`), just never presented as an opportunity.
 RECOMMENDABLE_TIERS = ("High Opportunity", "Moderate Opportunity")
 
-# Google Places Text Search stops issuing page tokens after 3 pages, so
-# a count that lands exactly here means "60 or more", not "exactly 60"
-# -- worth saying out loud on a card that leans on the number.
 PLACES_RESULT_CEILING = 60
 
-# No new business earns its steady-state revenue in month one: there is
-# fit-out, permits, and the weeks it takes for customers to find you. So
-# the ROI window never reports faster than MINIMUM_RAMP_MONTHS (3),
-# however favourable the model's scores look. A stated assumption -- it
-# now lives in app/ml/constants.py, because the plan forecast's ramp-up
-# period (app/ml/plan_model.ramp_up_months) is the same quantity and has
-# to use the same floor. Imported above, so this module still exports
-# the name it always did.
 
-
-# ---------------------------------------------------------------------
-# HOW THE LIST IS ORDERED -- and why it is not just "viability desc"
-# ---------------------------------------------------------------------
-# Ranking on the model's viability score alone puts the city's smallest
-# rural barangays on top: almost nobody competes in a barangay of 800
-# people, so it scores as gloriously uncontested. That is a true
-# statement about competition and a useless recommendation about where
-# to open a business -- an uncontested market of 800 residents is still
-# a market of 800 residents.
-#
-# So the order blends three REAL measures, each turned into that
-# barangay's PERCENTILE RANK among all the barangays scored (percentile
-# ranks, not raw values, so no single measure's units can dominate):
-#
-#   50%  viability_score          -- the model's own output: how
-#                                    uncontested this market is.
-#   30%  residents_per_business   -- market depth: how many people each
-#                                    existing business has to itself.
-#   20%  population               -- absolute market size, which is what
-#                                    stops a tiny barangay from topping
-#                                    the list on emptiness alone.
-#
-# These weights are a STATED EDITORIAL CHOICE, not something derived
-# from data, and they are here in one place so they can be defended,
-# argued with, or changed. Each card carries its own three percentiles
-# (`percentiles` below) so a reader can see exactly why it placed where
-# it did. The viability score shown on the card is always the model's
-# own unmodified number -- the blend affects ORDER, never a displayed
-# figure.
 RANK_WEIGHTS = {"viability": 0.50, "depth": 0.30, "population": 0.20}
 
 
@@ -214,7 +159,6 @@ def estimate_roi_timeframe(viability_score, saturation_index, residents_per_busi
     (and no depth figures), which is how capital, staffing and pricing
     reach the break-even window there.
     """
-    # Market-depth nudge: deeper than the city median => slightly faster.
     depth_multiplier = 1.0
     if residents_per_business and city_median_depth:
         if residents_per_business > city_median_depth:
@@ -322,9 +266,6 @@ def _scored_and_ranked(industry_type, locations):
     """
     from app.services.trend_analytics_service import _SWEEP_CACHE, _cached
 
-    # The barangay list is part of the key, not just its length: a test
-    # or a future caller passing a different subset of the same size
-    # must not be served another subset's scores.
     locations_token = hashlib.sha1(
         "|".join(str(location) for location in locations).encode("utf-8")
     ).hexdigest()[:12]
@@ -411,15 +352,6 @@ def _reasons_for(row, city, market_meta, sme_profile, industry_label):
             + (f" on {fetched:%B %d, %Y}" if fetched else "")
         )
 
-    # What this card's number is NOT. It used to say "scored against your
-    # own plan parameters (capital on file: PHP X)", which was never
-    # true: these cards come from one city-wide stage-1 sweep that is
-    # the same for every user (_scored_and_ranked), and capital does not
-    # enter it -- change the capital and the card does not move. Since
-    # the plan forecast became the Plan Viability Model, which DOES weigh
-    # capital, the old line also sat next to a different viability
-    # number for the same barangay. So the card says what it is and
-    # where the plan's own figure lives.
     if sme_profile is not None:
         capital = float(getattr(sme_profile, "startup_capital", None) or 0)
         weighs = f"your capital of PHP {capital:,.0f}" if capital > 0 else "your capital"
@@ -517,10 +449,6 @@ def _written_cards(industry_type, city, opportunities):
         return generate_opportunity_cards_json(industry_type, city, opportunities)
 
     written = _cached(_SNAPSHOT_CACHE, cache_key, build)
-    # An empty result means the call failed or was refused. Do not let
-    # that sit in the cache: the next request should try again rather
-    # than serve rule-based wording for the full cache lifetime because
-    # of one rate-limit blip.
     if not written:
         _SNAPSHOT_CACHE.pop((cache_key, _data_fingerprint_or_none()), None)
     return written or {}
@@ -531,7 +459,7 @@ def _data_fingerprint_or_none():
 
     try:
         return _data_fingerprint()
-    except Exception:  # pragma: no cover - no app context / no engine
+    except Exception:
         return None
 
 
@@ -553,11 +481,6 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
     and why ranking on viability alone gives a misleading answer.
     """
     market_meta_by_location = market_meta_by_location or {}
-    # Scored AND ranked in one memoised step -- both are city-wide and
-    # user-independent, so the same reload, the same industry viewed by
-    # another SME, and "Explore more" (which asks for the identical city
-    # and only shows more of it) all answer from one sweep. See
-    # _scored_and_ranked: these rows are read, never written.
     rows = _scored_and_ranked(industry_type, locations)
     if not rows:
         return {"opportunities": [], "city": _city_context([]), "industry_type": industry_type}
@@ -565,16 +488,10 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
     city = _city_context(rows)
     industry_label = short_industry_label(industry_type)
 
-    # Scoring is not recommending -- keep only the tiers an SME could
-    # actually enter (see RECOMMENDABLE_TIERS). Everything else stays
-    # counted in `scored_by_tier` below but is never offered as an
-    # opportunity.
     recommendable = [
         r for r in rows if _opportunity_type_for(r["cluster_label"]) in RECOMMENDABLE_TIERS
     ]
 
-    # limit=None means "every location the AI recommended" -- what the
-    # "Explore more recommendations" button asks for.
     display_rows = recommendable if limit is None else recommendable[: max(1, int(limit))]
 
     opportunities = []
@@ -617,13 +534,6 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
             }
         )
 
-    # --- hand the finished cards to the LLM to write up ------------
-    # Only the WORDING is delegated. Every number on a card -- the
-    # competitor count, the population, the ranking, the ROI window --
-    # is computed above, before the model is ever called, and the prompt
-    # forbids inventing any figure that isn't passed in. When the LLM is
-    # off (the default), unconfigured, or fails, each card keeps the
-    # data-derived reasons/risks it already has.
     if use_llm and opportunities:
         try:
             from app.services.recommendation_service import llm_recommendations_enabled
@@ -636,18 +546,10 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
                         card["reasons"] = entry["reasons"]
                         card["risks"] = entry["risks"]
                         card["generated_by"] = entry["generated_by"]
-                        # The model may also return its own ROI window.
-                        # Accepted only when it parses as a sane month
-                        # range -- otherwise the computed one stands.
                         if entry.get("roi_timeframe"):
                             card["roi_timeframe"] = entry["roi_timeframe"]
                             card["roi_basis"] = "llm"
-        except Exception as exc:  # noqa: BLE001 -- a flaky LLM must never break the page
-            # Still swallowed, because a page that 500s when an API is
-            # down is worse than a page with rule-based wording. But it
-            # is no longer swallowed SILENTLY: `pass` here is what made
-            # "the AI isn't working" impossible to diagnose on a live
-            # deployment.
+        except Exception as exc:
             from flask import current_app
 
             current_app.logger.warning(
@@ -655,26 +557,15 @@ def rank_location_opportunities(industry_type, locations, sme_profile=None, limi
                 industry_type, type(exc).__name__, exc, exc_info=True,
             )
 
-    # The page's three summary cards count EVERY barangay the AI scored
-    # across Tarlac City -- not just the ones currently displayed, and not
-    # the SME's own saved plans. "12 high-opportunity locations" has to
-    # mean twelve real barangays the model rated that way city-wide, or
-    # the number is decoration.
     all_types = [_opportunity_type_for(r["cluster_label"]) for r in rows]
     return {
         "opportunities": opportunities,
         "city": city,
         "industry_type": industry_type,
         "industry_label": industry_label,
-        # How many cards are on screen right now vs. how many locations
-        # the AI actually recommended -- what the "Explore more" button
-        # compares to decide whether it has anything left to show.
         "showing_count": len(opportunities),
         "recommended_count": len(recommendable),
         "has_more": len(opportunities) < len(recommendable),
-        # Every barangay scored, by tier. The two recommendable tiers are
-        # what the summary cards report; the other two are kept so the
-        # page can say how much of the city was ruled out and why.
         "total_scored": len(rows),
         "high_opportunity_count": all_types.count("High Opportunity"),
         "moderate_opportunity_count": all_types.count("Moderate Opportunity"),

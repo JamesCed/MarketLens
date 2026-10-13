@@ -91,10 +91,6 @@ def _outlook(location):
     return project_quarterly_outlook(50.0, 5.0, location, industry_type=INDUSTRY)
 
 
-# ---------------------------------------------------------------------
-# 1. Every quarter is a real model run
-# ---------------------------------------------------------------------
-
 def test_all_four_quarters_are_model_runs(app, user):
     with app.app_context():
         _history(BARANGAY_NAMES[0], [4, 6, 9, 13], user_id=user)
@@ -120,17 +116,13 @@ def test_confidence_falls_with_the_forecast_horizon(app, user):
     assert confidence[0] > confidence[-1]
 
 
-# ---------------------------------------------------------------------
-# 2. The slope comes from the barangay, not from a constant
-# ---------------------------------------------------------------------
-
 def test_a_barangay_filling_up_and_one_emptying_out_slope_opposite_ways(app, user):
     """The test the old chart could never have passed. Three hardcoded
     multipliers produce one shape for the whole city; a recalibration
     has to produce the shape each barangay's own history implies."""
     with app.app_context():
-        _history(BARANGAY_NAMES[0], [4, 6, 9, 13], user_id=user)     # filling up
-        _history(BARANGAY_NAMES[1], [18, 15, 12, 10], user_id=user)  # emptying out
+        _history(BARANGAY_NAMES[0], [4, 6, 9, 13], user_id=user)
+        _history(BARANGAY_NAMES[1], [18, 15, 12, 10], user_id=user)
 
         filling = _outlook(BARANGAY_NAMES[0])
         emptying = _outlook(BARANGAY_NAMES[1])
@@ -179,8 +171,6 @@ def test_demand_does_not_wobble(app, user):
     fall in Q2 and rise again in Q3 -- an artefact that reads as a
     finding. The forward path does not pass a series key."""
     with app.app_context():
-        # No history: forces the national-series fallback, which is
-        # where the wobble came from.
         db.session.add(MarketData(
             industry_type=INDUSTRY, location=BARANGAY_NAMES[3], competitor_count=8,
             population_density=2500, historical_success_rate=0.55,
@@ -197,10 +187,6 @@ def test_demand_does_not_wobble(app, user):
     demand = outlook["demand"]
     assert demand == sorted(demand), f"demand is not monotonic: {demand}"
 
-
-# ---------------------------------------------------------------------
-# 3. Reading a rate from history, carefully
-# ---------------------------------------------------------------------
 
 def test_a_short_history_is_not_read_as_a_trend(app, user):
     """Two counts a fortnight apart say almost nothing about a year."""
@@ -259,16 +245,6 @@ def test_an_unscored_combo_says_so_instead_of_inventing_a_trend(app):
     assert len(set(outlook["saturation"])) == 1
     assert all(value is None for value in outlook["confidence"])
 
-
-# ---------------------------------------------------------------------
-# 3b. With a plan, the viability line is the PLAN's
-# ---------------------------------------------------------------------
-# A plan's stored viability is now the Plan Viability Model's (stage 2,
-# app/services/plan_forecast_service.py), which also weighs the plan's
-# capital, staff, price list, offering and idea -- not (100 - saturation)
-# / 10. So with sme_profile= the chart re-runs BOTH stages per quarter,
-# holding the plan's inputs. The market-only tests above still describe
-# the call without a plan, which is unchanged.
 
 FOOD = "Food and Beverage"
 
@@ -333,7 +309,6 @@ def test_q1_of_a_plan_outlook_reproduces_the_stored_plan_forecast(app, user, mon
 
     assert outlook["viability_model"] == "plan"
     assert outlook["basis"] == ["model"] * 4
-    # Q1 is today's market with today's plan: the stored forecast.
     assert outlook["viability"][0] == pytest.approx(round(min(60.0, float(forecast.viability_score) * 6.0), 1))
     assert outlook["saturation"][0] == pytest.approx(round(min(60.0, float(forecast.saturation_index) * 0.6), 1))
     assert "held as entered" in outlook["assumptions"]["viability"]
@@ -351,14 +326,6 @@ def test_q1_still_matches_the_stored_forecast_after_the_admin_changes_the_assump
     _offline(app, monkeypatch)
     with app.app_context():
         _food_history(BARANGAY_NAMES[0], [6, 8, 11, 14], user_id=user)
-        # Payroll-heavy and priced, so both assumptions actually move it.
-        # The price matters: at P600 the plan needs fewer sales a day than
-        # the barangay can supply at the default 40% margin and more than
-        # it can at 15%, so the margin moves price coverage. (It used to
-        # be one P40 item, which needed three times the ceiling at ANY
-        # margin -- coverage was 0 either way, only the wage moved the
-        # scorecard, by 0.6 points, and whether the 1-dp score changed
-        # was down to where the forest's steps happened to fall.)
         profile = _sme_plan(startup_capital=150000, employee_count=6,
                             offering_details=json.dumps([{"item": "Celebration cake", "price": 600}]))
         forecast = generate_forecast_for_profile(profile)
@@ -370,8 +337,6 @@ def test_q1_still_matches_the_stored_forecast_after_the_admin_changes_the_assump
 
         stored = float(forecast.viability_score)
         stored_payload = json.loads(forecast.recommendation)["forecast"]
-        # The new settings DO change a forecast made now -- so the test
-        # would catch the chart reading them.
         fresh = json.loads(generate_forecast_for_profile(profile).recommendation)["forecast"]
 
     stored_bar = round(min(60.0, stored * 6.0), 1)
@@ -390,8 +355,6 @@ def test_q1_matches_the_stored_forecast_with_a_sub_category_adjustment_too(app, 
     _offline(app, monkeypatch)
     with app.app_context():
         _food_history(BARANGAY_NAMES[2], [20, 24, 28, 32], user_id=user)
-        # Far fewer bakeries than the industry count implies -> the
-        # direct-competition ratio pulls the plan's competition down.
         db.session.add(SubcategoryMarketData(
             industry_type=FOOD, subcategory="bakery", location=BARANGAY_NAMES[2],
             competitor_count=1, source="Google Places API", date_recorded=date.today(),
@@ -434,10 +397,6 @@ def test_without_a_plan_the_outlook_is_the_market_formula(app, user):
     assert outlook["assumptions"]["viability"].startswith("(100 - saturation) / 10")
 
 
-# ---------------------------------------------------------------------
-# 4. The page says which of those happened
-# ---------------------------------------------------------------------
-
 def test_the_caption_no_longer_calls_it_illustrative(app, user):
     with app.app_context():
         sme = User(name="Juan", email="sme@recal.test", role="SME")
@@ -464,8 +423,5 @@ def test_the_caption_no_longer_calls_it_illustrative(app, user):
     assert "illustrative projection" not in page, (
         "the caption still calls the later quarters illustrative, which is now false"
     )
-    # Worded "a separate AI model run" before the Plan Viability Model;
-    # with two models per quarter it now says "a separate run of the
-    # trained models". Either way it must say every quarter is a run.
     assert "separate run of the trained models" in page or "separate AI model run" in page
     assert "held at today&#39;s values" in page or "held at today's values" in page

@@ -56,31 +56,15 @@ question -- exactly where each line is drawn.
 from app.ml.constants import BUSINESS_TYPES, CLUSTER_THRESHOLDS, short_industry_label
 from app.ml.seed_data import BARANGAY_NAMES, get_real_population
 
-# A barangay where one industry holds at least this share is "dependent"
-# on it.
 DOMINANCE_SHARE = 0.40
-# Diversity below this is "low" (most of the activity is in a few
-# industries).
 LOW_DIVERSITY = 45.0
-# Saturation at or above this is "saturated" -- the model's own top tier.
 SATURATED_AT = CLUSTER_THRESHOLDS[2]
-# ...and at or below this is open ("Low" tier).
 OPEN_AT = CLUSTER_THRESHOLDS[0]
-# City-wide industry stance. REGULATE: saturated in at least
-# REGULATE_SHARE of the barangays that have it, or an average saturation
-# of REGULATE_AVG or more. ENCOURAGE: an average saturation at least
-# ENCOURAGE_MARGIN points below the city's median industry, with fewer
-# than ENCOURAGE_MAX_SATURATED of its barangays saturated -- RELATIVE to
-# the city, because a fixed cut-off says "monitor everything" in a city
-# where every industry sits in the same band, which helps no one choose.
 REGULATE_SHARE = 0.30
 REGULATE_AVG = 60.0
 ENCOURAGE_MARGIN = 2.0
 ENCOURAGE_MAX_SATURATED = 0.15
 PRIORITY_LIMIT = 10
-# A barangay's diversity is only scored once the system has counts for at
-# least this many of its industries. With two or three on file the score
-# would describe the gaps in the data, not the barangay's economy.
 MIN_INDUSTRIES_ON_FILE = 5
 
 
@@ -117,19 +101,15 @@ def build_diversification_plan():
 
     from app.services.forecasting_service import _scoring_inputs_fingerprint
 
-    # Keyed on BOTH tables the plan reads -- market_data for the counts
-    # and lgu_data for the scoring rows behind each saturation -- the
-    # same key the batch scores use, so the plan and the figures beside
-    # it can never disagree about which data they describe.
     try:
         key = _scoring_inputs_fingerprint()
-    except Exception:  # noqa: BLE001 -- no key, no cache; the plan is still right
+    except Exception:
         return _build_diversification_plan()
     hit = _PLAN_CACHE.get("plan")
     if hit is not None and hit[0] == key and time.monotonic() - hit[1] <= _PLAN_CACHE_TTL_SECONDS:
         return copy.deepcopy(hit[2])
     plan = _build_diversification_plan()
-    if _scoring_inputs_fingerprint() == key:  # nothing was written while building it
+    if _scoring_inputs_fingerprint() == key:
         _PLAN_CACHE["plan"] = (key, time.monotonic(), copy.deepcopy(plan))
     return plan
 
@@ -143,7 +123,7 @@ def _build_diversification_plan():
     from app.services.trend_analytics_service import latest_market_data_by_key
 
     latest = latest_market_data_by_key()
-    counts = {}  # barangay -> {industry: count}
+    counts = {}
     for (industry, location), row in latest.items():
         if location not in BARANGAY_NAMES or industry not in BUSINESS_TYPES:
             continue
@@ -170,8 +150,6 @@ def _build_diversification_plan():
         ]
         dominant = max(by_industry.items(), key=lambda kv: kv[1]) if total else None
         dominant_share = (dominant[1] / total) if dominant else 0.0
-        # Promote: the most room first; among similar room, the industry
-        # this barangay has least of -- that is what diversifies it.
         promote = sorted(
             (s for s in scored if s["saturation"] < SATURATED_AT),
             key=lambda s: (round(s["saturation"] / 5), s["count"]),
@@ -188,8 +166,6 @@ def _build_diversification_plan():
             "industries_present": sum(1 for c in by_industry.values() if c > 0),
             "industries_on_file": on_file,
             "per_thousand": per_thousand,
-            # Evenness across the industries the system HAS counts for:
-            # an industry with no row yet is unknown, not zero.
             "diversity": diversity_score(list(by_industry.values()), n_industries=on_file) if enough else None,
             "dominant": short_industry_label(dominant[0]) if dominant else None,
             "dominant_full": dominant[0] if dominant else None,
@@ -198,8 +174,6 @@ def _build_diversification_plan():
             "limit": limit,
         })
 
-    # Business access, relative to the city's own median, so "low" means
-    # low for Tarlac City rather than against an imported benchmark.
     access = sorted(b["per_thousand"] for b in barangays if b["per_thousand"] is not None)
     median_access = access[len(access) // 2] if access else None
 
@@ -230,7 +204,6 @@ def _build_diversification_plan():
 
     priority = sorted((b for b in barangays if b["reasons"]), key=lambda b: -b["need_score"])[:PRIORITY_LIMIT]
 
-    # City-wide stance per industry -- see the thresholds at the top.
     industries = []
     city_total = sum(city_counts.values())
     averages = []

@@ -51,7 +51,11 @@ services:
     # so the model is read from disk a single time.
     startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --preload --access-logfile - wsgi:app
 
-    healthCheckPath: /login
+    # /healthz answers "ok" without a template, a session or a database
+    # query. Render probes this path every few seconds for as long as the
+    # service runs, so it must cost nothing (it used to be /login, which
+    # rendered the whole sign-in page on every probe).
+    healthCheckPath: /healthz
 
     envVars:
       # Flask signs the login session cookie with this. generateValue

@@ -47,9 +47,6 @@ PROMPT = 'id="dssOnboardingPrompt"'
 def app():
     app = create_app("testing")
 
-    # One client's sign-in must not leak into another's request (the
-    # app context stays pushed for the whole test, and Flask-Login
-    # caches the user on flask.g) -- same guard as test_onboarding.py.
     @app.before_request
     def _forget_cached_login():
         from flask import g
@@ -126,10 +123,6 @@ def _config(body):
     return json.loads(match.group(1))
 
 
-# =====================================================================
-# 1. The sidebar
-# =====================================================================
-
 @pytest.mark.parametrize("role", ROLES)
 def test_settings_is_in_the_sidebar_footer_directly_above_support(app, role):
     body = _page(app, role, path="/trend-reports")
@@ -142,7 +135,6 @@ def test_settings_is_in_the_sidebar_footer_directly_above_support(app, role):
         "Settings should be styled exactly like Support beside it"
     assert "bi-gear" in link.group(1) and "Settings" in link.group(1)
 
-    # Settings first, then Support -- and nothing between them.
     support = footer.index('data-bs-target="#supportModal"')
     assert footer.index('data-tour="nav-settings"') < support
     between = footer[link.end():support]
@@ -155,7 +147,6 @@ def test_settings_is_no_longer_in_the_list_of_pages(app, role):
     nav = _nav_list(body)
     assert 'href="/settings"' not in nav
     assert 'data-tour="nav-settings"' not in nav
-    # One Settings link in the whole sidebar: moved, not duplicated.
     assert _sidebar(body).count('href="/settings"') == 1
 
 
@@ -201,10 +192,6 @@ def test_the_support_dialog_describes_home_plans_and_the_tutorial(app):
     assert "Tutorial" in support
 
 
-# =====================================================================
-# 2. The Tutorial pane, for every role
-# =====================================================================
-
 @pytest.mark.parametrize("role", ROLES)
 def test_the_tutorial_tab_and_pane_render_for_every_role(app, role):
     body = _page(app, role)
@@ -245,8 +232,6 @@ def test_the_pane_says_where_the_walkthrough_stands_in_words(app, state, label):
     marker = re.search(r'data-walkthrough-state="([a-z]+)"', pane)
     assert marker and marker.group(1) == (state or "never")
     assert label in pane
-    # The raw column value is never what the person reads: 'touring',
-    # the one that is not already a plain word, is shown as "In progress".
     if state == "touring":
         assert "touring" not in re.sub(r"<[^>]+>", " ", pane)
 
@@ -269,10 +254,6 @@ def test_the_replay_endpoint_logs_where_the_replay_came_from(app):
     row = AuditLog.query.filter_by(action="onboarding_started").one()
     assert row.details == "Replayed the tour from Settings › Tutorial (was skipped)"
 
-
-# =====================================================================
-# 3. Old ?section=plans links
-# =====================================================================
 
 @pytest.mark.parametrize("query", ["plans", "PLANS", " plans "])
 def test_section_plans_redirects_an_sme_to_home(app, query):
@@ -298,10 +279,6 @@ def test_the_settings_sections_are_the_same_for_every_role():
     assert SME_ONLY_SECTIONS == ()
 
 
-# =====================================================================
-# 4. No "Business Preferences" anywhere an SME can see it
-# =====================================================================
-
 @pytest.mark.parametrize("path", ["/settings", "/trend-reports"])
 def test_no_business_preferences_for_an_sme(app, path):
     body = _page(app, "SME", path=path)
@@ -317,10 +294,6 @@ def test_the_user_menu_keeps_its_other_shortcuts(app):
     assert 'href="/settings?section=appearance"' in menu
     assert 'href="/settings"' in menu
 
-
-# =====================================================================
-# 5. The first visit is untouched
-# =====================================================================
 
 def test_a_new_account_is_never_asked_yet():
     assert User.__table__.c.onboarding_state.nullable is True
@@ -368,10 +341,6 @@ def test_tour_js_still_prompts_a_never_asked_account_on_its_own():
     assert "Settings › Tutorial" in source and "Take the tour</strong> in the sidebar" not in source
 
 
-# =====================================================================
-# The tour's Settings steps aim at what the Settings page renders
-# =====================================================================
-
 def _steps_source():
     with open(os.path.join(ROOT, "app", "static", "js", "tour_steps.js"), encoding="utf-8") as handle:
         return handle.read()
@@ -383,7 +352,6 @@ def test_the_tour_no_longer_sends_anyone_to_business_preferences():
     assert "section-plans" not in source
     assert 'data-section="plans"' not in source
     assert '"sme-settings-plans"' not in source
-    # The end of every tour says how to replay it -- from Tutorial.
     assert re.search(r"const REPLAY_TIP =[^;]*Tutorial", source, re.S)
     assert source.count("how: REPLAY_TIP") == 3
 
@@ -394,9 +362,6 @@ def test_the_settings_steps_targets_exist_on_the_settings_page(app, role):
     assert 'id="settingsNav"' in body
     rail = body[body.index('id="settingsNav"'):]
     rail = rail[:rail.index("</nav>")]
-    # sme-settings waits for a click on '#settingsNav [data-section="tutorial"]'.
     assert 'data-section="tutorial"' in rail
     assert '\'#settingsNav [data-section="tutorial"]\'' in _steps_source()
-    # The menu steps light up the whole sidebar, footer included, because
-    # they point people to Settings "at the bottom of the menu".
     assert 'id="dssSidebar"' in body

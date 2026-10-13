@@ -99,16 +99,8 @@ notes for the exact fetch dates):
     Reference/DATASETS.md.
 """
 
-# Tarlac PROVINCE's real, PSA-published average annual family
-# expenditure for 2023 (Tarlac City is the province's capital and
-# largest urban center; PSA does not sample/publish below province
-# level, so this is the most granular REAL figure available for
-# "Tarlac"). See module docstring, source #1.
 TARLAC_AVG_ANNUAL_FAMILY_EXPENDITURE_PHP = 299_670
 
-# PSA's own NATIONAL percent-share breakdown of average family
-# expenditure by major category, 2023 FIES. See module docstring,
-# source #2. Order matches the 2023 FIES Infographics release.
 NATIONAL_EXPENDITURE_SHARES_2023 = {
     "food": {"label": "Food & Non-Alcoholic Beverages", "percent": 40.9, "year": 2023},
     "housing_utilities": {
@@ -118,20 +110,13 @@ NATIONAL_EXPENDITURE_SHARES_2023 = {
     },
     "transportation": {"label": "Transportation", "percent": 10.7, "year": 2023},
     "education": {"label": "Education", "percent": 3.0, "year": 2023},
-    # Not a separate PSA 2023 line item -- see module docstring point 5.
     "recreation": {"label": "Recreation & Culture", "percent": 2.0, "year": "2021 (est.)"},
     "health_furnishings": {"label": "Health & Furnishings", "percent": 3.3, "year": 2023},
     "communication": {"label": "Information & Communication", "percent": 2.7, "year": 2023},
     "miscellaneous": {"label": "Miscellaneous", "percent": 2.6, "year": 2023},
-    # Alcohol/tobacco, clothing/footwear, restaurants/hotels, furniture,
-    # special occasions -- not requested by name for the map tooltip,
-    # kept here only so the shares below are traceable back to 100%.
     "other": {"label": "Other (incl. clothing, restaurants/hotels)", "percent": 11.9, "year": 2023},
 }
 
-# The exact five categories requested for the map's "demand" tooltip
-# (food, utilities, transportation, recreation, education), in display
-# order.
 DEMAND_TOOLTIP_CATEGORIES = ["food", "housing_utilities", "transportation", "recreation", "education"]
 
 

@@ -32,8 +32,6 @@ class SubcategoryMarketData(db.Model):
     subcategory = db.Column(db.String(100), nullable=False)
     location = db.Column(db.String(150), nullable=False)
     competitor_count = db.Column(db.Integer, nullable=False)
-    # Plain string rather than an Enum: 'Google Places API' or 'DTI'
-    # (a permit register). A string needs no migration to add a source.
     source = db.Column(db.String(40), nullable=False)
     date_recorded = db.Column(db.Date, nullable=False, default=date.today)
 

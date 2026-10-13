@@ -47,11 +47,6 @@ ENDPOINTS = ("start", "skip", "complete", "restart")
 def app():
     app = create_app("testing")
 
-    # One client's sign-in must not leak into another's request: the
-    # fixture keeps one app context pushed for the whole test, so
-    # flask.g -- where Flask-Login caches the user -- would otherwise
-    # survive between requests. Same fixture as
-    # test_admin_archive_and_audit.py, for the same reason.
     @app.before_request
     def _forget_cached_login():
         from flask import g
@@ -96,10 +91,6 @@ def _config(body):
 PROMPT = 'id="dssOnboardingPrompt"'
 
 
-# =====================================================================
-# 1. The prompt: once, and only where it belongs
-# =====================================================================
-
 @pytest.mark.parametrize("role", ["SME", "LGU", "Admin"])
 def test_the_prompt_appears_for_an_account_never_asked(app, role):
     user = _user(role=role)
@@ -129,7 +120,7 @@ def test_the_prompt_says_what_marketlens_is_for_that_role(app):
     _user("admin@tour.test", role="Admin")
     def prompt_text(email):
         body = _login(app, email).get("/settings").get_data(as_text=True)
-        return " ".join(body.split())  # the template wraps the sentence
+        return " ".join(body.split())
 
     assert "the best barangay in Tarlac City for your business" in prompt_text("sme@tour.test")
     assert "so you can plan and guide investors" in prompt_text("lgu@tour.test")
@@ -143,9 +134,6 @@ def test_the_prompt_is_not_shown_once_answered(app, state):
 
     assert PROMPT not in body
     assert "Is this your first time here?" not in body
-    # The config is still there: a tour in progress resumes from it, and
-    # "Start the tutorial" (Settings › Tutorial) needs it whatever the
-    # state.
     assert _config(body)["state"] == state
 
 
@@ -169,24 +157,17 @@ def test_nothing_onboarding_on_the_sign_in_page(app):
 
 @pytest.mark.parametrize("path, status", [
     ("/no-such-page", 404),
-    ("/admin/dashboard", 403),  # an SME opening an admin page
+    ("/admin/dashboard", 403),
 ])
 def test_the_prompt_never_appears_on_an_error_page(app, path, status):
-    _user(role="SME")  # never asked -- the prompt WOULD show on a normal page
+    _user(role="SME")
     response = _login(app).get(path)
     body = response.get_data(as_text=True)
 
     assert response.status_code == status
     assert PROMPT not in body
-    # Marked suppressed, so tour.js neither prompts nor resumes a tour
-    # here -- but the config is still on the page, so a replay button
-    # ([data-tour-replay]) would still have what it needs.
     assert _config(body)["suppressed"] is True
 
-
-# =====================================================================
-# 2. The endpoints
-# =====================================================================
 
 @pytest.mark.parametrize("endpoint, state, action", [
     ("start", "touring", "onboarding_started"),
@@ -230,7 +211,6 @@ def test_skip_says_whether_they_declined_or_left_part_way(app):
                AuditLog.query.filter_by(action="onboarding_skipped").order_by(AuditLog.id)]
     assert details[0] == "Said no at the first-time prompt"
     assert details[1] == "Left the tour at step 5 of 22"
-    # Client input that isn't a sane step number is dropped, not logged.
     assert details[2] == "Said no at the first-time prompt"
 
 
@@ -270,10 +250,6 @@ def test_the_endpoints_take_the_csrf_token_the_way_tour_js_sends_it(app):
     assert _state() == "touring"
 
 
-# =====================================================================
-# 3. The page wiring
-# =====================================================================
-
 def _asset_counts(body):
     return {
         "css": body.count("/static/css/tour.css"),
@@ -289,8 +265,6 @@ def test_base_includes_the_tour_assets_exactly_once(app, state):
     body = _login(app).get("/settings").get_data(as_text=True)
     assert _asset_counts(body) == {"css": 1, "steps": 1, "engine": 1, "config": 1}
 
-    # Order matters: the steps must exist before the engine reads them,
-    # and the engine runs after the page's own scripts (main.js et al).
     main = body.index("/static/js/main.js")
     steps = body.index("/static/js/tour_steps.js")
     engine = body.index("/static/js/tour.js")
@@ -321,7 +295,6 @@ def test_the_replay_button_is_in_settings_tutorial_not_the_sidebar(app, role):
     pane = pane[:pane.index("</section>")]
     assert "data-tour-replay" in pane
     assert "Start the tutorial" in pane
-    # Exactly one replay button on the page -- the Tutorial pane's.
     assert len(re.findall(r"<[a-z]+\b[^>]*\bdata-tour-replay\b[^>]*>", body)) == 1
 
 
@@ -336,9 +309,6 @@ def test_moving_the_button_left_the_first_visit_alone(app):
 
 
 @pytest.mark.parametrize("role, expected", [
-    # No Community entry: the community is the Discord server, opened
-    # from the footer (see tests/test_community_discord.py). No Settings
-    # entry either: it is in the sidebar FOOTER now (checked below).
     ("SME", ["nav-home", "nav-saturation-map", "nav-trend-reports", "nav-recommendations"]),
     ("LGU", ["nav-lgu-dashboard", "nav-saturation-map", "nav-trend-reports",
              "nav-data-upload"]),
@@ -363,10 +333,6 @@ def test_the_tour_needs_no_cdn(app):
             source = handle.read()
         assert "://" not in source, f"{name} references an external URL"
 
-
-# =====================================================================
-# 4. The step lists
-# =====================================================================
 
 def _read_steps_source():
     with open(os.path.join(STATIC_JS, "tour_steps.js"), encoding="utf-8") as handle:
@@ -416,8 +382,6 @@ def _steps(const_name):
 
 def test_tour_steps_defines_a_tour_for_each_role():
     source = _read_steps_source()
-    # Keyed exactly as User.role is stored, since that is what tour.js
-    # looks the list up by.
     assert "const STEPS = { SME: SME, LGU: LGU, Admin: ADMIN };" in source
     sme, lgu, admin = _steps("SME"), _steps("LGU"), _steps("ADMIN")
     assert len(sme) >= 14, "the SME walkthrough should be thorough"
@@ -441,7 +405,7 @@ def test_every_step_page_is_a_real_route_that_role_can_open(app, const_name, rol
     _user(role=role, state="touring")
     client = _login(app)
     for page in sorted({page for _id, page in _steps(const_name)}):
-        _route_for(app, page)  # raises on anything that is not a plain GET route
+        _route_for(app, page)
         response = client.get(page)
         assert response.status_code == 200, f"{role} tour sends them to {page}, which returns {response.status_code}"
 
@@ -452,10 +416,6 @@ def test_every_sme_step_page_is_a_real_route(app):
     for step_id, page in _steps("SME"):
         assert _route_for(app, page), step_id
 
-
-# =====================================================================
-# 5. The JavaScript
-# =====================================================================
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is not installed")
 def test_the_javascript_logic_tests_pass():

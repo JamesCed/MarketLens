@@ -47,11 +47,7 @@ def password_problems(password):
     return [f"Password needs: {', '.join(m[0].lower() + m[1:] for m in missing)}."]
 
 
-# ---------------------------------------------------------------------
-# Personal information
-# ---------------------------------------------------------------------
 SUFFIXES = ("", "Jr.", "Sr.", "II", "III", "IV", "V")
-# The details stored encrypted, and never written to the audit trail.
 PII_FIELDS = ("gender", "birthdate", "contact_number", "address_line", "address_barangay")
 GENDERS = ("Male", "Female", "Prefer not to say")
 MIN_AGE = 18

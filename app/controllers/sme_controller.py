@@ -168,6 +168,11 @@ def _latest_forecasts_by_plan(profiles):
     )
     for row in rows:
         latest.setdefault(row.sme_id, row)
+    from app.utils.request_memo import request_memo
+
+    for sme_id in ids:
+        found = latest.get(sme_id)
+        request_memo(("latest_forecast", sme_id), lambda found=found: found)
     return latest
 
 
@@ -218,16 +223,38 @@ def _score_summary(forecast):
     }
 
 
-# The Trash dialog's "Moved to Trash on <date>" is shown in Philippine
-# time, like the audit trail and the forum (admin_controller /
-# forum_controller define the same offset): archived_at is stored in UTC
-# (HiddenWhenArchived.archive uses datetime.utcnow), so a plan trashed
-# at 07:00 in Tarlac would otherwise read as trashed the day before. A
-# fixed +8 is exact -- the Philippines has no daylight saving time.
 DISPLAY_UTC_OFFSET = timedelta(hours=8)
 
 
-def _trashed_plans_for(user_id):
+def _user_plans(user_id):
+    """Every plan this user owns, Trash included, in ONE query for the
+    whole request. Home and Planning each need the active plans, the
+    plans in Trash and the expired ones to purge; asking the database
+    three times for three slices of the same few rows was three round
+    trips to a remote MySQL on every visit."""
+    from app.utils.request_memo import request_memo
+
+    return request_memo(
+        ("user_plans", user_id),
+        lambda: SmeProfile.query.execution_options(include_archived=True)
+        .filter(SmeProfile.user_id == user_id)
+        .all(),
+    )
+
+
+def _active_plans(user_id):
+    """The user's plans not in Trash, newest first."""
+    return sorted((p for p in _user_plans(user_id) if p.archived_at is None),
+                  key=lambda p: p.sme_id, reverse=True)
+
+
+def _trashed_profiles(user_id):
+    """The user's plans in Trash, newest-trashed first."""
+    return sorted((p for p in _user_plans(user_id) if p.archived_at is not None),
+                  key=lambda p: (p.archived_at, p.sme_id), reverse=True)
+
+
+def _trashed_plans_for(user_id, latest=None):
     """This user's plans in Trash, newest-trashed first, each with its
     last viability score -- for the Trash dialog on Home.
 
@@ -235,22 +262,14 @@ def _trashed_plans_for(user_id):
     archive filter (app/models/archive.py); without it these rows are
     invisible to every query, which is exactly what keeps a trashed plan
     off every other page."""
-    profiles = (
-        SmeProfile.query.execution_options(include_archived=True)
-        .filter(SmeProfile.user_id == user_id, SmeProfile.archived_at.isnot(None))
-        .order_by(SmeProfile.archived_at.desc(), SmeProfile.sme_id.desc())
-        .all()
-    )
-    latest = _latest_forecasts_by_plan(profiles)
+    profiles = _trashed_profiles(user_id)
+    if latest is None:
+        latest = _latest_forecasts_by_plan(profiles)
     return [
         {
             "profile": profile,
-            # Labelled "last viability" or "last market score" by what
-            # the stored row actually holds -- see _score_summary().
             **_score_summary(latest.get(profile.sme_id)),
             "archived_local": profile.archived_at + DISPLAY_UTC_OFFSET if profile.archived_at else None,
-            # Whole days before purge_expired_trash() deletes it for good
-            # (at least 0; a plan due today still shows as "today").
             "days_left": (
                 max(0, TRASH_RETENTION_DAYS - (datetime.utcnow() - profile.archived_at).days)
                 if profile.archived_at else TRASH_RETENTION_DAYS
@@ -361,20 +380,6 @@ def _industry_card_band(score):
     return "good" if value >= 6.5 else ("fair" if value >= 4 else "low")
 
 
-# ---------------------------------------------------------------------
-# TRASH RETENTION
-# ---------------------------------------------------------------------
-# A plan moved to Trash is archived, not deleted -- and it stays
-# restorable for TRASH_RETENTION_DAYS. After that it is deleted for good,
-# with its forecasts and bookmarks (ORM cascade on SmeProfile and
-# ForecastResult; a notification that pointed at one of those forecasts
-# keeps its text and loses only the link, ondelete=SET NULL).
-#
-# Purged LAZILY, when the owner opens Planning or Home, rather than by a
-# scheduler: this deployment has no cron, and the only person who could
-# notice a plan lingering a day past its 30 is the owner, who triggers
-# the purge simply by looking. The purge itself is audit-logged, so the
-# trail records what was removed and why even though nobody clicked.
 TRASH_RETENTION_DAYS = 30
 
 
@@ -382,15 +387,7 @@ def purge_expired_trash(user_id):
     """Delete this user's plans that have sat in Trash longer than
     TRASH_RETENTION_DAYS. Returns how many were removed."""
     cutoff = datetime.utcnow() - timedelta(days=TRASH_RETENTION_DAYS)
-    expired = (
-        SmeProfile.query.execution_options(include_archived=True)
-        .filter(
-            SmeProfile.user_id == user_id,
-            SmeProfile.archived_at.isnot(None),
-            SmeProfile.archived_at < cutoff,
-        )
-        .all()
-    )
+    expired = [p for p in _trashed_profiles(user_id) if p.archived_at < cutoff]
     for profile in expired:
         details = (f"{profile.business_name}: {profile.industry_type} @ {profile.location} "
                    f"(in Trash since {profile.archived_at:%Y-%m-%d}, over {TRASH_RETENTION_DAYS} days)")
@@ -419,7 +416,7 @@ def home():
 
     purge_expired_trash(current_user.user_id)
 
-    profiles = current_user.sme_profiles.order_by(SmeProfile.sme_id.desc()).all()
+    profiles = _active_plans(current_user.user_id)
     selected_plan = _selected_home_plan(profiles)
     latest_by_plan = _latest_forecasts_by_plan(profiles)
 
@@ -438,9 +435,6 @@ def home():
     featured = latest_by_plan.get(selected_plan.sme_id) if selected_plan else None
     featured_rec = parse_recommendation(featured.recommendation) if featured else None
 
-    # The market around the chosen plan: every industry scored in its
-    # barangay in ONE batch (the same sweep Planning's slider shows), so
-    # Home can name the strongest and the most crowded sections there.
     location = selected_plan.location if selected_plan else None
     top_industries, crowded_industries = [], []
     if location:
@@ -470,7 +464,7 @@ def home():
         featured_rec=featured_rec,
         top_industries=top_industries,
         crowded_industries=crowded_industries,
-        trash_count=len(_trashed_plans_for(current_user.user_id)),
+        trash_count=len(_trashed_profiles(current_user.user_id)),
         unread=unread,
         unread_count=unread_count,
         has_lgu_data=has_lgu_data,
@@ -488,28 +482,11 @@ def planning():
     its transcript, the direct-competition insight and the quarterly
     outlook. Home only summarises this page and links here."""
     purge_expired_trash(current_user.user_id)
-    profiles = current_user.sme_profiles.order_by(SmeProfile.sme_id.desc()).all()
+    profiles = _active_plans(current_user.user_id)
     locations = BARANGAY_NAMES
     selected_plan = _selected_home_plan(profiles)
     default_location = selected_plan.location if selected_plan else (locations[0] if locations else "Poblacion")
 
-    # One quick, EPHEMERAL score per industry type (no forecast_result
-    # write -- see compute_scores docstring) for the SME's own/default
-    # location, so the industry slider on the Home page has live
-    # numbers.
-    #
-    # ALL TWENTY sections, not the eight featured ones the old card grid
-    # showed. The slider shows four at a time and scrolls to the rest, so
-    # an owner can see how every section fares in their barangay without
-    # retyping it in the search box -- which used to be the only way to
-    # see the other twelve.
-    #
-    # Still ONE batch, not one call per card, which is what makes twenty
-    # affordable: a loop of compute_scores() is two SELECTs and a separate
-    # forest dispatch per industry, while compute_scores_batch resolves
-    # every pair's rows in two queries and predicts them in one pass --
-    # more rows in the same matrix, not more round trips. This is the
-    # first page an SME lands on after signing in.
     current_industry = selected_plan.industry_type if selected_plan else None
     card_order = _industry_card_order(current_industry)
     card_scores = compute_scores_batch(
@@ -519,13 +496,6 @@ def planning():
     for industry_type, scores in zip(card_order, card_scores):
         score = scores["viability_score"]
         band = _industry_card_band(score)
-        # The arrow is the score's LEVEL drawn as a direction (green up =
-        # a good chance, red down = hard to compete) -- not a change over
-        # time, so the page's screen-reader text says what it means; see
-        # sme/home.html. It is read off the SAME band as the pill beside
-        # it: the old cut (down below 5) put a red down arrow next to a
-        # yellow "fair" pill for any score from 4 to 4.9, a score the
-        # forecast panel further down calls MODERATE.
         trend = {"good": "up", "fair": "neutral", "low": "down"}[band]
         display = INDUSTRY_DISPLAY.get(industry_type, DEFAULT_INDUSTRY_DISPLAY)
         industry_cards.append({
@@ -541,29 +511,16 @@ def planning():
             "is_current": industry_type == current_industry,
         })
 
-    # Featured forecast (the SELECTED plan) for the "Forecast &
-    # Recommendations" panel -- generated on first visit if that plan
-    # has never actually been forecast yet.
-    latest_by_plan = _latest_forecasts_by_plan(profiles)
+    latest_everywhere = _latest_forecasts_by_plan(_user_plans(current_user.user_id))
+    latest_by_plan = {p.sme_id: latest_everywhere[p.sme_id] for p in profiles if p.sme_id in latest_everywhere}
     featured_forecast = None
     if selected_plan is not None:
         featured_forecast = latest_by_plan.get(selected_plan.sme_id)
         if featured_forecast is None:
-            featured_forecast = generate_forecast_for_profile(selected_plan)
+            featured_forecast = generate_forecast_for_profile(selected_plan, defer_ai=True)
             latest_by_plan[selected_plan.sme_id] = featured_forecast
         elif _forecast_predates_lgu_data(featured_forecast) or _forecast_predates_plan_model(featured_forecast):
-            # An LGU upload has landed since this forecast was written,
-            # so its numbers -- and the recommendation text quoting
-            # them -- describe a city that no longer matches the
-            # records. Re-running it here is what makes "upload the
-            # permits and the output changes" true on the page the SME
-            # actually lands on, rather than only after they happen to
-            # edit their plan.
-            #
-            # Same for a forecast written before the plan viability
-            # model: it has no capital runway, break-even or explanation
-            # to show, so it is re-run once and the new row carries them.
-            featured_forecast = generate_forecast_for_profile(selected_plan)
+            featured_forecast = generate_forecast_for_profile(selected_plan, defer_ai=True)
             latest_by_plan[selected_plan.sme_id] = featured_forecast
 
     featured_industry_type = (
@@ -573,10 +530,6 @@ def planning():
     quarterly_outlook = None
     featured_recommendation = None
     if featured_forecast:
-        # sme_profile: each quarter's viability is the PLAN model re-run
-        # with that quarter's projected saturation and competitor count,
-        # every plan input (capital, staff, prices...) held -- so Q1
-        # agrees with the plan viability on the gauge above it.
         quarterly_outlook = project_quarterly_outlook(
             featured_forecast.saturation_index,
             featured_forecast.viability_score,
@@ -584,31 +537,12 @@ def planning():
             industry_type=featured_forecast.input_industry_type,
             sme_profile=selected_plan,
         )
-        # forecast_result.recommendation is JSON-serialized structured
-        # data (see recommendation_service.py) -- parse it back into
-        # {headline, opportunity_type, summary, reasons, risks,
-        # forecast, explanation} so this panel shows readable text
-        # instead of a raw JSON string. "forecast" is the trained
-        # model's payload (capital runway, break-even, drivers); it is
-        # None on a row older than the plan model.
         featured_recommendation = parse_recommendation(featured_forecast.recommendation)
 
-    # COLD START. The "LGU Recommendations" panel ranks barangays
-    # city-wide -- which barangays the city should steer investment to.
-    # That is a claim about the city's own records, so until an LGU
-    # account has actually uploaded some, the panel says so instead of
-    # ranking barangays off auto-generated placeholder rows. Everything
-    # else on this page answers "what does the data we have say", which
-    # is a fair question either way, so none of it is gated.
     from app.services.data_import_service import active_lgu_dataset_summary, has_active_lgu_data
 
     has_lgu_data = has_active_lgu_data()
 
-    # The choice bar: every plan with its own score, so the owner can
-    # compare plans at a glance and switch without re-entering any. A
-    # plan whose newest forecast predates the plan viability model shows
-    # it as a market score, honestly labelled, until it is opened (which
-    # re-runs it) -- see _score_summary().
     plan_choices = []
     for profile in profiles:
         plan_choices.append({
@@ -622,9 +556,7 @@ def planning():
         profiles=profiles,
         selected_plan=selected_plan,
         plan_choices=plan_choices,
-        # The Trash dialog: plans moved to Trash, restorable. Read with
-        # include_archived -- nothing else on this page can see them.
-        trashed_plans=_trashed_plans_for(current_user.user_id),
+        trashed_plans=_trashed_plans_for(current_user.user_id, latest=latest_everywhere),
         business_types=BUSINESS_TYPES,
         business_stages=BUSINESS_STAGES,
         locations=locations,
@@ -638,8 +570,6 @@ def planning():
         has_lgu_data=has_lgu_data,
         lgu_dataset=active_lgu_dataset_summary() if has_lgu_data else None,
         retention_days=TRASH_RETENTION_DAYS,
-        # Each plan's latest forecast, for the background Gemini
-        # transcript queue (shared/_plan_insights.html).
         plan_forecasts=list(latest_by_plan.values()),
     )
 
@@ -667,16 +597,11 @@ def analyze():
     db.session.add(profile)
     db.session.commit()
 
-    generate_forecast_for_profile(profile)
-    # The trail keeps EVERY field the plan was created with (Details
-    # button), not just the one-line summary.
+    generate_forecast_for_profile(profile, defer_ai=True)
     log_action("create_plan", details=f"{profile.business_name}: {profile.industry_type} @ {profile.location}",
                target=profile, changes=_plan_snapshot(profile))
-    # Select it now, so landing on it is not also logged as a switch.
     session[HOME_PLAN_SESSION_KEY] = profile.sme_id
     flash(f"“{profile.business_name}” added to your plans — its forecast is ready below.", "success")
-    # Land on the plan just made, so the choice bar, the map and the
-    # forecast panel all show it rather than whichever plan was selected.
     return redirect(url_for("sme.planning", plan=profile.sme_id))
 
 
@@ -704,8 +629,7 @@ def update_plan(sme_id):
     profile = _owned_plan(sme_id)
     wants_json = _wants_json()
 
-    form = request.form.copy()  # a mutable MultiDict; getlist() still works
-    # A missing stage picker means "unchanged", not "reset to startup".
+    form = request.form.copy()
     if not form.get("business_stage"):
         form["business_stage"] = profile.business_stage or "startup"
 
@@ -718,29 +642,20 @@ def update_plan(sme_id):
             flash(message, "danger")
         return redirect(url_for("sme.planning", plan=profile.sme_id))
 
-    # Keep a registration date the form did not send, rather than
-    # re-dating an existing business to today on every edit.
     if not form.get("registration_date") and profile.registration_date and data["business_stage"] == "existing":
         data["registration_date"] = profile.registration_date.isoformat()
 
     before = _plan_snapshot(profile)
     apply_plan_data(profile, data)
     db.session.commit()
-    # Re-run the AI engine so the Home page's featured forecast reflects
-    # the edited plan -- every input feeds the plan viability model, so
-    # changing the capital or the staff count changes the forecast too.
-    generate_forecast_for_profile(profile)
+    generate_forecast_for_profile(profile, defer_ai=True)
     changed = diff_fields(before, _plan_snapshot(profile))
     log_action("update_plan",
                details=(f"{profile.business_name}: changed " + ", ".join(changed)) if changed
                else f"{profile.business_name}: saved with no changes",
                target=profile, changes=changed)
-    # Land on the edited plan without that landing being logged as a
-    # separate "switched plan" -- same as a newly added plan.
     session[HOME_PLAN_SESSION_KEY] = profile.sme_id
 
-    # Flashed on BOTH paths: the page's script reloads Home onto the
-    # plan after a JSON success, so the confirmation is shown there.
     flash(f"\u201c{profile.business_name}\u201d updated \u2014 its forecast has been re-run.", "success")
     if wants_json:
         return jsonify({
@@ -774,9 +689,6 @@ def _move_plan_to_trash(sme_id):
                    target=profile, changes={"status": ["active", "in Trash"],
                                             "deleted_permanently_after_days": TRASH_RETENTION_DAYS})
 
-    # The Home page remembers the plan being viewed; if that is the one
-    # just trashed, forget it, so Home falls back to the newest live
-    # plan instead of a plan it can no longer show.
     if session.get(HOME_PLAN_SESSION_KEY) == profile.sme_id:
         session.pop(HOME_PLAN_SESSION_KEY, None)
 
@@ -841,14 +753,7 @@ def saturation_map():
         "sme/saturation_map.html",
         business_types=BUSINESS_TYPES,
         locations=BARANGAY_NAMES,
-        # The month timeline under the map: history from January 2020,
-        # this month, and up to a year of prediction.
         timeline={key: value.strftime("%Y-%m") for key, value in bounds.items()},
-        # Real PSA FIES (2023) household spending-category figures --
-        # the SAME for every barangay (no barangay-level breakdown
-        # exists publicly), so this is computed once here and exposed
-        # as a page-level constant rather than re-fetched per barangay.
-        # See app/services/socio_demographic_service.py for sourcing.
         demand_summary=get_demand_summary(),
     )
 
@@ -872,13 +777,7 @@ def trend_reports():
     return render_template(
         "sme/trend_reports.html",
         business_types=BUSINESS_TYPES,
-        # The line chart plots exactly these 8, so the template can give
-        # each one its own fixed palette slot instead of cycling colours.
         featured_business_types=FEATURED_BUSINESS_TYPES,
-        # The month picker is a real <input type="month"> -- month and
-        # year only, no days, which is what "as of this month" means.
-        # ?as_of= survives the reload it triggers, so the control still
-        # shows the month the charts are actually drawing.
         selected_month=resolve_as_of_month(request.args.get("as_of")).strftime("%Y-%m"),
         earliest_month=EARLIEST_TREND_MONTH.strftime("%Y-%m"),
         latest_month=date.today().strftime("%Y-%m"),
@@ -940,12 +839,8 @@ def recommendations():
     profiles = current_user.sme_profiles.order_by(SmeProfile.sme_id.desc()).all()
     forecasts = []
 
-    # One query for every plan's market row instead of one per plan.
-    # This loop used to run MarketData.query.get() per profile, so an
-    # SME with a dozen saved plans paid a dozen round trips to fetch a
-    # dozen rows by primary key -- the textbook N+1, and each round trip
-    # crosses a data centre in production.
-    latest_by_profile = [(profile, profile.latest_forecast()) for profile in profiles]
+    latest_map = _latest_forecasts_by_plan(profiles)
+    latest_by_profile = [(profile, latest_map.get(profile.sme_id)) for profile in profiles]
     market_ids = {
         latest.market_id for _profile, latest in latest_by_profile
         if latest is not None and latest.market_id is not None
@@ -971,9 +866,6 @@ def recommendations():
             "rec": rec,
             "population": get_real_population(profile.location),
             "competition_level": competition_level_label(competitor_count),
-            # Same AI-derived ROI window the location cards use -- built
-            # from this forecast's own saturation/viability output. See
-            # estimate_roi_timeframe().
             "roi": estimate_roi_timeframe(
                 latest.viability_score, latest.saturation_index, None, None,
             ),
@@ -982,15 +874,6 @@ def recommendations():
 
     saved_ids = {ps.forecast_result_id for ps in PlanSave.query.filter_by(user_id=current_user.user_id).all()}
 
-    # --- "Where else could I open this?" -----------------------------
-    # The storyboard's page promises 15+ further opportunities. This is
-    # that list, and it is real: for the industry on the SME's own plan,
-    # every barangay in the city is scored and the best ones come back
-    # as cards, each one's "Why This Works"/"Considerations" written
-    # from that barangay's own Places API competitor count, real 2024
-    # PSA population/density and the model's own saturation output --
-    # compared against the city median for the same industry. See
-    # app/services/location_opportunity_service.py.
     plan_for_opportunities = None
     if request.args.get("sme_id", type=int):
         plan_for_opportunities = next(
@@ -999,9 +882,6 @@ def recommendations():
     if plan_for_opportunities is None:
         plan_for_opportunities = profiles[0] if profiles else None
 
-    # "Explore more recommendations" drops the 5-card display cap and
-    # shows everything the AI recommended (still only the enterable
-    # tiers -- a saturated barangay is never recommended).
     show_all = request.args.get("all") == "1"
 
     opportunity_result = None
@@ -1025,21 +905,14 @@ def recommendations():
         opportunities=result.get("opportunities", []),
         opportunity_city=result.get("city", {}),
         opportunity_industry_label=result.get("industry_label", ""),
-        # The three summary cards count every barangay the AI scored
-        # city-wide -- NOT the SME's own saved plans, which is what they
-        # used to show (and why they read "1 / 1 / 2").
         high_count=result.get("high_opportunity_count", 0),
         moderate_count=result.get("moderate_opportunity_count", 0),
-        # "AI-Recommended Locations" must mean locations the AI actually
-        # recommends -- High + Moderate -- not every barangay it scored.
         locations_count=result.get("recommended_count", 0),
         not_recommended_count=result.get("not_recommended_count", 0),
         total_scored=result.get("total_scored", 0),
         showing_count=result.get("showing_count", 0),
         has_more=result.get("has_more", False),
         show_all=show_all,
-        # Which (industry, location) pairs this user has already saved,
-        # so a card can show "Saved" instead of offering to save twice.
         saved_locations={
             (p.industry_type, p.location) for p in profiles
         },
@@ -1071,12 +944,6 @@ def save_recommended_location():
         flash("Could not save that recommendation -- it was missing an industry or location.", "danger")
         return redirect(url_for("sme.recommendations"))
 
-    # This endpoint creates a real business plan, so it validates its
-    # inputs rather than trusting whatever was posted: only an industry
-    # the system actually scores, and only a barangay it actually knows.
-    # Without this a malformed or hand-crafted POST would happily create
-    # a plan for a location that does not exist, which then can never be
-    # scored or mapped.
     if industry_type not in BUSINESS_TYPES:
         flash("That industry is not one this system scores.", "danger")
         return redirect(url_for("sme.recommendations"))
@@ -1090,8 +957,6 @@ def save_recommended_location():
     if source is None:
         source = current_user.sme_profiles.order_by(SmeProfile.sme_id.desc()).first()
 
-    # Already saved this exact combination? Don't create a duplicate
-    # plan -- just say so and go back.
     existing = SmeProfile.query.filter_by(
         user_id=current_user.user_id, industry_type=industry_type, location=location
     ).first()
@@ -1104,16 +969,11 @@ def save_recommended_location():
         business_name=f"{short_industry_label(industry_type)} in {location}",
         industry_type=industry_type,
         location=location,
-        # Carried over from the plan this was scored against, so the new
-        # plan is forecast on the same parameters the card showed.
         startup_capital=source.startup_capital if source else 0,
         employee_count=source.employee_count if source else None,
         business_stage="startup",
     )
     if source is not None and source.industry_type == industry_type:
-        # Same business, different barangay: what they sell, how they
-        # differ and their menu travel with it. (A different industry
-        # would make the old sub-category meaningless, so it is not.)
         profile.subcategory = source.subcategory
         profile.product_offering = source.product_offering
         profile.innovation_idea = source.innovation_idea
@@ -1121,7 +981,7 @@ def save_recommended_location():
     db.session.add(profile)
     db.session.commit()
 
-    forecast = generate_forecast_for_profile(profile)
+    forecast = generate_forecast_for_profile(profile, defer_ai=True)
     if forecast is not None:
         db.session.add(PlanSave(user_id=current_user.user_id, forecast_result_id=forecast.forecast_id))
         db.session.commit()

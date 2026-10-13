@@ -136,9 +136,8 @@
   .dss-sat-industry, .dss-sat-overlay { flex: 1 1 0; width: auto; min-width: 0; }
 }
 
-/* Map + side panel. The two columns share one row height: the map card
-   grows to the side panel's height (no dead band under the map), and the
-   barangay list grows if the map is the taller one. */
+/* Map + side panel. Each column keeps its own height, so whatever
+   expands on one side never stretches the other. */
 .dss-sat-layout {
   --dss-side-w: 380px;
   --dss-sat-gap: 1rem;
@@ -146,15 +145,16 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--dss-side-w);
   gap: var(--dss-sat-gap);
-  align-items: stretch;
+  align-items: start;
   transition: grid-template-columns .25s ease;
 }
 .dss-sat-main { min-width: 0; }
-.dss-sat-map-card { height: 100%; display: flex; flex-direction: column; }
-.dss-sat-map-card .dss-map-wrap { flex: 1 1 auto; display: flex; flex-direction: column; }
-/* At least most of the screen, never under 520px; taller when the side
-   panel beside it is taller. */
-.dss-sat-map-card #dss-map { flex: 1 1 auto; height: auto; min-height: max(520px, calc(100vh - 360px)); }
+.dss-sat-map-card { display: flex; flex-direction: column; }
+.dss-sat-map-card .dss-map-wrap { flex: 0 0 auto; display: flex; flex-direction: column; }
+/* A fixed height: most of the screen, never under 520px. Opening a
+   section in the side panel (or the "About this map's data" note) never
+   stretches the map. */
+.dss-sat-map-card #dss-map { flex: 0 0 auto; height: max(520px, calc(100vh - 360px)); min-height: 0; }
 
 .dss-sat-side {
   min-width: 0;
@@ -162,8 +162,8 @@
   flex-direction: column;
   gap: 1rem;
 }
-.dss-sat-list-card { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-.dss-sat-list-card #locationList { flex: 1 1 0; min-height: 260px; overflow-y: auto; }
+.dss-sat-list-card { display: flex; flex-direction: column; }
+.dss-sat-list-card #locationList { flex: 0 0 auto; height: 360px; overflow-y: auto; }
 
 /* The fold-away tab, centred on the gap between map and panel. */
 .dss-side-toggle {
@@ -203,8 +203,8 @@
   .dss-sat-layout.is-side-collapsed { grid-template-columns: minmax(0, 1fr); gap: var(--dss-sat-gap); }
   .dss-sat-layout.is-side-collapsed .dss-sat-side { visibility: visible; overflow: visible; }
   .dss-side-toggle { display: none; }
-  .dss-sat-map-card #dss-map { min-height: 420px; }
-  .dss-sat-list-card #locationList { max-height: 360px; flex: 0 1 auto; }
+  .dss-sat-map-card #dss-map { height: 420px; }
+  .dss-sat-list-card #locationList { height: auto; max-height: 360px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1644,12 +1644,15 @@ body.dss-body {
 }
 .dss-card-current { box-shadow: inset 0 0 0 2px var(--dss-blue), 0 1px 3px rgba(0,0,0,.08); }
 
-/* The Home map fills its card, so it is as tall as the forecast panel
-   beside it -- no dead band underneath -- and never shorter than 440px. */
-#dss-map.dss-mini-map.dss-home-map { height: auto; min-height: 440px; flex: 1 1 auto; border-radius: .5rem; }
+/* The Planning map has a fixed height. It does not follow the forecast
+   panel beside it, so expanding a section there never stretches the map
+   or its card (.dss-independent-cols lets each column keep its own
+   height). */
+#dss-map.dss-mini-map.dss-home-map { height: 440px; min-height: 0; flex: 0 0 auto; border-radius: .5rem; }
 @media (max-width: 991.98px) {
-  #dss-map.dss-mini-map.dss-home-map { min-height: 380px; }
+  #dss-map.dss-mini-map.dss-home-map { height: 380px; }
 }
+.dss-independent-cols > [class*="col-"] > .dss-card { height: auto; }
 .dss-legend-inline { display: flex; flex-wrap: wrap; gap: .35rem 1rem; align-items: center; }
 .dss-legend-inline .dss-legend-swatch { width: 12px; height: 12px; margin-right: .3rem; }
 

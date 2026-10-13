@@ -44,10 +44,6 @@ def app():
         db.drop_all()
 
 
-# ---------------------------------------------------------------------
-# _coerce_llm_payload -- pure JSON-validation logic, no network needed.
-# ---------------------------------------------------------------------
-
 def _valid_payload_json():
     return json.dumps({
         "headline": "HIGH OPPORTUNITY -- favorable conditions for market entry.",
@@ -108,12 +104,6 @@ def test_coerce_llm_payload_empty_input_returns_none():
     assert _coerce_llm_payload(None) is None
 
 
-# ---------------------------------------------------------------------
-# serialize_recommendation / parse_recommendation -- storage round trip
-# in forecast_result.recommendation's single TEXT column, including
-# backward compatibility with the OLD plain-text format.
-# ---------------------------------------------------------------------
-
 def test_serialize_then_parse_round_trip():
     original = {
         "headline": "MODERATE OPPORTUNITY -- viable with a solid differentiation strategy.",
@@ -134,8 +124,6 @@ def test_serialize_then_parse_round_trip():
     assert stored.startswith("{")
 
     parsed = rec_service.parse_recommendation(stored)
-    # A row stored without a competitor insight gets one rebuilt from the
-    # fields it did store; everything else round-trips unchanged.
     insight = parsed.pop("competitor_insight")
     assert parsed == original
     assert insight and insight["direct_count"] == 2
@@ -150,15 +138,11 @@ def test_a_forecast_stored_before_subcategories_still_parses():
     parsed = rec_service.parse_recommendation(old_row)
     assert parsed["subcategory_analysis"] is None
     assert parsed["innovation"] is None
-    # Nor the trained plan model's payload or its explanation.
     assert parsed["forecast"] is None
     assert parsed["explanation"] is None
 
 
 def test_parse_recommendation_legacy_plain_text_format():
-    # Exactly the shape the OLD rule_based_text() in a prior version of
-    # this module produced -- a real row seeded before this change
-    # would look like this.
     legacy_text = (
         "HIGH SATURATION -- avoid this market or pivot to a clearly differentiated niche.\n\n"
         "A retail business in Matatalaib is currently classified as 'Saturated' saturation (88%), "
@@ -186,10 +170,6 @@ def test_parse_recommendation_empty_or_none_returns_shaped_default():
         assert parsed["risks"] == []
 
 
-# ---------------------------------------------------------------------
-# Small display-only helpers.
-# ---------------------------------------------------------------------
-
 def test_competition_level_label_tiers():
     assert rec_service.competition_level_label(0) == "Very Low (0 competitors)"
     assert rec_service.competition_level_label(1) == "Low (1 competitors)"
@@ -204,10 +184,6 @@ def test_revenue_is_no_longer_part_of_the_recommendation():
     from app.services.llm_service import _prompt_for
     assert "revenue" not in _prompt_for(_sample_context()).lower()
 
-
-# ---------------------------------------------------------------------
-# build_recommendation() -- rule-based default, LLM opt-in (mocked).
-# ---------------------------------------------------------------------
 
 def _sample_context():
     return {
@@ -259,8 +235,6 @@ def test_build_recommendation_uses_llm_when_enabled_and_available(app, monkeypat
 
         recommendation = rec_service.build_recommendation(_sample_context())
         assert {key: recommendation[key] for key in mock_payload} == mock_payload
-        # No idea was described, so the innovation read is the
-        # rule-based one and the LLM was never asked to rate novelty.
         assert recommendation["innovation"]["generated_by"] == "rule_based"
         assert recommendation["innovation"]["novelty"] is None
         assert recommendation["subcategory_analysis"] is None
@@ -282,7 +256,6 @@ def test_llm_innovation_read_is_merged_when_the_owner_described_an_idea(app, mon
         assert innovation["novelty"] == "High"
         assert innovation["summary"] == "Nobody nearby delivers."
         assert innovation["generated_by"] == "llm:gemini"
-        # The differentiation need stays the one read from the model.
         assert innovation["differentiation_need"] == "Moderate"
         assert "innovation" in mock_payload, "the caller's dict must not be mutated"
 
@@ -291,9 +264,6 @@ def test_build_recommendation_falls_back_to_rule_based_when_llm_unavailable(app,
     with app.app_context():
         SystemSetting.set("use_llm_recommendations", "true")
 
-        # Simulates: no API key configured, network failure, or a
-        # malformed response -- generate_recommendation_json() always
-        # returns None in that case (see llm_service.py), never raises.
         monkeypatch.setattr(
             "app.services.llm_service.generate_recommendation_json",
             lambda context: None,
@@ -302,11 +272,6 @@ def test_build_recommendation_falls_back_to_rule_based_when_llm_unavailable(app,
         recommendation = rec_service.build_recommendation(_sample_context())
         assert recommendation["generated_by"] == "rule_based"
 
-
-# ---------------------------------------------------------------------
-# End-to-end: generate_forecast_for_profile() persists a valid,
-# parseable structured recommendation either way.
-# ---------------------------------------------------------------------
 
 def test_generate_forecast_for_profile_stores_parseable_recommendation(app):
     with app.app_context():
@@ -330,20 +295,11 @@ def test_generate_forecast_for_profile_stores_parseable_recommendation(app):
 
         forecast = generate_forecast_for_profile(profile)
 
-        # Stored value is JSON (this version's format), not the old
-        # freeform text -- and it parses straight back into the full
-        # structured shape every template expects.
         stored = json.loads(forecast.recommendation)
         assert set(stored.keys()) == {
             "headline", "opportunity_type", "summary", "reasons", "risks", "generated_by",
             "subcategory_analysis", "innovation", "forecast", "explanation", "competitor_insight",
         }
-        # Every forecast now carries the two-stage model's payload, and
-        # the payload always comes with an explanation of it -- rule-based
-        # here, because no LLM key is configured in the test environment.
-        # Asserted unconditionally: the Home page regenerates any stored
-        # forecast whose payload is missing, so a forecast written without
-        # one would be regenerated on every visit.
         assert stored["forecast"] is not None
         assert stored["forecast"]["version"] == "plan_v1"
         assert stored["forecast"]["plan"]["viability_score"] == float(forecast.viability_score)
@@ -355,8 +311,4 @@ def test_generate_forecast_for_profile_stores_parseable_recommendation(app):
         assert parsed["opportunity_type"] in (
             "High Opportunity", "Moderate Opportunity", "Low Opportunity", "High Saturation",
         )
-        # No OPENAI_API_KEY/ANTHROPIC_API_KEY is configured in the test
-        # environment, so even though use_llm_recommendations now
-        # defaults to true, the LLM client never initializes and this
-        # silently falls back to the rule-based generator.
         assert parsed["generated_by"] == "rule_based"

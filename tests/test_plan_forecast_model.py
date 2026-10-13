@@ -75,23 +75,18 @@ from app.models import LguData, MarketData, SmeProfile, SystemSetting, User
 from app.services import plan_forecast_service as pfs
 
 FOOD = "Food and Beverage"
-LOCATION = "Tibag"           # rent P18,000 in the reference profile
+LOCATION = "Tibag"
 POPULATION = 12000
 MODEL_STORE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "ml", "model_store")
 PLAN_PKL = os.path.join(MODEL_STORE, pm.PLAN_MODEL_FILENAME)
 
-# See the module docstring.
 FOREST_WOBBLE = 1.0
-# Largest wrong-way move doubling capital may cause in a RANDOM plan
-# (worst seen over 100,000: 4.2 points), and the share of plans allowed
-# to move the wrong way by more than a point (seen: 0.35%).
 CAPITAL_WRONG_WAY_POINTS = 4.5
 CAPITAL_WRONG_WAY_SHARE_OVER_1_POINT = 0.02
 
 
 @pytest.fixture
 def app(monkeypatch):
-    # Offline and deterministic: no LLM call, no Google Places call.
     monkeypatch.setenv("USE_LLM_RECOMMENDATIONS", "false")
     app = create_app("testing")
     app.config["PLACES_LIVE_FETCH"] = False
@@ -156,10 +151,6 @@ def _never_down(series, mode):
         assert after >= before - tolerance, f"viability fell {before} -> {after} in {series}"
 
 
-# ---------------------------------------------------------------------
-# 1. Every business parameter moves the forecast, the documented way
-# ---------------------------------------------------------------------
-
 def test_more_capital_never_lowers_viability_and_enough_of_it_raises_it(mode):
     series = [_viability(startup_capital=c) for c in (30_000, 150_000, 600_000, 2_000_000, 6_000_000)]
     _never_down(series, mode)
@@ -209,8 +200,6 @@ def test_more_employees_on_little_capital_shortens_the_runway(mode):
     lean = _forecast(_plan(startup_capital=60_000, employee_count=0))["financials"]
     staffed = _forecast(_plan(startup_capital=60_000, employee_count=6))["financials"]
 
-    # Payroll is employees x wage x 26 days, exactly -- the wage is the
-    # DOLE RBIII-26 default here.
     assert staffed["monthly_payroll"] == pytest.approx(6 * 590.0 * OPERATING_DAYS_PER_MONTH)
     assert staffed["monthly_fixed_cost"] - lean["monthly_fixed_cost"] == pytest.approx(6 * 590.0 * 26)
     assert staffed["capital_runway_months"] < lean["capital_runway_months"]
@@ -237,13 +226,11 @@ def test_a_sane_price_list_is_covered_by_the_market_and_helps(mode):
     fin = priced["financials"]
     assert priced["inputs"]["priced_item_count"] == 5
     assert priced["inputs"]["average_price"] == pytest.approx(85.0)
-    # Required daily sales = fixed cost / (price x margin x 26), and a
-    # sane price list needs fewer of them than the market can supply.
     assert fin["required_daily_sales"] == pytest.approx(
         fin["monthly_fixed_cost"] / (85.0 * 0.40 * 26), abs=0.06)
     assert 0 < fin["required_daily_sales"] < fin["daily_sales_ceiling"]
     coverage = {c["key"]: c["score"] for c in priced["components"]}["price_coverage"]
-    assert coverage > 0.5          # better than "unknown" (0.5)
+    assert coverage > 0.5
 
     assert priced["plan"]["viability_index"] > no_prices["plan"]["viability_index"]
 
@@ -269,15 +256,13 @@ def test_a_price_that_is_not_a_price_point_is_left_out_not_crashed_on(mode, pric
     used to raise inside the forest's predict() (float32 overflow) and
     take Home down for good. A price outside P0.01-P10,000,000 is now
     simply not a price point: the item still describes the offering."""
-    # json.dumps writes inf/nan as Infinity/NaN, which offering_items
-    # reads straight back -- exactly what the database would hold.
     items = json.dumps([{"item": "Coffee", "price": price}, {"item": "Cake", "price": 120}])
     payload = _forecast(_plan(offering_details=items))
 
     assert payload["inputs"]["priced_item_count"] == 1
     assert payload["inputs"]["average_price"] == 120.0
     assert payload["inputs"]["has_offering_description"] is True
-    json.dumps(payload, allow_nan=False)        # strict JSON: no Infinity / NaN anywhere
+    json.dumps(payload, allow_nan=False)
 
     only_bad = _forecast(_plan(offering_details=json.dumps([{"item": "Coffee", "price": price}])))
     assert only_bad["inputs"]["priced_item_count"] == 0
@@ -303,7 +288,6 @@ def test_extreme_inputs_stay_finite_and_inside_float32(mode):
     result = pfs._predict(inputs)
     assert 0.0 <= result["viability_index"] <= 100.0
 
-    # And end to end, with a capital no form would accept.
     payload = _forecast(_plan(startup_capital=float("inf"), employee_count=10**40))
     json.dumps(payload, allow_nan=False)
     assert 0.0 <= payload["plan"]["viability_index"] <= 100.0
@@ -328,10 +312,6 @@ def test_the_business_name_is_not_a_business_parameter(mode):
     assert a["plan"] == b["plan"] and a["drivers"] == b["drivers"]
 
 
-# ---------------------------------------------------------------------
-# 2. The explanation adds up -- exactly
-# ---------------------------------------------------------------------
-
 @pytest.mark.skipif(not os.path.exists(PLAN_PKL), reason="no trained plan_model.pkl")
 def test_path_decomposition_sums_exactly_to_the_forest_prediction(app):
     model = pfs._load_plan_model()
@@ -353,8 +333,6 @@ def test_path_decomposition_sums_exactly_to_the_forest_prediction(app):
         assert prediction == pytest.approx(float(model.predict(np.array([vector]))[0]), abs=1e-9)
         assert len(trees) == len(model.estimators_)
 
-        # The fast path the quarterly outlook uses gives the forest's
-        # own answer, to the last bit, from the same leaves.
         leaves = pm.tree_leaf_values(model, vector)
         assert np.array_equal(leaves, [t.predict(np.array([vector]))[0] for t in model.estimators_])
         assert np.array_equal(leaves, trees)
@@ -367,7 +345,6 @@ def test_the_payload_breakdown_adds_up_to_the_reported_viability(mode):
         payload = _forecast(profile)
         total = payload["baseline"] + sum(d["points"] for d in payload["drivers"])
         assert round(total, 1) == payload["plan"]["viability_index"]
-        # Biggest effect first.
         sizes = [abs(d["points"]) for d in payload["drivers"]]
         assert sizes == sorted(sizes, reverse=True)
         assert {d["key"] for d in payload["drivers"]} == set(pm.DRIVER_LABELS)
@@ -398,10 +375,6 @@ def test_round_preserving_sum_keeps_the_total():
     assert round(sum(rounded), 1) == round(sum(parts), 1)
     assert all(abs(r - p) < 0.1 + 1e-9 for r, p in zip(rounded, parts))
 
-
-# ---------------------------------------------------------------------
-# 3. The payload contract
-# ---------------------------------------------------------------------
 
 CONTRACT = {
     "top": {"version", "market", "plan", "inputs", "financials", "components", "baseline", "drivers"},
@@ -464,7 +437,7 @@ def test_capital_and_location_reach_the_financials(mode):
     payload = _forecast(_plan(startup_capital=480_000, employee_count=2))
     fin = payload["financials"]
     assert payload["inputs"]["capital"] == 480000.0
-    assert fin["monthly_rent"] == 18000.0                      # Tibag's reference rent
+    assert fin["monthly_rent"] == 18000.0
     assert fin["monthly_fixed_cost"] == pytest.approx(18000 + 2 * 590 * 26)
     assert fin["capital_runway_months"] == pytest.approx(480000 / fin["monthly_fixed_cost"], abs=0.05)
     assert payload["inputs"]["residents_per_business"] == pytest.approx(POPULATION / 8, abs=0.05)
@@ -478,12 +451,9 @@ def test_admin_assumptions_feed_the_forecast(mode):
     assert fin["daily_wage"] == 700.0 and fin["gross_margin"] == 0.5
     assert fin["monthly_payroll"] == pytest.approx(700 * 26)
 
-    # A broken setting is not an assumption: the documented default stands.
     SystemSetting.set(pfs.WAGE_SETTING_KEY, "0")
     SystemSetting.set(pfs.MARGIN_SETTING_KEY, "1.5")
     assert pfs.plan_assumptions() == (590.0, 0.40)
-    # Nor is a wage too large to be a wage (it used to overflow the
-    # forest's input for every plan with staff).
     for wage in ("1e37", "1e308", "inf", "nan", "100001"):
         SystemSetting.set(pfs.WAGE_SETTING_KEY, wage)
         assert pfs.plan_assumptions()[0] == 590.0, wage
@@ -497,14 +467,12 @@ def test_a_stored_payload_hands_back_the_assumptions_it_used(mode):
     payload = _forecast(_plan(employee_count=2, offering_details=_items(("Coffee", 90))))
 
     used = pfs.plan_assumptions()
-    assert used == (612.35, 0.3726) or used == (612.34, 0.3726)   # float rounding of .345
+    assert used == (612.35, 0.3726) or used == (612.34, 0.3726)
     assert pfs.assumptions_from_payload(payload) == used
     assert pfs.assumptions_from_payload(None) is None
     assert pfs.assumptions_from_payload({"financials": {}}) is None
     assert pfs.assumptions_from_payload({"financials": {"daily_wage": 1e37, "gross_margin": 0.4}}) is None
 
-    # Holding them reproduces the stored viability exactly, whatever the
-    # settings say now.
     SystemSetting.set(pfs.WAGE_SETTING_KEY, "900")
     SystemSetting.set(pfs.MARGIN_SETTING_KEY, "0.15")
     profile = _plan(employee_count=2, offering_details=_items(("Coffee", 90)))
@@ -566,7 +534,6 @@ def test_the_admin_settings_page_edits_the_plan_assumptions(app):
     client.post("/admin/settings", data={"plan_daily_wage_php": "610", "plan_gross_margin": "0.35"})
     assert SystemSetting.get(pfs.WAGE_SETTING_KEY) == "610"
     assert SystemSetting.get(pfs.MARGIN_SETTING_KEY) == "0.35"
-    # Centavos are kept in full (":g" used to cut this to 12345.7).
     client.post("/admin/settings", data={"plan_daily_wage_php": "12,345.67"})
     assert SystemSetting.get(pfs.WAGE_SETTING_KEY) == "12345.67"
 
@@ -583,7 +550,7 @@ def test_the_admin_settings_page_says_gemini_narrates_the_forecast(app):
     assert "Gemini" in page
     for internal in ("GEMINI_API_KEY", "LLM_PROVIDER", "OPENAI_API_KEY", "USE_LLM_RECOMMENDATIONS", ".env", ".py"):
         assert internal not in page, f"{internal} is shown on the admin Settings page"
-    assert 'max="100000"' in page          # the wage input carries its upper bound too
+    assert 'max="100000"' in page
 
     from app.models.system_setting import DEFAULT_SETTINGS
 
@@ -623,13 +590,13 @@ def test_the_admin_can_turn_the_llm_switch_off_and_it_stays_off(app):
     from app.services.startup_migrations import run_startup_migrations
 
     client = _admin_client(app)
-    client.post("/admin/settings", data={})          # the checkbox unticked
+    client.post("/admin/settings", data={})
     assert SystemSetting.get("use_llm_recommendations") == "false"
 
     page = client.get("/admin/settings").get_data(as_text=True)
     assert SystemSetting.get("use_llm_recommendations") == "false"
     toggle = re.search(r'<input[^>]*id="llmToggle"[^>]*>', page).group(0)
-    assert "checked" not in toggle                    # the page shows it off, too
+    assert "checked" not in toggle
     run_startup_migrations(app)
     assert SystemSetting.get("use_llm_recommendations") == "false"
 
@@ -650,10 +617,6 @@ def test_the_admin_settings_page_refuses_a_broken_assumption(app, field, value):
     assert SystemSetting.get(field) == before
     assert "Settings saved, except the" in page
 
-
-# ---------------------------------------------------------------------
-# 4. No trained model: the documented formula, labelled as such
-# ---------------------------------------------------------------------
 
 def test_without_a_model_file_the_formula_stands_in(app, tmp_path):
     app.config["MODEL_DIR"] = str(tmp_path)
@@ -751,10 +714,6 @@ def test_stage_one_requests_arriving_during_its_first_load_wait_too(app):
     assert reads == 1
 
 
-# ---------------------------------------------------------------------
-# 5. Training and inference build the same row
-# ---------------------------------------------------------------------
-
 @pytest.mark.skipif(not os.path.exists(PLAN_PKL), reason="no trained plan_model.pkl")
 def test_the_trained_bundle_records_the_feature_order_the_code_uses():
     bundle = joblib.load(PLAN_PKL)
@@ -797,10 +756,6 @@ def test_plan_feature_vector_follows_plan_feature_names():
     assert vector[PLAN_FEATURE_NAMES.index("monthly_fixed_cost")] == pytest.approx(12000 + 3 * 590 * 26)
 
 
-# ---------------------------------------------------------------------
-# 6. Stage 1 is untouched; the ROI window shares stage 2's ramp formula
-# ---------------------------------------------------------------------
-
 def test_stage_one_scores_are_unchanged(app):
     from app.services.forecasting_service import compute_scores
 
@@ -808,7 +763,6 @@ def test_stage_one_scores_are_unchanged(app):
     assert set(result) == {"industry_type", "location", "market_id", "lgu_id", "competitor_count",
                            "saturation_index", "viability_score", "confidence_level",
                            "cluster_label", "model_version"}
-    # A MARKET's viability is still the market formula.
     assert result["viability_score"] == round(max(0.0, min(10.0, (100 - result["saturation_index"]) / 10)), 1)
     assert result["model_version"] in ("rf_v1", "formula_v1")
 
@@ -859,13 +813,8 @@ def test_location_cards_say_their_score_is_the_markets_not_the_plans(app):
         assert "plan parameters" not in reasons
         assert "market-only score" in reasons and "Plan Viability" in reasons
         assert quoted in reasons
-    # Without a plan, nothing is said about one.
     assert "Plan Viability" not in " ".join(_reasons_for(row, city, {}, None, "Food"))
 
-
-# ---------------------------------------------------------------------
-# 7. generate_forecast_for_profile stores the plan's forecast
-# ---------------------------------------------------------------------
 
 def _market_on_file(user_id, competitors=12):
     db.session.add(MarketData(
@@ -935,7 +884,7 @@ def test_trend_reports_keep_averaging_the_market_viability(app):
     forecast = generate_forecast_for_profile(profile)
 
     market_viability = round((100 - float(forecast.saturation_index)) / 10, 1)
-    assert float(forecast.viability_score) != market_viability   # the plan's own figure differs
+    assert float(forecast.viability_score) != market_viability
     assert get_overview_stats([], [forecast])["avg_viability"] == market_viability
 
 
@@ -959,17 +908,6 @@ def test_two_plans_in_one_market_now_differ_by_their_parameters(app):
     assert float(thin_forecast.saturation_index) == pytest.approx(float(solid_forecast.saturation_index))
     assert float(solid_forecast.viability_score) > float(thin_forecast.viability_score)
 
-
-# ---------------------------------------------------------------------
-# 8. The Admin's wage and margin are learnt; a stale model is retrained
-# ---------------------------------------------------------------------
-# The wage and gross margin used to be held at P590 / 40% for every
-# training plan, so the forest never saw them vary: an Admin who halved
-# the margin moved the scorecard by -1.2 points on an average priced
-# plan and the forest by -0.1. Training now draws both per plan
-# (train_model._PLAN_DAILY_WAGE_RANGE). And because plan_model.pkl is
-# gitignored and a host's build cache can keep an old one, the bundle
-# records a fingerprint of its training recipe that seed.py checks.
 
 def test_training_draws_the_wage_and_margin_per_plan():
     """The forest can only learn an input that varies in its training
@@ -1098,7 +1036,7 @@ def test_the_fingerprint_changes_with_the_recipe_and_only_with_it(monkeypatch):
     monkeypatch.undo()
     assert fingerprint() == base
 
-    monkeypatch.setattr(pm, "STAFF_FULL_CAPACITY", 4)       # a scorecard formula change
+    monkeypatch.setattr(pm, "STAFF_FULL_CAPACITY", 4)
     assert fingerprint() != base
     monkeypatch.undo()
 
@@ -1119,14 +1057,11 @@ def test_plan_model_staleness_reads_the_fingerprint(tmp_path):
 
     assert tm.plan_model_staleness(str(tmp_path)) == "no plan viability model on disk"
     assert staleness_of(training_config_hash=current) is None
-    # Every model trained before the fingerprint existed -- what an old
-    # build cache would hold.
     assert "predates" in staleness_of()
     assert "different recipe" in staleness_of(training_config_hash="0" * 64)
     plan_file.write_bytes(b"not a pickle")
     assert "could not be read" in tm.plan_model_staleness(str(tmp_path))
 
-    # The right recipe on a different market model is still stale.
     staleness_of(training_config_hash=current)
     joblib.dump(_tiny_market_forest(seed=1), tmp_path / tm.RF_MODEL_FILE)
     assert "different recipe" in tm.plan_model_staleness(str(tmp_path))

@@ -76,10 +76,6 @@ def app():
         db.drop_all()
 
 
-# ---------------------------------------------------------------------
-# 1. The toast is not inside anything that can be transformed
-# ---------------------------------------------------------------------
-
 def test_the_flash_include_is_a_direct_child_of_body():
     """Not tidiness. Inside .dss-main the toast is positioned against
     .dss-main; out here it is positioned against the viewport, and no
@@ -108,18 +104,9 @@ def test_the_toast_wrapper_is_pinned_to_the_top_centre_with_no_offset():
     assert re.search(r"left\s*:\s*50%", declarations), "asked for top CENTRE"
     assert re.search(r"margin\s*:\s*0", declarations), "asked for 0 margin"
     assert re.search(r"padding\s*:\s*0", declarations), "asked for 0 padding"
-    # The wrapper is wider than the toast inside it, so without this the
-    # transparent strip either side swallows clicks aimed at the page.
     assert re.search(r"pointer-events\s*:\s*none", declarations)
 
 
-# ---------------------------------------------------------------------
-# 2. Nothing animates the page containers
-# ---------------------------------------------------------------------
-
-# The two shells every page is built out of: .dss-main wraps
-# {% block content %} for a signed-in user, .ml-landing is the whole
-# public page. Both hold fixed descendants.
 PAGE_CONTAINERS = (".dss-main", ".ml-landing")
 
 
@@ -184,8 +171,6 @@ def test_the_fixed_landing_backdrop_is_still_a_child_of_the_landing():
     should fail and say so."""
     for template in ("login.html", "register.html", "verify_email.html"):
         markup = _read("app", "templates", "auth", template)
-        # verify_email carries `class="ml-landing ml-landing-short"`, so
-        # match the class rather than the whole attribute.
         shell = re.search(r'class="ml-landing[ "]', markup)
         backdrop = re.search(r'class="ml-bg[ "]', markup)
         assert shell, f"{template} no longer opens with the landing shell"
@@ -210,10 +195,6 @@ def test_the_toast_itself_still_animates():
     for name in ("dss-flash-in", "dss-flash-out", "dss-flash-drain"):
         assert re.search(rf"@keyframes\s+{name}\b", css), f"@keyframes {name} is gone"
 
-
-# ---------------------------------------------------------------------
-# 3. Colour carries the meaning the user asked for
-# ---------------------------------------------------------------------
 
 def test_a_failed_login_is_flashed_as_an_error(app):
     """Red for incorrect or invalid. The tone comes from the category the

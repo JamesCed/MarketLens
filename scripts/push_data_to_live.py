@@ -67,16 +67,16 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from dotenv import load_dotenv  # noqa: E402
+from dotenv import load_dotenv
 
 load_dotenv()
 
-from sqlalchemy import create_engine, delete, func, insert, select  # noqa: E402
-from sqlalchemy.orm import Session  # noqa: E402
+from sqlalchemy import create_engine, delete, func, insert, select
+from sqlalchemy.orm import Session
 
-from app.config import Config, normalise_database_url  # noqa: E402
-from app.models import LguData, MarketData, SystemSetting  # noqa: E402
-from app.models.user import User  # noqa: E402
+from app.config import Config, normalise_database_url
+from app.models import LguData, MarketData, SystemSetting
+from app.models.user import User
 
 SYSTEM_USER_EMAIL = "system@dss.local"
 BATCH = 500
@@ -85,8 +85,6 @@ BATCH = 500
 def _source_url(explicit):
     if explicit:
         return normalise_database_url(explicit)
-    # Same five variables the app reads, so "it works locally" and
-    # "this script can read it" are never out of step.
     return Config.SQLALCHEMY_DATABASE_URI
 
 
@@ -214,7 +212,6 @@ def main():
         _copy(MarketData, src, dst, args,
               label="market_data  (competitor counts, incl. real Google Places lookups)")
 
-        # See "THE FOREIGN KEY THAT CANNOT TRAVEL" at the top.
         system_user = dst.execute(
             select(User.__table__.c.user_id).where(User.__table__.c.email == SYSTEM_USER_EMAIL)
         ).scalar_one_or_none()

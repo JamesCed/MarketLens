@@ -76,35 +76,13 @@ from app.extensions import db
 from app.models import MarketData, Notification, SystemSetting
 from app.models.user import User
 
-# How far the saturation index must move to be worth an alert, in
-# points on the 0-100 scale. Ten is about the width of half a cluster
-# band -- big enough that a reasonable person would want to know,
-# small enough to catch a market turning before it has finished.
 MIN_SATURATION_DELTA = 10.0
 
-# A tier crossing is reported below the main bar, because the tier is
-# what the rest of the app displays -- but not at ANY size, and this is
-# the bar that stops the worst failure mode of the whole feature.
-#
-# A combination sitting at 49.8 crosses into "High" when one shop opens
-# and falls back to "Moderate" when one closes. Without a floor here,
-# that barangay alerts on every single permit, forever, over a
-# one-point move -- and an alert stream like that is one people mute,
-# which also loses the alert that mattered. Three points is roughly a
-# tenth of a cluster band: small enough that any crossing reflecting a
-# genuine shift still gets through, large enough that knife-edge
-# flapping does not.
 MIN_TIER_CROSS_DELTA = 3.0
 
-# Minimum gap between sweeps. Importing three files in a row is one
-# event to a person, not three, and a free Gmail/Brevo tier is
-# measured in hundreds of messages a day.
 ALERT_COOLDOWN_MINUTES = 60
 LAST_SWEEP_KEY = "market_alert_last_sweep"
 
-# Cap on how many moves one alert enumerates. A city-wide re-import can
-# move hundreds of combinations; a message listing hundreds is one
-# nobody finishes.
 MAX_REPORTED_MOVES = 5
 
 
@@ -158,8 +136,6 @@ def detect_fluctuations(limit_pairs=None):
         .all()
     )
 
-    # Newest two rows per combination. Anything with only one recorded
-    # state has no previous to compare against and is not a change.
     history = {}
     for industry, location, count, recorded, market_id in rows:
         entries = history.setdefault((industry, location), [])
@@ -177,23 +153,6 @@ def detect_fluctuations(limit_pairs=None):
     if limit_pairs:
         pairs = pairs[:limit_pairs]
 
-    # BOTH states are scored, in one batched, read-only call.
-    #
-    # The previous version scored only the current state and inferred
-    # the old one by ratio -- now_saturation * was_count / now_count.
-    # That was wrong twice over: a random forest is a step function
-    # rather than a line, so halving the competitors does not halve the
-    # index; and the figure the model scores is the reconciled
-    # cross-source count, which need not equal the count recorded on
-    # the row the ratio was taken from. Scoring the old count properly
-    # costs one extra row in a matrix that is built either way.
-    #
-    # saturation_for_counts() is also the read-only scorer, which
-    # matters more than it sounds: compute_scores_batch() creates a
-    # market_data row for any pair whose lgu_data is missing, inventing
-    # a simulated competitor count. A detector that wrote a new state
-    # while measuring the old one would then measure what it had just
-    # written.
     scored = saturation_for_counts(
         [(industry, location, changed[(industry, location)][0][0])
          for industry, location in pairs]
@@ -209,10 +168,6 @@ def detect_fluctuations(limit_pairs=None):
         now_saturation = now_scores.get(pair)
         was_saturation = was_scores.get(pair)
 
-        # None means the combination has no lgu_data row yet, so there
-        # is nothing to score it against. Skipped rather than
-        # approximated: an alert nobody can trace back to a recorded
-        # state is worse than no alert.
         if now_saturation is None or was_saturation is None:
             continue
 
@@ -236,8 +191,6 @@ def detect_fluctuations(limit_pairs=None):
             "cluster_now": now_cluster,
             "cluster_before": was_cluster,
             "crossed_tier": crossed_tier,
-            # Same derivation as _score_dict(), so an alert and the
-            # card for the same barangay cannot disagree.
             "viability_now": round(max(0.0, min(10.0, (100.0 - now_saturation) / 10.0)), 1),
             "observed_on": now_date.isoformat() if now_date else None,
             "previously_on": was_date.isoformat() if was_date else None,
@@ -246,10 +199,6 @@ def detect_fluctuations(limit_pairs=None):
     moves.sort(key=lambda move: (-abs(move["delta"]), move["location"]))
     return moves
 
-
-# ---------------------------------------------------------------------
-# WORDING
-# ---------------------------------------------------------------------
 
 _OPENINGS = {
     ("warning", "sme"): "Market conditions changed in barangays your saved plans cover.",
@@ -338,17 +287,13 @@ def _ai_summary(moves, audience, kind="warning"):
         if result:
             summary, source = result
             return summary, source
-    except Exception:  # noqa: BLE001 - a flaky LLM must never lose the alert
+    except Exception:
         from flask import current_app
 
         current_app.logger.warning("AI alert wording failed; using rule-based text",
                                    exc_info=True)
     return fallback, "rule_based"
 
-
-# ---------------------------------------------------------------------
-# WHO HEARS ABOUT IT
-# ---------------------------------------------------------------------
 
 def _sme_recipients(moves):
     """{user_id: [moves that touch one of their saved plans]}.
@@ -434,8 +379,6 @@ def _improving_moves(moves):
     """
     from app.ml.constants import CLUSTER_LABELS_ORDERED
 
-    # The two least-saturated tiers -- the ones the Recommendations page
-    # presents as worth entering.
     enterable = set(CLUSTER_LABELS_ORDERED[:2])
 
     return [
@@ -443,10 +386,6 @@ def _improving_moves(moves):
         if move["delta"] < 0 and (move["cluster_now"] in enterable or move["crossed_tier"])
     ]
 
-
-# ---------------------------------------------------------------------
-# DELIVERY
-# ---------------------------------------------------------------------
 
 def _elapsed_since(key):
     """How long since `key` was last stamped, or None if never.
@@ -461,9 +400,6 @@ def _elapsed_since(key):
     try:
         return datetime.utcnow() - datetime.fromisoformat(last)
     except ValueError:
-        # A hand-edited or truncated value. Treat it as never run rather
-        # than raising: the cost of one early alert is lower than an
-        # alerting system that falls over on a bad setting row.
         return None
 
 
@@ -503,10 +439,6 @@ def _deliver(user, summary, subject, send_email=None, kind="early_warning"):
     return bool(send_email(user.email, user.name, subject, summary))
 
 
-# What each switch means on an account that predates the column. These
-# mirror the server_defaults in app/models/user.py: saturation alerts
-# are opt-OUT, everything else is opt-in. Getting this backwards would
-# email every existing account something they never asked for.
 _PREF_DEFAULTS = {
     "notify_saturation_change": True,
     "notify_recommendations": False,
@@ -539,7 +471,6 @@ def _notify_group(moves, pref_field, sender, subject_sme, subject_lgu, kind,
 
     notified = emailed = 0
 
-    # --- SMEs, scoped to their own plans or their own industries -----
     cache = {}
     for user_id, their_moves in sme_scope(moves).items():
         user = db.session.get(User, user_id)
@@ -555,12 +486,8 @@ def _notify_group(moves, pref_field, sender, subject_sme, subject_lgu, kind,
             emailed += 1
         notified += 1
 
-    # --- LGU and Admin, city-wide -----------------------------------
     city_recipients = [user for user in _city_recipients() if _wants(user, pref_field)]
     if city_recipients:
-        # Worded once for the whole group. The figures are identical, so
-        # a per-recipient LLM call would spend N times the tokens to
-        # produce N paraphrases of the same three sentences.
         city_summary = _ai_summary(moves, "lgu", summary_kind)[0]
         for user in city_recipients:
             if _deliver(user, city_summary, subject_lgu,
@@ -611,9 +538,6 @@ def run_market_alert_sweep(force=False):
             sme_scope=_sme_recipients,
         )
 
-        # The opportunity half. A barangay that just became less
-        # saturated is news for people planning that trade ANYWHERE in
-        # the city, not only for those already in that barangay.
         opportunities = _improving_moves(moves)
         if opportunities:
             extra_notified, extra_emailed = _notify_group(
@@ -633,32 +557,12 @@ def run_market_alert_sweep(force=False):
         return {"ran": True, "moves": len(moves), "notified": notified,
                 "emailed": emailed, "opportunities": len(opportunities)}
 
-    except Exception:  # noqa: BLE001
+    except Exception:
         db.session.rollback()
         current_app.logger.error("market alert sweep failed", exc_info=True)
         return {"ran": False, "reason": "error", "moves": 0, "notified": 0,
                 "emailed": 0, "opportunities": 0}
 
-
-# ---------------------------------------------------------------------
-# THE WEEKLY DIGEST
-# ---------------------------------------------------------------------
-# notify_weekly_trends. Separate from the sweep above because it is
-# time-driven rather than event-driven: the sweep fires when the data
-# moves, the digest fires when the week is up.
-#
-# WHY IT IS "AT MOST WEEKLY" RATHER THAN "EVERY WEEK"
-# There is no scheduler. Render's free tier sleeps and has no cron, so
-# nothing can wake the app at 9am on a Monday -- the digest goes out on
-# the first eligible run AFTER the week is up, which in practice means
-# the next time somebody uses the app or uploads data.
-#
-# And it only goes out when something actually moved. A weekly email
-# that says "nothing changed" fifty-two times a year is an email people
-# filter, and filtering it also loses the fifty-third one that mattered.
-# The timestamp is therefore stamped only when a digest is SENT, so a
-# quiet fortnight produces one digest covering the fortnight rather
-# than two, one of them empty.
 
 WEEKLY_DIGEST_KEY = "market_alert_last_digest"
 WEEKLY_DIGEST_DAYS = 7
@@ -679,16 +583,8 @@ def run_weekly_trend_digest(force=False):
 
         moves = detect_fluctuations()
         if not moves:
-            # Deliberately does NOT stamp the timestamp -- see the note
-            # above. Nothing moved, so there is no digest, and the week
-            # keeps counting.
             return {"ran": True, "reason": "nothing_moved", "notified": 0, "emailed": 0}
 
-        # Stamped BEFORE the send, not after. SystemSetting.set() commits
-        # the session, so stamping afterwards would commit the
-        # Notification rows from inside a helper whose job is to write
-        # one settings row -- and a failure between the two would resend
-        # the whole digest on the next run.
         _stamp(WEEKLY_DIGEST_KEY)
 
         notified, emailed = _notify_group(
@@ -705,7 +601,7 @@ def run_weekly_trend_digest(force=False):
         db.session.commit()
         return {"ran": True, "moves": len(moves), "notified": notified, "emailed": emailed}
 
-    except Exception:  # noqa: BLE001
+    except Exception:
         db.session.rollback()
         current_app.logger.error("weekly trend digest failed", exc_info=True)
         return {"ran": False, "reason": "error", "notified": 0, "emailed": 0}

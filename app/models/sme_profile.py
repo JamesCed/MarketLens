@@ -54,7 +54,6 @@ from app.models.archive import HiddenWhenArchived
 
 
 class SmeProfile(HiddenWhenArchived, db.Model):
-    # Moved to Trash rather than deleted -- see the module docstring.
     __tablename__ = "sme_profile"
 
     sme_id = db.Column(db.Integer, primary_key=True)
@@ -67,33 +66,9 @@ class SmeProfile(HiddenWhenArchived, db.Model):
     employee_count = db.Column(db.Integer)
     business_stage = db.Column(db.Enum("startup", "existing", name="sme_business_stage"), nullable=False,
                                 default="startup")
-    # NO LONGER COLLECTED. Removed from every input form in the
-    # revisions round: an entrepreneur planning a business does not have
-    # a revenue figure yet, and asking for one invited a guess that then
-    # drove the ROI estimate. The column stays (dropping it would be a
-    # destructive migration on a live database) but nothing reads it.
     monthly_revenue_est = db.Column(db.Numeric(12, 2))
     status = db.Column(db.Enum("active", "inactive", name="sme_status"), nullable=False, default="active")
 
-    # ---------------- Broader business parameters ----------------
-    # Additive. "Food and Beverage" is too coarse to plan with: a
-    # pandesal bakery in a barangay crowded with eateries faces very
-    # little DIRECT competition, and the industry-level saturation
-    # figure cannot see that. These four columns are what let it.
-    #
-    # subcategory     -- a key from app/ml/subcategories.py, e.g.
-    #                    "bakery" under Food and Beverage. Drives the
-    #                    direct-competition figure.
-    # product_offering -- what the business actually sells or serves,
-    #                    in the owner's own words.
-    # innovation_idea -- optional. What makes this one different. The
-    #                    AI assessment reads the words; the plan viability
-    #                    model (app/ml/plan_model.py) sees only whether
-    #                    there IS one (has_innovation_idea). Neither ever
-    #                    changes the stage-1 market saturation score.
-    # offering_details -- optional JSON list of {"item", "price"}: the
-    #                    "sub-plan" (menu, price list). Its prices feed the
-    #                    plan viability model's required-daily-sales check.
     subcategory = db.Column(db.String(100), nullable=True)
     product_offering = db.Column(db.Text, nullable=True)
     innovation_idea = db.Column(db.Text, nullable=True)
@@ -113,10 +88,18 @@ class SmeProfile(HiddenWhenArchived, db.Model):
         return round(max(0.0, delta_days / 365.25), 1)
 
     def latest_forecast(self):
+        """The plan's newest forecast -- asked once per request (several
+        parts of one page want it: the gauge, the quarterly outlook's
+        stored assumptions, the transcript hook). Any write clears the
+        memo, so a forecast generated during the request is seen."""
         from app.models.forecast_result import ForecastResult
+        from app.utils.request_memo import request_memo
 
-        return self.forecast_results.order_by(ForecastResult.forecast_date.desc(),
-                                               ForecastResult.forecast_id.desc()).first()
+        return request_memo(
+            ("latest_forecast", self.sme_id),
+            lambda: self.forecast_results.order_by(ForecastResult.forecast_date.desc(),
+                                                   ForecastResult.forecast_id.desc()).first(),
+        )
 
     @property
     def capital(self):

@@ -40,9 +40,6 @@ from datetime import date
 from app.extensions import db
 from app.services.historical_baseline_service import EARLIEST_HISTORY, growth_index
 
-# How far ahead the timeline reaches. A year is what the quarterly
-# outlook already forecasts; past that the horizon penalty leaves little
-# confidence worth drawing.
 FUTURE_MONTHS = 12
 
 PERIOD_HISTORY = "history"
@@ -131,7 +128,7 @@ def _recorded_as_of(snapshots, cutoff):
     freshest = {}
     for recorded, source, count in snapshots:
         if recorded <= cutoff:
-            freshest[source] = count          # oldest first, so the last one wins
+            freshest[source] = count
     return max(freshest.values()) if freshest else None
 
 
@@ -174,9 +171,6 @@ def saturation_map_at(industry_type, locations, as_of=None, today=None):
     anchor, period = resolve_period(as_of, today)
     locations = list(locations)
 
-    # Today's scores first: they are the "current" answer, and scoring
-    # also creates any market/lgu row a barangay is still missing, which
-    # the what-if scoring below needs.
     current = compute_scores_batch([(industry_type, location) for location in locations])
     label = anchor.strftime("%Y-%m")
 
@@ -198,10 +192,6 @@ def saturation_map_at(industry_type, locations, as_of=None, today=None):
                 counts.append(on_file)
                 bases.append("recorded")
             else:
-                # Back-projected from the EARLIEST real count after this
-                # month (today's, if there is no older one), along the
-                # national series -- so March 2021 leads into the first
-                # count on file rather than contradicting it.
                 anchor_point = _first_recorded_after(snapshots, cutoff)
                 if anchor_point is not None:
                     reference, base = anchor_point
@@ -233,8 +223,6 @@ def saturation_map_at(industry_type, locations, as_of=None, today=None):
     for index, (location, scores) in enumerate(zip(locations, current)):
         saturation = predicted[index]
         if saturation is None:
-            # No rows to score this barangay against (should not happen
-            # after compute_scores_batch) -- show today's figure, and say so.
             saturation = scores["saturation_index"]
             basis = "current"
             count = scores["competitor_count"]

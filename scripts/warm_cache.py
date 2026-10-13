@@ -43,19 +43,16 @@ import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from dotenv import load_dotenv  # noqa: E402
+from dotenv import load_dotenv
 
 load_dotenv()
-os.environ.setdefault("WARM_ON_BOOT", "false")  # a one-off script, not a server
+os.environ.setdefault("WARM_ON_BOOT", "false")
 
 
 def main():
     from app import create_app
     from app.services import trend_analytics_service as trends
 
-    # The production config validates SECRET_KEY, which is right for a
-    # server and pointless here, so warm under the development config --
-    # it reads the same DATABASE_URL and produces the same scores.
     app = create_app("development")
 
     with app.app_context():
@@ -72,8 +69,6 @@ def main():
             )
             return
 
-        # Drop any existing file so this genuinely recomputes rather than
-        # reporting a cache hit as work done.
         trends.clear_trend_caches()
 
         started_cpu, started_wall = time.process_time(), time.monotonic()
@@ -94,7 +89,6 @@ def main():
         print(f"  Swept      : {len(rows)} AI scores in {wall:.1f}s ({cpu_used:.1f} CPU-seconds)")
         print(f"  Written    : {path} ({size_kb:.0f} KB)")
 
-        # Prove it reads back, rather than assuming.
         trends._SWEEP_CACHE.clear()
         verify_cpu = time.process_time()
         again = trends._sweep_baseline()

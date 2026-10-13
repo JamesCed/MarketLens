@@ -70,9 +70,6 @@ def _plan(user, name="Patola Pandesal", **extra):
     return profile
 
 
-# =====================================================================
-# 1. Home is a summary, Planning is the workspace
-# =====================================================================
 def test_home_is_an_overview_that_links_to_every_section(app):
     sme = _user("home@p2.test")
     _plan(sme)
@@ -80,7 +77,6 @@ def test_home_is_an_overview_that_links_to_every_section(app):
     for link in ("/planning", "/saturation-map", "/trend-reports", "/recommendations"):
         assert f'href="{link}' in page
     assert "Patola Pandesal" in page
-    # The workspace itself is not on Home.
     assert 'data-plan-chip=' not in page and 'id="addPlanModal"' not in page
 
 
@@ -112,9 +108,6 @@ def test_the_barangay_sentence_names_the_plan_as_opening_there(app):
     assert "the barangay where your plan" in page
 
 
-# =====================================================================
-# 2. Competitor insight
-# =====================================================================
 def test_competitor_insight_is_shown_short_on_planning_and_full_on_recommendations(app):
     sme = _user("insight@p2.test")
     _plan(sme, subcategory="bakery", innovation_idea="Malunggay pandesal")
@@ -158,9 +151,6 @@ def test_an_ai_insight_that_invents_a_number_is_replaced():
     assert rs._choose_competitor_insight(invented, "llm:gemini:x", rule, context) == rule
 
 
-# =====================================================================
-# 3. Trash: 30 days, then deleted for good
-# =====================================================================
 def test_trash_says_thirty_days_and_counts_down(app):
     sme = _user("trash@p2.test")
     plan = _plan(sme)
@@ -188,9 +178,6 @@ def test_a_plan_left_in_trash_over_thirty_days_is_purged_and_logged(app):
     assert AuditLog.query.filter_by(action="purge_plan").count() == 1
 
 
-# =====================================================================
-# 5. Trend Reports
-# =====================================================================
 def test_trend_reports_use_a_bar_chart_and_explain_every_chart(app):
     for role in ("SME", "LGU", "Admin"):
         user = _user(f"{role.lower()}-trend@p2.test", role=role)
@@ -202,9 +189,6 @@ def test_trend_reports_use_a_bar_chart_and_explain_every_chart(app):
         assert 'id="monthlyFocus"' in page
 
 
-# =====================================================================
-# 6. LGU
-# =====================================================================
 def test_diversity_score_is_the_normalised_hhi():
     from app.services.diversification_service import diversity_score
 
@@ -235,9 +219,6 @@ def test_admin_menu_has_no_lgu_pages(app):
     assert 'data-tour="nav-lgu-dashboard"' not in page and 'data-tour="nav-data-upload"' not in page
 
 
-# =====================================================================
-# 7. Admin
-# =====================================================================
 def test_admin_dashboard_monitors_users_activity_and_health(app):
     admin = _user("dash@p2.test", role="Admin")
     page = _login(app, admin.email).get("/admin/dashboard").get_data(as_text=True)
@@ -288,10 +269,8 @@ def test_a_timed_suspension_ends_by_itself(app):
     entry = AuditLog.query.filter_by(action="admin_toggle_active").order_by(AuditLog.id.desc()).first()
     assert entry.changes and "suspended_until" in entry.changes
 
-    # Still suspended: refused, and told until when.
     response = app.test_client().post("/login", data={"email": sme.email, "password": "password123"})
     assert b"suspended until" in response.data
-    # Time passes: the suspension is over at the next sign-in.
     user.suspended_until = datetime.utcnow() - timedelta(minutes=1)
     db.session.commit()
     response = app.test_client().post("/login", data={"email": sme.email, "password": "password123"})
@@ -311,7 +290,6 @@ def test_audit_trail_hides_routine_rows_by_default_and_shows_them_on_request(app
     assert "MARK-important" in default and "MARK-routine" not in default
     everything = client.get("/admin/audit-log?importance=all").get_data(as_text=True)
     assert "MARK-routine" in everything
-    # Asking for a routine action by name always finds it.
     assert "MARK-routine" in client.get("/admin/audit-log?action=update_theme").get_data(as_text=True)
 
 
@@ -322,7 +300,7 @@ def test_a_users_trail_shows_what_they_did_and_what_was_done_to_them(app):
     client.post(f"/admin/users/{sme.user_id}/toggle-active", data={"reason": "testing trail", "duration": "1"})
     page = client.get(f"/admin/audit-log?user={sme.user_id}&importance=all").get_data(as_text=True)
     assert "Showing the activity of" in page and "Sam Subject" in page
-    assert "Details" in page  # the suspension's before/after
+    assert "Details" in page
 
 
 def test_editing_a_plan_records_exactly_what_changed(app):

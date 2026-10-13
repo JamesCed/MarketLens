@@ -4,6 +4,10 @@
 {% block extra_head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
       crossorigin="anonymous" referrerpolicy="no-referrer">
+{# The map's shapes start downloading while the page is still being read,
+   instead of after every script has run (map.js then gets them at once). #}
+<link rel="preload" href="{{ url_for('api.barangay_choropleth') }}" as="fetch" crossorigin="anonymous">
+<link rel="preload" href="{{ url_for('api.tarlac_city_boundary') }}" as="fetch" crossorigin="anonymous">
 {% endblock %}
 
 {% block content %}

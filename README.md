@@ -1757,7 +1757,7 @@ and the separate suggestions file), and where it lives:
 | ₱1 capital accepted | Minimum capital ₱5,000 (`MIN_PLAN_CAPITAL`) | `plan_params._capital` |
 | Red `*` on required fields | Every label of a required control gets a red asterisk | `static/js/main.js` |
 | Loading spinner between pages | A rotating circle shows while the next page loads | `shared/_page_loader.html` |
-| Footer looks random | PSA, DTI, Community and Contact Us are icons in the top bar of every page | `shared/_quick_links.html` |
+| Footer looks random | PSA, Community and Contact Us are icons in the top bar of every page (the DTI-Verified link was later removed: the app is not DTI-verified) | `shared/_quick_links.html` |
 | Legend colours not indicated | The quarterly chart's legend uses the series' own colours; the two series are clearly different hues | `templates/sme/trend_reports.html` |
 | Explanation below the chart is missed | "How to read" opens a dialog beside the chart; Top Industries shows 5 with "View all" | same |
 | Export prints the web page | Export opens a proper document with the logo letterhead and page numbers | `/trend-reports/print` |
@@ -1781,3 +1781,46 @@ cached on the data fingerprint; Chart.js loads only on pages with charts.
 change), `MIN_PLAN_CAPITAL`, `WARM_ON_BOOT`, `COMPRESS_RESPONSES`. The new
 `user` columns are added automatically at start-up; see
 `sql/2026-10_personal_info_and_privacy.sql`.
+
+## 12. October 2026: developer's notes, page speed, sample LGU data
+
+**Developer's notes.**
+
+- Opening "How this forecast was computed" (or any expander in the
+  forecast panel) no longer stretches the saturation map beside it. The
+  two columns keep their own heights and the map is a fixed 440px (380px
+  on small screens). The Saturation Map page works the same way.
+- The DTI-Verified link and wording are gone: the app is not verified or
+  endorsed by the DTI.
+- `sample_data/MarketLens_LGU_Sample_Upload_Tarlac_City.xlsx` (and `.csv`)
+  is a **fictional** business-permit register for all 76 barangays (about
+  10,000 permits, every industry in every barangay). Upload it as LGU data
+  on Government Data Upload and the LGU Dashboard, Diversification Plan,
+  Saturation Map and SME recommendations are computed from it. It is
+  sample data only, not a real Tarlac City register.
+
+**Why pages that redirect were slow, and what changed.**
+
+| Cause | Fix |
+|---|---|
+| Saving or analysing a plan waited for the Gemini text before the redirect could be sent (two calls of several seconds each) | The page is sent with the rule-based text at once and the AI text is fetched after it shows (`defer_ai=True`, `forecast_transcript.js`) |
+| Many small database queries per page, each a round trip to the remote MySQL (one per plan for its latest forecast, separate counts on the LGU and admin dashboards, Settings and Trash) | Batched into single queries and remembered for the rest of the request |
+| scikit-learn's `predict()` overhead on every Random Forest call | `forecasting_service.forest_predict` reads the trees directly (results are bit-identical) |
+| The quarterly outlook recomputed on every visit | Cached for five minutes on the data fingerprint |
+| Map data fetched only after the page's scripts ran, API JSON re-downloaded on every visit, oversized logo images | Preloaded map data, ETags with 304 responses and gzip for `/api/`, a 1-hour cache on the barangay shapes (geometry only), logos cut to about a seventh of their size |
+| A large LGU upload parsed the same file three times | Read once per upload, rows read as plain dicts, dates parsed once each |
+
+Permit-derived market rows now carry the barangay's population density,
+foot traffic, rent and success rate (from the previous row, or the
+barangay profile). Before, they reached the model as zeros after any
+permit upload; rows saved that way are filled in at start-up.
+
+`/healthz` is a cheap health check for Render (`healthCheckPath` in
+`render.yaml`). On the free plan Render still sleeps the service after 15
+minutes without visitors, and the first visit after that waits for it to
+wake.
+
+**Code comments.** `#` comments were removed from the Python files at the
+developer's request; docstrings remain. The barangay population and land
+area notes that used to sit in comments in `app/ml/seed_data.py` are now
+data (`BARANGAY_SOURCE_NOTES`), with identical results.

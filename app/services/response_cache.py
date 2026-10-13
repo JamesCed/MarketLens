@@ -43,7 +43,6 @@ from flask import current_app, request
 
 from app.extensions import CACHING_AVAILABLE, cache
 
-# The backstop mentioned above, not the primary invalidator.
 DEFAULT_TIMEOUT = 900
 
 
@@ -55,12 +54,9 @@ def _fingerprint_token():
     try:
         from app.services.trend_analytics_service import _data_fingerprint
 
-        # [1:] drops the engine id: it is a memory address, useful for
-        # keeping test databases apart in-process but meaningless in a
-        # key that may outlive the process on disk.
         parts = "|".join(str(p) for p in _data_fingerprint()[1:])
         return hashlib.sha1(parts.encode("utf-8")).hexdigest()[:12]
-    except Exception:  # pragma: no cover - defensive; caching is optional
+    except Exception:
         return ""
 
 
@@ -91,7 +87,7 @@ def cached_on_data(prefix, timeout=DEFAULT_TIMEOUT, query_args=()):
 
             try:
                 hit = cache.get(key)
-            except Exception:  # pragma: no cover - a broken cache must not 500
+            except Exception:
                 return view(*args, **kwargs)
 
             if hit is not None:
@@ -100,7 +96,7 @@ def cached_on_data(prefix, timeout=DEFAULT_TIMEOUT, query_args=()):
             value = view(*args, **kwargs)
             try:
                 cache.set(key, value, timeout=timeout)
-            except Exception:  # pragma: no cover
+            except Exception:
                 current_app.logger.warning("response cache write failed", exc_info=True)
             return value
 
@@ -118,5 +114,5 @@ def clear_response_cache():
         return
     try:
         cache.clear()
-    except Exception:  # pragma: no cover
+    except Exception:
         pass

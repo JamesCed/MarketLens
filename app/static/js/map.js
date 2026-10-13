@@ -1376,11 +1376,15 @@ async function loadLocationsInner(businessType) {
   // score the map for another month. Unset or empty = now.
   const asOf = typeof window.DSS_MAP_AS_OF === "string" ? window.DSS_MAP_AS_OF : "";
   const asOfParam = asOf ? `&as_of=${encodeURIComponent(asOf)}` : "";
+  // The barangay shapes are fetched in the same parallel batch. They used
+  // to wait until the scores and coordinates had both arrived, so every
+  // map page made two round trips in a row before it could draw.
   const [rows] = await Promise.all([
     fetch(
       `${window.DSS_LOCATIONS_FORECAST_URL}?industry_type=${encodeURIComponent(businessType)}${asOfParam}`
     ).then((r) => r.json()),
     loadCoords(),
+    window.L ? loadChoropleth() : Promise.resolve(null),
   ]);
   dssLocationsCache = rows;
   announceLocationsLoaded(rows);

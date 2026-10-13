@@ -101,12 +101,6 @@ import contourpy
 
 CITY_BOUNDARY_RELPATH = os.path.join("static", "data", "tarlac_city_boundary.json")
 
-# Grid resolution for the rasterize-then-contour computation below.
-# 900x720 over Tarlac City's ~0.20 x 0.16 degree extent is about 25m
-# per pixel -- comfortably finer than meaningful barangay-to-barangay
-# spacing -- and computes in ~2-3 seconds; see
-# compute_choropleth_geojson()'s own docstring for why that cost is
-# paid at most once per (set of coordinates), not per request.
 GRID_RESOLUTION = (900, 720)
 
 _boundary_cache = None
@@ -150,24 +144,6 @@ def _point_in_polygon_grid(X, Y, ring):
     return inside.reshape(X.shape)
 
 
-# How many grid points to measure against every barangay at once.
-#
-# THIS NUMBER IS A MEMORY BUDGET, NOT A SPEED KNOB. The distance
-# computation below is (n_grid x n_points) float64. Done in one shot at
-# the shipped 900x720 resolution that is 648,000 x 76 x 8 bytes = 394 MB
-# for the result alone, and numpy materialises two same-sized
-# temporaries before it (the subtraction, then the square) -- measured
-# peak was 762 MB.
-#
-# A free Render instance has 512 MB TOTAL and this app already holds
-# about 210 MB (Flask, numpy, pandas, scikit-learn, the Random Forest).
-# So the un-chunked version could not run there at all: the worker was
-# OOM-killed mid-request, and the Saturation Map drew the city outline
-# (a separate, cheap endpoint) with no cells inside it.
-#
-# Chunking bounds the peak at roughly CHUNK x n_points x 8 x 3 bytes --
-# about 58 MB at this value, whatever the grid resolution. The output
-# is bit-for-bit identical; only the allocation pattern changes.
 _NEAREST_CHUNK = 32_768
 
 
@@ -187,7 +163,7 @@ def _nearest_index_grid(X, Y, points):
         stop = start + _NEAREST_CHUNK
         dx = flat_x[start:stop, None] - px
         dy = flat_y[start:stop, None] - py
-        np.multiply(dx, dx, out=dx)          # in place: no third temporary
+        np.multiply(dx, dx, out=dx)
         np.multiply(dy, dy, out=dy)
         np.add(dx, dy, out=dx)
         np.argmin(dx, axis=1, out=out[start:stop])
@@ -205,26 +181,6 @@ def _cache_key(coords):
     return tuple(sorted((name, round(pt["lat"], 6), round(pt["lng"], 6)) for name, pt in coords.items()))
 
 
-# A PRECOMPUTED ANSWER, COMMITTED TO THE REPO.
-#
-# These cells are a pure function of the 76 barangay coordinates, and
-# those coordinates are a static, committed file -- so the result is a
-# CONSTANT. Computing it per deployment was work with no possible
-# variation in the output.
-#
-# That mattered: the computation rasterizes a 900x720 grid, and on a
-# 512 MB instance it is the single largest thing the app ever does.
-# When it fails there, the front end has no way to say so -- the map
-# simply draws the city outline with nothing inside it. Reading a file
-# cannot fail that way.
-#
-# The file carries the fingerprint of the coordinate set it was built
-# from. If the app's coordinates ever differ from it -- an LGU upload
-# introduces a barangay, or someone edits barangay_coords.json -- the
-# fingerprint will not match and the full computation runs as before.
-# So this is a fast path, never a substitute for the real thing.
-#
-# Rebuild it with:  python scripts/precompute_choropleth.py
 PRECOMPUTED_CELLS_NAME = "barangay_cells.json"
 _precomputed_cache = {"loaded": False, "fingerprint": None, "value": None}
 
@@ -254,14 +210,10 @@ def load_precomputed_cells(app):
         if geojson and geojson.get("features"):
             _precomputed_cache["fingerprint"] = payload.get("fingerprint")
             _precomputed_cache["value"] = geojson
-    except (OSError, ValueError, AttributeError):  # pragma: no cover - defensive
+    except (OSError, ValueError, AttributeError):
         pass
     return _precomputed_cache["fingerprint"], _precomputed_cache["value"]
 
-
-# ---------------------------------------------------------------------
-# The official boundaries (preferred)
-# ---------------------------------------------------------------------
 
 OFFICIAL_BOUNDARIES_NAME = "barangay_boundaries.json"
 _official_cache = {"loaded": False, "value": None}
@@ -280,7 +232,7 @@ def load_official_boundaries(app):
             payload = json.load(handle)
         if payload.get("features"):
             _official_cache["value"] = payload
-    except (OSError, ValueError, AttributeError):  # pragma: no cover - defensive
+    except (OSError, ValueError, AttributeError):
         pass
     return _official_cache["value"]
 
@@ -336,8 +288,6 @@ def compute_choropleth_geojson(coords, city_boundary_ring=None, app=None, resolu
     if not force and _result_cache["key"] == key:
         return _result_cache["value"]
 
-    # The committed answer, when it still describes these coordinates.
-    # See PRECOMPUTED_CELLS_NAME above for why this exists.
     if not force and app is not None:
         stored_fingerprint, stored = load_precomputed_cells(app)
         if stored is not None and stored_fingerprint == _fingerprint(coords):
@@ -364,9 +314,6 @@ def compute_choropleth_geojson(coords, city_boundary_ring=None, app=None, resolu
     nearest = _nearest_index_grid(X, Y, points)
     labels = np.where(inside_city, nearest, -1)
 
-    # A raster/marching-squares fragment smaller than a handful of
-    # pixels is discretization noise at a boundary crossing, not a
-    # real sliver of a barangay -- see tests/test_choropleth.py.
     dx = (xmax - xmin) / max(res_x - 1, 1)
     dy = (ymax - ymin) / max(res_y - 1, 1)
     min_area = 4 * dx * dy

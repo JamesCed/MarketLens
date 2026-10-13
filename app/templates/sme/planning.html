@@ -21,6 +21,10 @@
      type them from memory. #}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
       crossorigin="anonymous" referrerpolicy="no-referrer">
+{# The map's shapes start downloading while the page is still being read,
+   instead of after every script has run (map.js then gets them at once). #}
+<link rel="preload" href="{{ url_for('api.barangay_choropleth') }}" as="fetch" crossorigin="anonymous">
+<link rel="preload" href="{{ url_for('api.tarlac_city_boundary') }}" as="fetch" crossorigin="anonymous">
 {# SCRIPTING OFF. The plan dialogs (Edit, Trash) are opened by links
      to their own #id, which Bootstrap intercepts when it runs. Without
      it the browser just jumps to the fragment, and this shows the
@@ -262,13 +266,14 @@
 
 {# Main analysis section #}
 <h4 class="text-center mb-3">AI-Powered Market Saturation &amp; Viability Analysis</h4>
-<div class="row g-4">
-  {# Saturation map (real data). Bigger than it was, and it FILLS its
-       card: the map grows to the height of the forecast panel beside it,
-       so there is no empty band under it. It follows the chosen plan --
-       that plan's industry, centred on that plan's barangay. #}
+<div class="row g-4 align-items-start dss-independent-cols">
+  {# Saturation map (real data). It follows the chosen plan -- that
+       plan's industry, centred on that plan's barangay. The two columns
+       keep their own heights: opening "How this forecast was computed"
+       (or anything else that expands in the forecast panel) only grows
+       the forecast panel, never this card or the map. #}
   <div class="col-lg-7">
-    <div class="dss-card h-100 d-flex flex-column dss-home-map-card">
+    <div class="dss-card d-flex flex-column dss-home-map-card">
       <div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-2">
         <h6 class="mb-0">Saturation Map: Tarlac City Barangays</h6>
         {% if selected_plan %}
@@ -295,9 +300,7 @@
         </a>
       </div>
 
-      {# City-wide ranking lives under the map it describes, which also
-         balances the two columns: the map grows into the space the
-         taller forecast panel leaves, instead of leaving a gap. #}
+      {# City-wide ranking lives under the map it describes. #}
       {#
         COLD START. Ranking barangays city-wide is a claim
         about the city's own records, so it is not made until
@@ -353,7 +356,7 @@
 
   {# Forecast & Recommendations #}
   <div class="col-lg-5">
-    <div class="dss-card h-100" data-tour="forecast-panel">
+    <div class="dss-card" data-tour="forecast-panel">
       <h6 class="mb-2">Forecast &amp; Recommendations</h6>
 
       {% if featured_forecast %}

@@ -67,32 +67,18 @@ import hashlib
 import math
 from datetime import date
 
-# Real published national MSME establishment counts -- DTI's "2023
-# Philippine MSME Statistics in Brief" (from PSA's List of
-# Establishments). These five years are measurements, not estimates.
 NATIONAL_MSME_ESTABLISHMENTS = {
     2019: 995_741,
-    2020: 952_969,    # -4.3% -- the COVID contraction
-    2021: 1_076_279,  # +12.9% -- rebound
-    2022: 1_105_143,  # +2.7%
-    2023: 1_241_733,  # +12.4%
+    2020: 952_969,
+    2021: 1_076_279,
+    2022: 1_105_143,
+    2023: 1_241_733,
 }
 
-# The published series stops at 2023. Later years continue at this rate.
-# Chosen conservatively -- roughly the 2022 step rather than the 12%+
-# rebound years, because assuming the rebound continues indefinitely
-# would overstate today's growth. Change it here if DTI publishes newer
-# figures; everything downstream follows automatically.
 POST_RECOVERY_GROWTH = 0.03
 
-# The earliest month the trend page will chart. Before 2020 there is no
-# pandemic-era shape to show and the projection stops being interesting.
 EARLIEST_HISTORY = date(2020, 1, 1)
 
-# How far the per-series deterministic variation can move a single
-# (industry, barangay) line away from the national curve, either way.
-# Small on purpose: it exists so the chart isn't N identical lines, not
-# to manufacture barangay-level detail this system does not have.
 SERIES_VARIATION = 0.04
 
 
@@ -104,8 +90,6 @@ def _establishments_for_year(year):
 
     known_years = sorted(NATIONAL_MSME_ESTABLISHMENTS)
     if year < known_years[0]:
-        # Earlier than the published series -- walk backwards at the
-        # same conservative rate.
         value = float(NATIONAL_MSME_ESTABLISHMENTS[known_years[0]])
         for _ in range(known_years[0] - year):
             value /= (1.0 + POST_RECOVERY_GROWTH)
@@ -146,7 +130,6 @@ def _series_variation(series_key, anchor):
     if not series_key:
         return 1.0
     digest = hashlib.sha256(f"{series_key}|{anchor.year}-{anchor.month}".encode("utf-8")).hexdigest()
-    # 0..1 from the first 8 hex digits, mapped to +/- SERIES_VARIATION.
     unit = int(digest[:8], 16) / 0xFFFFFFFF
     return 1.0 + ((unit * 2.0) - 1.0) * SERIES_VARIATION
 
@@ -191,10 +174,6 @@ def project_saturation(current_saturation, anchor, reference=None, series_key=No
         return None
     index = growth_index(anchor, reference, series_key)
     damped = 1.0 - ((1.0 - index) * 0.6)
-    # Two decimals, not one. Consecutive months differ by a fraction of a
-    # percentage point, so rounding here would flatten every
-    # month-over-month comparison to exactly zero before the caller ever
-    # saw it. Callers that DISPLAY this round it themselves.
     return round(max(0.0, min(100.0, float(current_saturation) * damped)), 2)
 
 

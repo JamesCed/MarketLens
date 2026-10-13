@@ -40,7 +40,7 @@ def _compile_templates(app):
         try:
             env.get_template(name)
             count += 1
-        except Exception:  # noqa: BLE001 -- a broken template fails on its own page, not at boot
+        except Exception:
             log.exception("warm-up: template %s did not compile", name)
     return count
 
@@ -68,8 +68,6 @@ def _load_models(app):
 
 
 def _load_reference_data():
-    # Parses the PSA population notes once; every later lookup is a dict
-    # read (see seed_data._parse_source_comments).
     from app.ml.seed_data import _parse_source_comments
 
     _parse_source_comments()
@@ -87,7 +85,7 @@ def warm_up(app):
         started = time.perf_counter()
         try:
             fn()
-        except Exception:  # noqa: BLE001 -- warm-up is an optimisation, never a reason not to boot
+        except Exception:
             log.exception("warm-up step %s failed; it will load lazily instead", step)
         timings[step] = round(time.perf_counter() - started, 3)
     log.info("warm-up finished: %s", timings)

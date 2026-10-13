@@ -64,40 +64,15 @@ from app.models import MarketData, LguData, ForecastResult, Notification, System
 from app.ml.constants import BUSINESS_TYPE_ENCODING, OTHER_INDUSTRY_ENCODING, CLUSTER_THRESHOLDS, CLUSTER_LABELS_ORDERED
 from app.ml.seed_data import get_barangay_profile, get_real_population
 
-# Dedicated system account (created by seed.py) that owns auto-generated
-# placeholder LguData rows until a real LGU account uploads actual
-# government data for that barangay -- see find_or_create_lgu_data().
 SYSTEM_USER_EMAIL = "system@dss.local"
 
-# The exact zoning_info text on a placeholder lgu_data row -- the rows
-# find_or_create_lgu_data() writes for itself so the model always has a
-# business_density to compute with.
-#
-# IT IS A CONSTANT BECAUSE TWO PLACES DEPEND ON IT MATCHING.
-# data_import_service.has_active_lgu_data() has to tell a row the app
-# invented from a row a person uploaded, and authorship alone does not
-# settle it: _get_system_user_id() falls back to "the first Admin, then
-# any user" on a database with no system account, so a placeholder can
-# end up attributed to a real person. This sentence is written in one
-# place and read in the other, so re-wording it cannot silently turn
-# every placeholder into an "official dataset".
 PLACEHOLDER_ZONING_NOTE = (
     "Auto-generated placeholder -- no LGU upload on file yet for this location."
 )
 
 _MODEL_CACHE = {"rf": None, "loaded": False}
-# Guards the one-time load of rf_model.pkl -- see _load_models.
 _MODEL_LOCK = threading.Lock()
 
-# How many SIMULATED market_data rows a single web request is allowed to
-# re-try against the live Google Places API (see
-# find_or_create_market_data). Pages like Trend Reports sweep 8
-# industries x 76 barangays = 608 combos in one go; without a budget,
-# the first load after adding an API key would sit there making 608
-# sequential HTTP calls. With it, each page load upgrades a handful of
-# rows to real Google data and stays responsive -- the database
-# converges on real data over a few visits instead of stalling once.
-# Rows that already hold real Google data are never re-fetched here.
 _MAX_LIVE_REFRESH_PER_REQUEST = 8
 
 
@@ -108,7 +83,7 @@ def _places_recap_watermark():
         from app.services.startup_migrations import get_places_recap_watermark
 
         return get_places_recap_watermark()
-    except Exception:  # noqa: BLE001 -- a missing settings row must not break scoring
+    except Exception:
         return 0
 
 
@@ -127,25 +102,6 @@ def set_places_refresh_budget(limit):
         pass
 
 
-# ---------------------------------------------------------------------
-# THE DAY BUDGET -- the one that stands between a public URL and a bill
-# ---------------------------------------------------------------------
-# The per-request budget above bounds ONE page load. It does nothing
-# about a thousand page loads, and Places API (New) is billed per call.
-# With PLACES_LIVE_FETCH=true on a public deployment, every visitor who
-# can sign in can trigger lookups, so the per-request cap alone bounds
-# the wrong quantity entirely.
-#
-# This is a second, day-scoped cap, counted in system_settings so it
-# survives a worker restart and can be changed from the Admin page
-# without a redeploy. Reaching it does not break anything: lookups stop
-# and the app serves the counts already on file, which is exactly what
-# PLACES_LIVE_FETCH=false does all the time.
-#
-# IT IS NOT A SUBSTITUTE FOR GOOGLE'S OWN QUOTA. This bounds what the
-# APP spends. A quota set in the Cloud Console bounds what the KEY can
-# spend, including anything that gets hold of it outside this app.
-# Both, or neither is worth much.
 PLACES_DAILY_BUDGET_KEY = "places_daily_call_budget"
 PLACES_DAY_COUNTER_KEY = "places_calls_today"
 PLACES_DAY_STAMP_KEY = "places_calls_day"
@@ -157,7 +113,7 @@ def places_calls_today():
     unlimited. Read-only -- it never advances the counter."""
     today = date.today().isoformat()
     if _DAY_SPEND["day"] == today:
-        used = _DAY_SPEND["used"]          # the live tally beats the snapshot
+        used = _DAY_SPEND["used"]
     else:
         stamp = SystemSetting.get(PLACES_DAY_STAMP_KEY, "")
         used = int(SystemSetting.get_float(PLACES_DAY_COUNTER_KEY, 0) or 0)
@@ -167,7 +123,6 @@ def places_calls_today():
     return used, budget
 
 
-# Counted in memory, persisted for visibility. See _spend_day_budget.
 _DAY_SPEND = {"day": None, "used": 0}
 
 
@@ -195,23 +150,10 @@ def _spend_day_budget():
     try:
         today = date.today().isoformat()
 
-        # Whether the CALLER has work in flight, captured before this
-        # function touches the session at all.
-        #
-        # Checking it later does not work, and a test caught that:
-        # every SystemSetting read below runs a query, a query
-        # AUTOFLUSHES pending objects into the transaction, and the
-        # commit that follows would then persist them. The guard has to
-        # be read first, and the reads themselves have to happen with
-        # autoflush off, or simply asking what the budget is would
-        # flush somebody else's half-built import into the database.
         caller_has_pending = bool(db.session.new or db.session.dirty or db.session.deleted)
 
         with db.session.no_autoflush:
             if _DAY_SPEND["day"] != today:
-                # New day in this process. A stored count is trusted
-                # only if it is for today, so a mid-day restart resumes
-                # the allowance rather than starting it over.
                 stored_day = SystemSetting.get(PLACES_DAY_STAMP_KEY, "")
                 stored_used = int(SystemSetting.get_float(PLACES_DAY_COUNTER_KEY, 0) or 0)
                 _DAY_SPEND["day"] = today
@@ -229,7 +171,7 @@ def _spend_day_budget():
             SystemSetting.set(PLACES_DAY_STAMP_KEY, today)
             SystemSetting.set(PLACES_DAY_COUNTER_KEY, str(_DAY_SPEND["used"]))
         return True
-    except Exception:  # pragma: no cover - a broken counter must not block the page
+    except Exception:
         from flask import current_app
 
         current_app.logger.warning("Places day budget check failed", exc_info=True)
@@ -255,9 +197,6 @@ def _can_spend_live_refresh():
                 return False
             g._dss_places_refreshes = used + 1
 
-        # Per-request budget passed; the day's allowance is the last
-        # word. Checked second so an already-exhausted request does not
-        # consume a day slot it will not use.
         return _spend_day_budget()
     except (ImportError, RuntimeError):
         return True
@@ -344,7 +283,7 @@ def _pin_to_one_thread(rf_model):
 
     try:
         rf_model.n_jobs = 1
-    except Exception:  # pragma: no cover - a model that refuses is still usable
+    except Exception:
         current_app.logger.warning("could not pin the forest to one thread", exc_info=True)
 
 
@@ -444,18 +383,6 @@ def find_or_create_market_data(industry_type, location, max_age_days=30):
         .first()
     )
 
-    # READ-ONLY DEPLOYMENT: serve whatever is on file, however old, and
-    # never replace it.
-    #
-    # This guard matters more than it looks. Without it, a deployment with
-    # live fetching switched off would still fall through below once a row
-    # passed `max_age_days`, call get_competitor_count() -- which with
-    # fetching off returns a SIMULATED number -- and write that as the new
-    # freshest snapshot. The effect would be a live site that looked
-    # correct for its first month and then quietly degraded, barangay by
-    # barangay, replacing real Google counts with estimates. An old real
-    # measurement beats a fresh invented one, so stale-by-age is simply
-    # not a reason to refetch when refetching is not an option.
     from app.services.places_service import live_fetch_enabled
 
     if existing and not live_fetch_enabled():
@@ -463,13 +390,6 @@ def find_or_create_market_data(industry_type, location, max_age_days=30):
 
     if existing and (date.today() - existing.date_recorded).days <= max_age_days:
         is_simulated = existing.source != "Google Places API"
-        # A real Google row can ALSO be stale-by-content rather than
-        # stale-by-age: everything fetched before the result cap was
-        # lifted stopped at the first page of 20, so those rows
-        # understate every busy barangay. They sit at or below the
-        # watermark recorded at upgrade time and get one re-fetch each;
-        # the replacement row lands above the watermark and is then
-        # cached normally.
         was_capped = (
             not is_simulated
             and existing.market_id is not None
@@ -479,7 +399,7 @@ def find_or_create_market_data(industry_type, location, max_age_days=30):
         if not (needs_refetch and _can_spend_live_refresh()):
             return existing
 
-    max_results = int(SystemSetting.get_float("places_max_results", 0))  # 0 = unlimited
+    max_results = int(SystemSetting.get_float("places_max_results", 0))
     competitor_count, simulated = get_competitor_count(location, industry_type, api_key=api_key, max_results=max_results)
 
     if (
@@ -488,12 +408,6 @@ def find_or_create_market_data(industry_type, location, max_age_days=30):
         and existing.source != "Google Places API"
         and (date.today() - existing.date_recorded).days <= max_age_days
     ):
-        # We only re-tried because a key is configured and the cached row
-        # was simulated -- but the live call still didn't yield real data
-        # (quota, network, API not enabled, or genuinely no matches).
-        # Reuse the cached row rather than writing a second identical
-        # simulated snapshot: otherwise every page load would append one
-        # more row per (industry, barangay) forever.
         return existing
 
     profile = get_barangay_profile(location)
@@ -503,9 +417,6 @@ def find_or_create_market_data(industry_type, location, max_age_days=30):
         average_rent = profile["average_rent"]
         historical_success_rate = profile["historical_success_rate"]
     else:
-        # No seed profile matches this exact location string -- fall
-        # back to the dataset's own running averages (or neutral
-        # midpoints on a brand-new DB) rather than inventing numbers.
         population_density = _average_or(MarketData.population_density, 8000)
         foot_traffic_index = _average_or(MarketData.foot_traffic_index, 45)
         average_rent = _average_or(MarketData.average_rent, 15000)
@@ -563,45 +474,6 @@ def find_or_create_lgu_data(location):
     return row
 
 
-# =====================================================================
-# COMPETITOR DENSITY: GOOGLE PLACES RECONCILED WITH LGU PERMITS
-# =====================================================================
-# Two sources now write a competitor count for the same (industry,
-# barangay) into market_data:
-#
-#   source = "Google Places API"  -- what Google can see operating.
-#   source = "DTI"                -- what the city has issued permits
-#                                    for, grouped per trade by the LGU
-#                                    upload pipeline (see
-#                                    data_import_service.derive_permit_counts).
-#
-# NEWEST-ROW-WINS IS THE WRONG MERGE. It is what the app did by
-# accident, and it means whichever source was written last silently
-# erases the other: upload a permit register on Tuesday and a Places
-# count of 12 becomes a permit count of 3, not because the market
-# changed but because a file was uploaded.
-#
-# WHY max() IS THE RIGHT ONE. Both sources UNDERCOUNT, in different
-# directions, and neither contains the other:
-#
-#   * Google lists businesses that chose to be listed. Unlisted
-#     micro-enterprises -- a large share of Philippine SMEs -- are
-#     invisible to it, and a Text Search stops issuing page tokens
-#     after 60 results.
-#   * A permit register holds businesses that registered. Informal
-#     operators, and anyone trading on a lapsed permit, are missing
-#     from it.
-#
-# A business seen by EITHER source exists. So the count supported by
-# the evidence is the larger of the two, never their sum (which would
-# double-count every business that is both listed and licensed, i.e.
-# most established ones) and never the newest (which discards
-# evidence). max() is the conservative floor: "at least this many
-# competitors are really there".
-#
-# Each source is taken at its own freshest date, so an old permit
-# register does not hold back a fresh Google count, and vice versa.
-
 _COMPETITOR_SOURCES = ("Google Places API", "DTI")
 
 
@@ -636,7 +508,6 @@ def reconciled_competitor_counts(industries, locations, with_source=False):
         .all()
     )
 
-    # Freshest row per (industry, location, source) first...
     freshest = {}
     for industry, location, source, count, recorded, market_id in rows:
         key = (industry, location, source)
@@ -644,7 +515,6 @@ def reconciled_competitor_counts(industries, locations, with_source=False):
         if key not in freshest or rank > freshest[key][0]:
             freshest[key] = (rank, int(count))
 
-    # ...then the larger of whatever sources that barangay has.
     merged = {}
     for (industry, location, source), (_rank, count) in freshest.items():
         pair = (industry, location)
@@ -680,25 +550,39 @@ def build_feature_vector(market, lgu, years_in_operation, industry_type, competi
     ]
 
 
+def forest_predict(rf_model, X):
+    """(mean, per_tree) for every row of X: the forest's prediction and
+    each tree's own answer, shape (n_rows,) and (n_trees, n_rows).
+
+    Reads each tree's compiled structure directly (tree_.predict on a
+    float32 matrix) instead of going through RandomForestRegressor.
+    predict() and DecisionTreeRegressor.predict(). Those public calls
+    re-validate the input and dispatch through joblib on every call,
+    which cost ~10 ms per forest call and ~12 ms per pass over the trees
+    on a laptop, many times that on the deployment's fraction of a CPU.
+
+    The arithmetic is the same as sklearn's, in the same order: the same
+    float32 input, each tree's leaf value, added tree by tree in
+    estimator order, then divided by the number of trees. So the mean is
+    bit-identical to rf_model.predict(X) (tests/test_fast_forest.py
+    checks it), and the per-tree answers -- what confidence_level is
+    computed from -- come out of the same single pass."""
+    X32 = np.ascontiguousarray(np.asarray(X, dtype=np.float64), dtype=np.float32)
+    n_rows = X32.shape[0]
+    estimators = rf_model.estimators_
+    per_tree = np.empty((len(estimators), n_rows), dtype=np.float64)
+    total = np.zeros(n_rows, dtype=np.float64)
+    for position, tree in enumerate(estimators):
+        values = tree.tree_.predict(X32).reshape(n_rows, -1)[:, 0]
+        per_tree[position] = values
+        total += values
+    return total / len(estimators), per_tree
+
+
 def _tree_predictions(rf_model, X):
     """Every tree's prediction for every row: shape (n_trees, n_rows).
-
-    The forest's own per-tree spread is what confidence_level is
-    derived from, and there is no scikit-learn API that returns it --
-    so the trees have to be asked individually. The thing that matters
-    is asking each tree ONCE for the whole batch instead of once per
-    row.
-
-    That distinction dominated the Trend Reports page. The city-wide
-    sweep scores 500 (industry, barangay) pairs, and the old code
-    called tree.predict() on a single row inside a loop over the
-    forest: 500 x n_trees separate calls. Each one goes through
-    joblib's dispatch machinery, and profiling the page showed 13 of
-    its 28 seconds inside time.sleep() in joblib's worker handshake --
-    pure overhead, not arithmetic. Batched, it is n_trees calls in
-    total for the whole sweep.
-    """
-    return np.array([tree.predict(X) for tree in rf_model.estimators_])
+    See forest_predict()."""
+    return forest_predict(rf_model, X)[1]
 
 
 def _predict_saturation(feature_vector):
@@ -711,11 +595,6 @@ def _predict_saturation(feature_vector):
     rf_model = _MODEL_CACHE["rf"]
 
     if rf_model is None:
-        # Fallback so the app still works before `python -m
-        # app.ml.train_model` has ever been run: the same weighted
-        # formula the paper describes (competitor density / demand
-        # trend proxy / business density), just without the trained
-        # model's learned nonlinearity.
         competitor_count, _pop, _foot, _rent, historical_success_rate, business_density, _years, _ind = feature_vector
         w1 = SystemSetting.get_float("msi_weight_competitor_density", 0.45)
         w2 = SystemSetting.get_float("msi_weight_demand_trend", 0.35)
@@ -728,18 +607,10 @@ def _predict_saturation(feature_vector):
         return round(max(0.0, min(100.0, formulaic * 100)), 2), 50.0, "formula_v1"
 
     X = np.array([feature_vector])
-    prediction = float(rf_model.predict(X)[0])
+    means, per_tree = forest_predict(rf_model, X)
+    prediction = float(means[0])
     saturation_index = max(0.0, min(100.0, prediction))
-
-    # One pass per tree over X, rather than a scalar predict() per
-    # tree. Same arithmetic, and it is the shape the batch path needs,
-    # so there is one implementation instead of two.
-    tree_predictions = _tree_predictions(rf_model, X)[:, 0]
-    spread = float(np.std(tree_predictions))
-    # Map tree-disagreement spread -> 0-100 confidence: 0 spread = 100%
-    # confidence, decaying linearly to a floor of 40% once spread
-    # reaches ~25 saturation points (an empirically "the trees strongly
-    # disagree" spread on this dataset's 0-100 scale).
+    spread = float(np.std(per_tree[:, 0]))
     confidence_level = max(40.0, min(100.0, 100.0 - (spread / 25.0) * 60.0))
     return round(saturation_index, 2), round(confidence_level, 2), "rf_v1"
 
@@ -815,13 +686,11 @@ def compute_scores_batch(pairs, years_in_operation=0):
         return []
     try:
         fingerprint = _scoring_inputs_fingerprint()
-    except Exception:  # noqa: BLE001 -- no fingerprint, no cache; the scores are still right
+    except Exception:
         return _compute_scores_batch(pairs, years_in_operation)
 
     _load_models()
     if _MODEL_CACHE.get("rf") is None:
-        # The formula fallback reads Admin-tunable weights; not worth
-        # caching for a state that only exists before the first training.
         return _compute_scores_batch(pairs, years_in_operation)
     key = (tuple(pairs), years_in_operation, id(_MODEL_CACHE["rf"]))
     hit = _BATCH_CACHE.get(key)
@@ -830,12 +699,12 @@ def compute_scores_batch(pairs, years_in_operation=0):
 
     results = _compute_scores_batch(pairs, years_in_operation)
     try:
-        if _scoring_inputs_fingerprint() == fingerprint:  # nothing was written while scoring
+        if _scoring_inputs_fingerprint() == fingerprint:
             with _BATCH_CACHE_LOCK:
                 if len(_BATCH_CACHE) >= _BATCH_CACHE_MAX_ENTRIES:
                     _BATCH_CACHE.clear()
                 _BATCH_CACHE[key] = (fingerprint, _time.monotonic(), copy.deepcopy(results))
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return results
 
@@ -873,7 +742,6 @@ def _compute_scores_batch(pairs, years_in_operation=0):
 
     market_by_key = _latest_market_rows(industries, locations)
     lgu_by_location = _lgu_rows(locations)
-    # One extra query for the whole batch, not one per pair.
     merged_counts = reconciled_competitor_counts(industries, locations)
 
     resolved, missing = [], []
@@ -881,7 +749,7 @@ def _compute_scores_batch(pairs, years_in_operation=0):
         market = market_by_key.get((industry, location))
         lgu = lgu_by_location.get(location)
         if market is None or lgu is None:
-            missing.append(index)          # needs the row-creating path
+            missing.append(index)
         else:
             resolved.append((index, industry, location, market, lgu))
 
@@ -899,10 +767,6 @@ def _compute_scores_batch(pairs, years_in_operation=0):
         rf_model = _MODEL_CACHE["rf"]
 
         if rf_model is None:
-            # No trained model on disk yet (before the first
-            # train_and_save). There is nothing to batch, and the
-            # weighted-formula fallback lives in _predict_saturation --
-            # so defer to it rather than restating the formula here.
             for position, (index, industry, location, market, lgu) in enumerate(resolved):
                 saturation, confidence, version = _predict_saturation(list(matrix[position]))
                 results[index] = _score_dict(
@@ -910,8 +774,9 @@ def _compute_scores_batch(pairs, years_in_operation=0):
                     competitor_count=merged_counts.get((industry, location), market.competitor_count),
                 )
         else:
-            predictions = np.clip(rf_model.predict(matrix), 0.0, 100.0)
-            spreads = _tree_predictions(rf_model, matrix).std(axis=0)
+            means, per_tree = forest_predict(rf_model, matrix)
+            predictions = np.clip(means, 0.0, 100.0)
+            spreads = per_tree.std(axis=0)
             confidences = np.clip(100.0 - (spreads / 25.0) * 60.0, 40.0, 100.0)
             for position, (index, industry, location, market, lgu) in enumerate(resolved):
                 results[index] = _score_dict(
@@ -996,15 +861,12 @@ def saturation_for_counts(requests_):
     rf_model = _MODEL_CACHE["rf"]
 
     if rf_model is None:
-        # No trained model on disk. Defer to the weighted-formula
-        # fallback rather than restating it, exactly as the batch
-        # scorer does.
         for position, (index, _industry, _market, _lgu, _count) in enumerate(resolved):
             saturation, _confidence, _version = _predict_saturation(list(matrix[position]))
             results[index] = round(max(0.0, min(100.0, saturation)), 2)
         return results
 
-    predictions = np.clip(rf_model.predict(matrix), 0.0, 100.0)
+    predictions = np.clip(forest_predict(rf_model, matrix)[0], 0.0, 100.0)
     for position, (index, _industry, _market, _lgu, _count) in enumerate(resolved):
         results[index] = round(float(predictions[position]), 2)
     return results
@@ -1093,7 +955,7 @@ def _lgu_rows(locations):
     return latest
 
 
-def generate_forecast_for_profile(sme_profile):
+def generate_forecast_for_profile(sme_profile, defer_ai=False):
     """Persisting entry point -- see module docstring. Writes a
     ForecastResult row tied to this SmeProfile's OWN
     industry_type/location/years_in_operation, and fires an
@@ -1127,6 +989,10 @@ def generate_forecast_for_profile(sme_profile):
     per-driver explanation) travels in the recommendation JSON under
     "forecast", where the narrator -- Gemini first, see llm_service --
     transcribes it into words without changing a figure.
+
+    defer_ai=True (the plan pages: add, edit, re-forecast on view) stores
+    the rule-based text and leaves Gemini's to the page's background
+    upgrade, so the redirect after saving a plan never waits on an LLM.
 
     The stored recommendation is generated from the SME's OWN input
     business parameters (sub-category, offering, idea, price list,
@@ -1170,13 +1036,6 @@ def generate_forecast_for_profile(sme_profile):
             "saturation_index": scores["saturation_index"],
         }
 
-    # A short, real sample of the businesses this plan would actually
-    # be competing with -- only fetched when the market_data snapshot
-    # backing this forecast is itself real Google data (not a
-    # simulated fallback), so we never hand the LLM/rule-based writer a
-    # mix of a real competitor_count and fabricated-looking names, and
-    # never spend an extra live API call when we already know the
-    # result would just be simulated placeholders.
     market_row = MarketData.query.get(scores["market_id"])
     competitor_simulated = not market_row or market_row.source != "Google Places API"
     competitor_sample = []
@@ -1187,7 +1046,6 @@ def generate_forecast_for_profile(sme_profile):
         )
         competitor_sample = [r["name"] for r in sample_results[:5] if r.get("name")]
 
-    # ---- Stage 2: the Plan Viability Model ----
     from app.services.plan_forecast_service import (
         combined_confidence,
         combined_model_version,
@@ -1198,11 +1056,6 @@ def generate_forecast_for_profile(sme_profile):
     plan_forecast = forecast_plan(
         sme_profile, scores, market_row, population, subcategory_analysis=subcategory_analysis,
     )
-    # From here on, `scores` describes the PLAN: its viability is the
-    # plan model's, its confidence the weaker of the two stages', its
-    # version names both. Saturation and the cluster tier stay the
-    # market's -- they are measurements of the market, and the early
-    # warning below is about the market.
     scores = {
         **scores,
         "viability_score": plan_forecast["plan"]["viability_score"],
@@ -1219,10 +1072,7 @@ def generate_forecast_for_profile(sme_profile):
         subcategory_analysis=subcategory_analysis,
         plan_forecast=plan_forecast,
     )
-    recommendation = build_recommendation(context)
-    # The payload is the MODEL's, never the narrator's words: whatever
-    # build_recommendation returned, the stored "forecast" is the one
-    # forecast_plan() computed.
+    recommendation = build_recommendation(context, defer_ai=defer_ai)
     if not isinstance(recommendation.get("forecast"), dict):
         recommendation = {**recommendation, "forecast": plan_forecast}
     recommendation_text = serialize_recommendation(recommendation)
@@ -1253,15 +1103,6 @@ def _maybe_fire_early_warning(forecast, sme_profile):
     if float(forecast.saturation_index or 0) <= threshold:
         return
 
-    # Respect the account's own switch (Settings -> Notifications). The
-    # check is HERE rather than at display time on purpose: someone who
-    # turned these off should not accumulate a hidden backlog that all
-    # appears the moment they turn them back on.
-    #
-    # getattr, because a database created before the column existed (and
-    # not yet migrated by startup_migrations) would otherwise raise --
-    # and an early warning failing to send must never break the forecast
-    # that produced it. Absent means on, which matches the column default.
     owner = getattr(sme_profile, "owner", None)
     if owner is not None and not getattr(owner, "notify_early_warning", True):
         return

@@ -20,10 +20,6 @@ from flask_login import current_user, login_required
 
 
 def role_required(*roles):
-    # Case-insensitive on purpose: the real `user.role` ENUM values are
-    # capitalized ('Admin'/'SME'/'LGU'), but comparing case-insensitively
-    # means a typo'd @role_required("admin") in a controller still works
-    # correctly instead of silently locking every admin out with a 403.
     allowed = {r.lower() for r in roles}
 
     def decorator(view_func):
