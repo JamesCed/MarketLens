@@ -2425,3 +2425,29 @@ details[open] > summary .dss-chevron { transform: rotate(90deg); }
   .dss-card .d-flex > * { min-width: 0; }
   .dss-main { overflow-wrap: anywhere; }
 }
+
+/* 5. A select never widens the page. Safari on an iPhone lays out a
+      select's chosen option at its full length and only hides the part
+      past the arrow when it paints, so the hidden part still counted
+      toward the page's width. On the planning page "Water Supply;
+      Sewerage, Waste Management, and Remediation Activities" ran on to
+      about 612px on a 393px screen, and pinching out showed an empty
+      strip down the right-hand side. With overflow: hidden the select
+      clips its own text and only its box counts. Its focus ring is drawn
+      outside the box and is not clipped. Single-line selects only: a
+      list box (multiple, or size above 1) keeps its scrollbar. */
+select.form-select:not([multiple]):not([size]),
+select.form-select[size="1"] { overflow: hidden; text-overflow: ellipsis; }
+
+/* 6. A backstop on phones and tablets (900px and under, where the sidebar
+      slides in): page content is clipped at the edge of the screen, so
+      nothing Safari measures differently can make the page scroll or
+      zoom out sideways. clip, not hidden: hidden would turn .dss-main
+      into a scroll box of its own (its overflow-y would become auto), and
+      sticky things inside it, like the settings menu, would stick to it
+      instead of to the screen. Only the sides are clipped, so the search
+      suggestions that hang below the hero still show. Modals, toasts and
+      the loading circle are fixed to the screen and are not affected. */
+@media (max-width: 900px) {
+  .dss-main { overflow-x: clip; }
+}

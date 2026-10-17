@@ -108,3 +108,17 @@ def test_the_loader_shows_at_once_on_a_phone():
     assert "const LOADER_DELAY_MS = MOBILE ? 0 : 120;" in source
     click = source[source.index('document.addEventListener("click", (event) => {\n    if (event.button'):]
     assert "if (MOBILE) {\n      show();" in click
+
+
+def test_a_long_industry_name_never_makes_the_planning_page_wider_than_the_phone(app):
+    _user, client = _sme(app)
+    page = client.get("/planning").get_data(as_text=True)
+    assert 'id="smeSearchIndustry" class="form-select"' in page
+    assert "Water Supply; Sewerage, Waste Management, and Remediation Activities" in page
+    css = _read("static", "css", "style.css")
+    rule = css[css.index("5. A select never widens the page"):]
+    assert ('select.form-select:not([multiple]):not([size]),\n'
+            'select.form-select[size="1"] { overflow: hidden; text-overflow: ellipsis; }') in rule
+    guard = css[css.index("6. A backstop on phones and tablets"):]
+    assert "@media (max-width: 900px) {\n  .dss-main { overflow-x: clip; }\n}" in guard
+    assert "overflow-x: hidden" not in guard.split("}")[0]

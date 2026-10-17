@@ -1861,5 +1861,10 @@ Admin > Datasets > Archived records.
 - Recommendations: the "Score for plan" picker sits under its label and
   fits the card, so the page no longer scrolls sideways; no page is wider
   than a 320px screen.
+- Planning on an iPhone: pinching out no longer shows an empty strip on
+  the right. Safari counted the hidden end of a long industry name in the
+  "Industry type" picker toward the page width (about 612px on a 393px
+  screen). Every picker now clips its own text, and on screens 900px and
+  under the page content is clipped at the screen edge as a backstop.
 - The loading circle now appears on phones too, as soon as a link or
   button is tapped.
