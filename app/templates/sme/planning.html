@@ -457,8 +457,10 @@
         {{ forecast_breakdown(rec, compact=True, forecast=f) }}
 
         <p class="dss-text-muted-sm mb-1">Current vs. Projected Demand &amp; Viability (6-12 month)</p>
-        <canvas id="outlookBarChart" height="130" role="img"
-                aria-label="Bar chart of demand, saturation and viability for the next four quarters"></canvas>
+        <div class="dss-chart-box dss-outlook-chart">
+          <canvas id="outlookBarChart" role="img"
+                  aria-label="Bar chart of demand, saturation and viability for the next four quarters"></canvas>
+        </div>
         {# Plain-language reading of the chart, written by the script below
            from the same numbers the bars are drawn from. #}
         <p class="dss-chart-note" id="outlookChartNote" aria-live="polite"></p>
@@ -790,6 +792,43 @@
   // (the competitor count, from this barangay's own recorded trend
   // where it has one) and what is held at today's value.
   const outlook = {{ quarterly_outlook|tojson }};
+  // The bars share one 0-60 scale; these turn each one back into the
+  // unit people know -- a demand index out of 100, saturation in
+  // percent, viability out of 10 -- for the labels and the tooltips.
+  const outlookUnits = [
+    (v) => String(Math.round(v / 0.6)),
+    (v) => Math.round(v / 0.6) + '%',
+    (v) => (v / 6).toFixed(1),
+  ];
+  const outlookLongUnits = [
+    (v) => 'Demand index ' + Math.round(v / 0.6) + '/100',
+    (v) => 'Saturation ' + Math.round(v / 0.6) + '%',
+    (v) => 'Viability ' + (v / 6).toFixed(1) + '/10',
+  ];
+  const outlookPhone = window.matchMedia('(max-width: 575.98px)').matches;
+  // On a phone each bar carries its own value, so the chart can be read
+  // without tapping every bar for its tooltip.
+  const outlookValueLabels = {
+    id: 'outlookValueLabels',
+    afterDatasetsDraw(chart) {
+      if (!outlookPhone) return;
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.font = '600 10px system-ui, -apple-system, "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillStyle = Chart.defaults.color;
+      chart.data.datasets.forEach((dataset, i) => {
+        if (!chart.isDatasetVisible(i)) return;
+        chart.getDatasetMeta(i).data.forEach((bar, j) => {
+          const value = dataset.data[j];
+          if (value === null || value === undefined) return;
+          ctx.fillText(outlookUnits[i](value), bar.x, bar.y - 3);
+        });
+      });
+      ctx.restore();
+    },
+  };
   new Chart(document.getElementById('outlookBarChart'), {
     type: 'bar',
     data: {
@@ -802,9 +841,18 @@
     },
     options: {
       responsive: true,
-      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
-      scales: { y: { beginAtZero: true, max: 60 } },
+      maintainAspectRatio: false,
+      layout: { padding: { top: outlookPhone ? 16 : 4 } },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: outlookPhone ? 12 : 10, font: { size: outlookPhone ? 12 : 10 } } },
+        tooltip: { callbacks: { label: (ctx) => outlookLongUnits[ctx.datasetIndex](ctx.parsed.y) } },
+      },
+      scales: {
+        x: { ticks: { font: { size: outlookPhone ? 12 : 11 } } },
+        y: { beginAtZero: true, max: 60, ticks: { font: { size: outlookPhone ? 11 : 10 } } },
+      },
     },
+    plugins: [outlookValueLabels],
   });
 
   // What the chart says, in words: the first and last quarter of each

@@ -14,16 +14,47 @@
    the same greys style.css uses as fallbacks), so the dark theme picks
    them up without a separate block here. */
 
-/* One row: the colour filter on the left, "Show all / Hide all" on the
-   right; wraps onto two lines on a narrow screen. */
+/* A title row ("Saturation level" with Show all / Hide all on the
+   right) above a grid of equal tiles, one per level: four across, two
+   by two on a phone. */
 .dss-map-legend {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: .25rem .75rem;
+  flex-direction: column;
+  gap: .4rem;
   margin-top: .6rem;
   font-size: .8rem;
+}
+.dss-map-legend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+}
+.dss-map-legend-head .dss-map-legend-label { font-weight: 600; }
+.dss-map-legend .dss-legend-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .35rem;
+}
+.dss-legend-grid .dss-tier-toggle,
+.dss-legend-grid .dss-map-legend-item {
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+  padding: .35rem .5rem;
+  border: 1px solid var(--bs-border-color, #dee2e6);
+  border-radius: .5rem;
+  background: var(--bs-body-bg, #fff);
+}
+.dss-legend-grid .dss-tier-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dss-legend-grid [data-tier-count] { margin-left: auto; padding-left: .45em; padding-right: .45em; }
+@media (max-width: 575.98px) {
+  .dss-map-legend .dss-legend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dss-map-legend { font-size: .85rem; }
 }
 /* `hidden` must win over display:flex -- map.js swaps the saturation and
    density legends by toggling it. Bootstrap's reboot already does this
@@ -339,3 +370,5 @@
 
 [data-bs-theme="dark"] .dss-timeline { --dss-tl-history: #3b4a5e; }
 [data-bs-theme="dark"] .dss-timeline-badge[data-period="history"] { background: rgba(148, 163, 184, .16); color: #cbd5e1; }
+
+[data-bs-theme="dark"] .dss-legend-grid .dss-tier-toggle:hover { background: #1d2a38; border-color: #2c3d50; }

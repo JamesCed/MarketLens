@@ -9,8 +9,9 @@
   nothing inside a page container, so no container ever has to be
   transformed for it (see tests/test_flash_and_page_transition.py).
 
-  Rendered `hidden`; main.js reveals it only if the next page has not
-  arrived within ~0.12 s, so a fast navigation never flashes it.
+  Rendered `hidden`. On a computer main.js reveals it only if the next
+  page has not arrived within ~0.12 s, so a fast navigation never
+  flashes it; on a phone or tablet it appears as soon as you tap.
 #}
 <div class="dss-page-loader" id="dssPageLoader" role="status" aria-live="polite" hidden>
   <div class="dss-spinner" aria-hidden="true"></div>

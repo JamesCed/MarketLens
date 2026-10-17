@@ -126,6 +126,21 @@
             data-bs-toggle="modal" data-bs-target="#supportModal">
       <i class="bi bi-question-circle"></i> Support
     </button>
+    {# On a phone the top bar has no room for the PSA, Community and
+       Contact Us icons next to the MarketLens name, so they live here,
+       in the menu, instead (style.css, "MOBILE"). Hidden on wider
+       screens, where the top bar shows them. #}
+    <div class="dss-sidebar-quick" aria-label="Sources and help">
+      <a class="dss-nav-link dss-nav-support" href="https://psa.gov.ph" target="_blank" rel="noopener">
+        <i class="bi bi-globe2" aria-hidden="true"></i> PSA Data Source
+      </a>
+      <a class="dss-nav-link dss-nav-support" href="{{ url_for('community.discord') }}" target="_blank" rel="noopener">
+        <i class="bi bi-discord" aria-hidden="true"></i> Community Forum
+      </a>
+      <button type="button" class="dss-nav-link dss-nav-support" data-bs-toggle="modal" data-bs-target="#contactModal">
+        <i class="bi bi-headset" aria-hidden="true"></i> Contact Us
+      </button>
+    </div>
   </div>
 </aside>
 

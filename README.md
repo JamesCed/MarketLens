@@ -1844,3 +1844,22 @@ Admin > Datasets > Archived records.
 | Every page looked up the system account and re-read the settings table, and Home/Planning re-checked whether an LGU upload exists | Kept across requests (settings for a minute, cleared the moment a setting is saved; the upload check until `lgu_data` changes) |
 | Saturation scores, trend sweeps, the outlook and the diversification plan were recomputed every 2 to 5 minutes even when no data had changed | They are keyed on the data, so they now last 30 minutes; any upload, archive or settings save still refreshes them at once |
 | Nothing happened until the click | Sidebar pages start downloading while the pointer rests on the link (Chrome and Edge) |
+
+**On phones (also part of V3.2).**
+
+- Top bar: the MarketLens name no longer collides with the PSA, Community
+  and Contact Us icons; on a phone those three move into the menu.
+- Planning, "Current vs. Projected Demand & Viability": taller on a phone,
+  with each bar's value written on it (demand index, saturation %,
+  viability out of 10); tooltips use the same units everywhere.
+- Trend Reports, "Quarterly Performance & Growth Rate": a proper height on
+  a phone (it was about 115px tall, too short for the axes), with the
+  quarters on two lines and shorter axis titles.
+- Saturation Map legend: one tile per level, least to most crowded (Low,
+  Moderate, High, Saturated), two by two on a phone, with Show all / Hide
+  all beside the title.
+- Recommendations: the "Score for plan" picker sits under its label and
+  fits the card, so the page no longer scrolls sideways; no page is wider
+  than a 320px screen.
+- The loading circle now appears on phones too, as soon as a link or
+  button is tapped.

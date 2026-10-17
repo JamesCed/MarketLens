@@ -2337,3 +2337,91 @@ body.dss-skin .dss-main .table > thead th {
 .dss-full-analysis > summary:hover { background: var(--bs-tertiary-bg); }
 .dss-chevron { display: inline-block; transition: transform .15s ease; }
 details[open] > summary .dss-chevron { transform: rotate(90deg); }
+
+/* =====================================================================
+   MOBILE (phones up to 575px, and the top bar up to 900px)
+   ---------------------------------------------------------------------
+   1. The top bar: the MarketLens name never shares its row with more
+      than the menu button, the bell and the account button. On a phone
+      the PSA / Community / Contact Us icons move into the menu
+      (shared/_sidebar.html, .dss-sidebar-quick); they used to sit on
+      top of the wordmark.
+   ===================================================================== */
+.dss-sidebar-quick { display: none; }
+@media (max-width: 900px) {
+  .dss-topbar { gap: .5rem; padding: .6rem .75rem; }
+  .dss-topbar-brand { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  .dss-topbar-actions { flex-shrink: 0; gap: .4rem; }
+  .dss-topbar .dss-nav-toggle { margin-right: 0; }
+}
+@media (max-width: 575.98px) {
+  .dss-topbar .dss-quick-links { display: none; }
+  .dss-sidebar-quick {
+    display: block; margin-top: .5rem; padding-top: .5rem;
+    border-top: 1px solid var(--bs-border-color, #e5e7eb);
+  }
+  .dss-sidebar-quick .dss-nav-link { margin-bottom: .15rem; }
+  .dss-topbar .btn-light { padding: .35rem .55rem; }
+  .dss-topbar .dss-avatar { margin-right: 0; }
+}
+@media (max-width: 399.98px) {
+  .dss-topbar { padding: .5rem; gap: .35rem; }
+  .dss-topbar-actions { gap: .3rem; }
+  .dss-topbar .btn-light { padding: .3rem .45rem; }
+  .dss-topbar .dss-nav-toggle { width: 38px; height: 38px; }
+}
+@media (max-width: 349.98px) {
+  .dss-topbar-brand .ml-brand-sm .ml-brand-icon { height: 24px; }
+  .dss-topbar-brand .ml-brand-sm .ml-brand-word { height: 15px; }
+  .dss-topbar-brand .ml-brand { gap: .35rem; }
+  .dss-topbar .dss-nav-toggle { width: 36px; height: 36px; font-size: 1.2rem; }
+}
+/* In dark mode the bell and account buttons were plain white blocks
+   beside the dark header. */
+[data-bs-theme="dark"] .dss-topbar .btn-light {
+  background: #16202b; border-color: #2c3d50; color: #e6edf5;
+}
+[data-bs-theme="dark"] .dss-topbar .btn-light:hover { background: #1d2a38; }
+
+/* 2. Charts that used to take their height from a fixed canvas ratio,
+      which on a 360px-wide phone left the Planning outlook chart about
+      130px tall and the Trend Reports quarterly chart about 115px --
+      too short for the axes to show more than "0". They now fill a
+      box: the same proportions as before on wider screens, and a
+      fixed, taller height on a phone. */
+.dss-chart-box { position: relative; width: 100%; }
+.dss-outlook-chart { aspect-ratio: 300 / 130; min-height: 180px; }
+.dss-quarterly-chart { aspect-ratio: 300 / 110; min-height: 260px; max-height: 440px; }
+@media (max-width: 575.98px) {
+  .dss-outlook-chart { aspect-ratio: auto; height: 300px; }
+  .dss-quarterly-chart { aspect-ratio: auto; height: 340px; }
+}
+
+/* 3. Recommendations, "Score for plan": the select used to size itself
+      to its longest option ("test3 · Water Supply; Sewerage, Waste
+      Management, and Remediation Activities"), which pushed it past the
+      edge of a phone screen and made the whole page scroll sideways.
+      Beside its label on wider screens, stacked under it on a phone,
+      and never wider than its card either way. */
+.dss-plan-select-form {
+  display: flex; align-items: center; gap: .5rem;
+  min-width: 0; max-width: 100%;
+}
+.dss-plan-select-form label { white-space: nowrap; }
+.dss-plan-select {
+  width: auto; max-width: 100%; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@media (max-width: 575.98px) {
+  .dss-plan-select-form { flex: 1 1 100%; width: 100%; flex-direction: column; align-items: stretch; gap: .3rem; }
+  .dss-plan-select { width: 100%; }
+}
+
+/* 4. Nothing on a phone may be wider than the screen. Cards and their
+      direct flex children shrink with the page instead of holding their
+      content's natural width. */
+@media (max-width: 575.98px) {
+  .dss-card { width: 100%; max-width: 100%; box-sizing: border-box; min-width: 0; }
+  .dss-card .d-flex > * { min-width: 0; }
+  .dss-main { overflow-wrap: anywhere; }
+}

@@ -203,8 +203,10 @@
        Reading them together is the point: rising demand with falling
        growth is a market flattening out, which two separate charts
        side by side made much harder to see. #}
-  <canvas id="quarterlyChart" height="110" role="img"
-          aria-label="Chart of businesses on file and quarter-over-quarter growth"></canvas>
+  <div class="dss-chart-box dss-quarterly-chart">
+    <canvas id="quarterlyChart" role="img"
+            aria-label="Chart of businesses on file and quarter-over-quarter growth"></canvas>
+  </div>
   <div class="text-muted small mt-2" id="quarterlyProvenance"></div>
   {# The reading of the numbers on screen stays right under the chart --
      it is the one line worth reading; the general explanation is in the
@@ -456,9 +458,15 @@ function renderQuarterly(q) {
   // estimated are distinguishable without reading the caption.
   const pointStyle = (i) => (q.projected && q.projected[i] ? "#ffffff" : demandColor);
 
+  // On a phone the chart gets a taller box (style.css, "MOBILE"),
+  // quarter labels on two lines instead of slanted, and shorter axis
+  // titles, so both series and both axes stay readable.
+  const phone = window.matchMedia("(max-width: 575.98px)").matches;
+  const quarterLabels = phone ? q.labels.map((label) => String(label).split(" ")) : q.labels;
+
   quarterlyChart = new Chart(document.getElementById("quarterlyChart"), {
     data: {
-      labels: q.labels,
+      labels: quarterLabels,
       datasets: [
         {
           type: "line",
@@ -491,6 +499,7 @@ function renderQuarterly(q) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
         // Legend swatches are drawn in each series' own colour. The
@@ -500,9 +509,10 @@ function renderQuarterly(q) {
         legend: {
           position: "bottom",
           labels: {
-            padding: 16,
+            padding: phone ? 10 : 16,
             boxWidth: 14,
             boxHeight: 10,
+            font: { size: phone ? 11 : 12 },
             generateLabels: (chart) => chart.data.datasets.map((ds, i) => ({
               text: ds.label,
               fillStyle: ds.borderColor,
@@ -526,19 +536,20 @@ function renderQuarterly(q) {
         },
       },
       scales: {
-        x: { grid: { display: false } },
+        x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: false, font: { size: phone ? 10 : 12 } } },
         y: {
           position: "left",
           beginAtZero: true,
-          title: { display: true, text: "Businesses (blue)", color: demandColor },
-          ticks: { color: "#6c757d" },
+          title: { display: true, text: phone ? "Businesses" : "Businesses (blue)", color: demandColor, font: { size: phone ? 10 : 12 } },
+          ticks: { color: "#6c757d", font: { size: phone ? 10 : 12 },
+                   callback: (v) => (phone && v >= 1000 ? `${Math.round(v / 100) / 10}k` : v.toLocaleString()) },
           grid: { color: "rgba(0,0,0,.06)" },
         },
         yGrowth: {
           position: "right",
           beginAtZero: true,
-          title: { display: true, text: "Growth % (green)", color: growthColor },
-          ticks: { color: "#6c757d", callback: (v) => `${v}%` },
+          title: { display: true, text: phone ? "Growth %" : "Growth % (green)", color: growthColor, font: { size: phone ? 10 : 12 } },
+          ticks: { color: "#6c757d", font: { size: phone ? 10 : 12 }, callback: (v) => `${v}%` },
           grid: { drawOnChartArea: false },
         },
       },

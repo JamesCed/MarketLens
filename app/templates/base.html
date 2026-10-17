@@ -137,7 +137,7 @@
      finds the page already downloaded. Only the sidebar's own page links,
      never the one already open: nothing that signs out or changes data. #}
 <script type="speculationrules">
-{% raw %}{"prefetch": [{"where": {"and": [{"selector_matches": ".dss-nav-link"}, {"not": {"selector_matches": ".active"}}]}, "eagerness": "moderate"}]}{% endraw %}
+{% raw %}{"prefetch": [{"where": {"and": [{"selector_matches": ".dss-nav-link"}, {"not": {"selector_matches": ".active"}}, {"not": {"selector_matches": "[target]"}}]}, "eagerness": "moderate"}]}{% endraw %}
 </script>
 {% endif %}
 </body>

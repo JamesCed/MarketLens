@@ -289,9 +289,9 @@
         </p>
       </div>
       {% if profiles|length > 1 %}
-      <form method="GET" class="d-flex align-items-center gap-2">
+      <form method="GET" class="dss-plan-select-form">
         <label class="small text-muted mb-0" for="oppPlanSelect">Score for plan</label>
-        <select class="form-select form-select-sm" style="width:auto" id="oppPlanSelect" name="sme_id"
+        <select class="form-select form-select-sm dss-plan-select" id="oppPlanSelect" name="sme_id"
                 onchange="this.form.submit()">
           {% for p in profiles %}
           <option value="{{ p.sme_id }}" {{ "selected" if p.sme_id == opportunity_plan.sme_id }}>

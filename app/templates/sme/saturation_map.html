@@ -127,35 +127,43 @@
         <div class="dss-timeline-note" id="timelineNote" aria-live="polite"></div>
       </div>
 
+      {# The legend reads as a scale, least to most crowded, the same
+         order as "Barangays by level" in the panel beside the map: a
+         title row with Show all / Hide all, then one tile per level
+         (four across, or two by two on a phone -- map.css). #}
       <div class="dss-map-legend" id="saturationLegend">
-        <div class="dss-map-legend-items" role="group" aria-label="Show or hide saturation levels">
-          <span class="dss-map-legend-label">Saturation:</span>
-          <button type="button" class="dss-tier-toggle" data-tier-filter="Saturated" aria-pressed="true" title="Show or hide Saturated barangays">
-            <span class="dss-legend-swatch" style="background:#b91c1c"></span>Saturated
-            <span class="badge bg-light text-dark ms-1" data-tier-count="Saturated">0</span>
-          </button>
-          <button type="button" class="dss-tier-toggle" data-tier-filter="High" aria-pressed="true" title="Show or hide High saturation">
-            <span class="dss-legend-swatch" style="background:#f97316"></span>High
-            <span class="badge bg-light text-dark ms-1" data-tier-count="High">0</span>
+        <div class="dss-map-legend-head">
+          <span class="dss-map-legend-label">Saturation level</span>
+          <div class="dss-map-legend-actions">
+            <button type="button" class="btn btn-link btn-sm" id="tierShowAll">Show all</button>
+            <span aria-hidden="true">&middot;</span>
+            <button type="button" class="btn btn-link btn-sm" id="tierHideAll">Hide all</button>
+          </div>
+        </div>
+        <div class="dss-map-legend-items dss-legend-grid" role="group" aria-label="Show or hide saturation levels">
+          <button type="button" class="dss-tier-toggle" data-tier-filter="Low" aria-pressed="true" title="Show or hide Low saturation">
+            <span class="dss-legend-swatch" style="background:#22c55e"></span><span class="dss-tier-name">Low</span>
+            <span class="badge bg-light text-dark" data-tier-count="Low">0</span>
           </button>
           <button type="button" class="dss-tier-toggle" data-tier-filter="Moderate" aria-pressed="true" title="Show or hide Moderate saturation">
-            <span class="dss-legend-swatch" style="background:#fde047"></span>Moderate
-            <span class="badge bg-light text-dark ms-1" data-tier-count="Moderate">0</span>
+            <span class="dss-legend-swatch" style="background:#fde047"></span><span class="dss-tier-name">Moderate</span>
+            <span class="badge bg-light text-dark" data-tier-count="Moderate">0</span>
           </button>
-          <button type="button" class="dss-tier-toggle" data-tier-filter="Low" aria-pressed="true" title="Show or hide Low saturation">
-            <span class="dss-legend-swatch" style="background:#22c55e"></span>Low
-            <span class="badge bg-light text-dark ms-1" data-tier-count="Low">0</span>
+          <button type="button" class="dss-tier-toggle" data-tier-filter="High" aria-pressed="true" title="Show or hide High saturation">
+            <span class="dss-legend-swatch" style="background:#f97316"></span><span class="dss-tier-name">High</span>
+            <span class="badge bg-light text-dark" data-tier-count="High">0</span>
           </button>
-        </div>
-        <div class="dss-map-legend-actions">
-          <button type="button" class="btn btn-link btn-sm" id="tierShowAll">Show all</button>
-          <span aria-hidden="true">&middot;</span>
-          <button type="button" class="btn btn-link btn-sm" id="tierHideAll">Hide all</button>
+          <button type="button" class="dss-tier-toggle" data-tier-filter="Saturated" aria-pressed="true" title="Show or hide Saturated barangays">
+            <span class="dss-legend-swatch" style="background:#b91c1c"></span><span class="dss-tier-name">Saturated</span>
+            <span class="badge bg-light text-dark" data-tier-count="Saturated">0</span>
+          </button>
         </div>
       </div>
       <div class="dss-map-legend" id="densityLegend" hidden>
-        <div class="dss-map-legend-items">
-          <span class="dss-map-legend-label">People per km&sup2;:</span>
+        <div class="dss-map-legend-head">
+          <span class="dss-map-legend-label">People per km&sup2;</span>
+        </div>
+        <div class="dss-map-legend-items dss-legend-grid">
           <span class="dss-map-legend-item"><span class="dss-legend-swatch" style="background:#c7d2fe"></span>Low</span>
           <span class="dss-map-legend-item"><span class="dss-legend-swatch" style="background:#818cf8"></span>Moderate</span>
           <span class="dss-map-legend-item"><span class="dss-legend-swatch" style="background:#6366f1"></span>High</span>

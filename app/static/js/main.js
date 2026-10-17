@@ -211,8 +211,12 @@ document.addEventListener("click", (event) => {
    - Same-site link clicks, normal form submits and script navigations
      (window.location.assign, form.submit(), the tour moving between
      pages) all show it. Script navigations are caught by beforeunload.
-   - It appears only after LOADER_DELAY_MS, so a page that arrives
-     quickly never flashes it.
+   - On a computer it appears only after LOADER_DELAY_MS, so a page that
+     arrives quickly never flashes it. On a phone or tablet (a touch
+     screen, or a window 900px wide or less) it appears at once: mobile
+     browsers can stop drawing the old page as soon as the next one is
+     requested, so a delayed circle often never got drawn at all, and
+     iPhone Safari does not reliably fire beforeunload.
    - Downloads (CSV exports, dataset templates) do not unload the page,
      so they never show it; a link can also opt out with data-no-loader.
    - Coming back with the browser's Back button restores the page from
@@ -222,7 +226,8 @@ document.addEventListener("click", (event) => {
   const loader = document.getElementById("dssPageLoader");
   if (!loader) return;
 
-  const LOADER_DELAY_MS = 120;
+  const MOBILE = window.matchMedia("(max-width: 900px), (pointer: coarse)").matches;
+  const LOADER_DELAY_MS = MOBILE ? 0 : 120;
   const FAILSAFE_MS = 25000;
   const DOWNLOAD_RE = /\.(csv|xlsx?|pdf|zip)(\?|#|$)|\/export|dataset-template/i;
   let showTimer = null;
@@ -236,13 +241,19 @@ document.addEventListener("click", (event) => {
     document.documentElement.removeAttribute("aria-busy");
   }
 
+  function reveal() {
+    loader.hidden = false;
+    document.documentElement.setAttribute("aria-busy", "true");
+  }
+
   function show() {
     if (Date.now() < suppressUntil) return;
     clearTimeout(showTimer);
-    showTimer = setTimeout(() => {
-      loader.hidden = false;
-      document.documentElement.setAttribute("aria-busy", "true");
-    }, LOADER_DELAY_MS);
+    if (LOADER_DELAY_MS > 0) {
+      showTimer = setTimeout(reveal, LOADER_DELAY_MS);
+    } else {
+      reveal();
+    }
     clearTimeout(failsafe);
     failsafe = setTimeout(hide, FAILSAFE_MS);
   }
@@ -268,24 +279,46 @@ document.addEventListener("click", (event) => {
     if (url.origin !== window.location.origin) return;
     if (DOWNLOAD_RE.test(url.pathname + url.search)) { suppress(); return; }
     if (url.pathname === window.location.pathname && url.search === window.location.search && url.hash) return;
+    if (event.defaultPrevented) return;
+    // On a phone, raise it right now, inside the tap, before the browser
+    // starts the request; take it down again if a later handler cancels
+    // the navigation.
+    if (MOBILE) {
+      show();
+      setTimeout(() => { if (event.defaultPrevented) hide(); }, 0);
+      return;
+    }
     // Let every other click handler run first; one that cancels the
     // navigation (a confirm, an in-page tab) cancels the loader too.
     setTimeout(() => { if (!event.defaultPrevented) show(); }, 0);
   });
 
+  function formNavigates(form) {
+    if (!(form instanceof HTMLFormElement)) return false;
+    if (form.hasAttribute("data-no-loader") || (form.target && form.target !== "_self")) return false;
+    if (DOWNLOAD_RE.test(form.getAttribute("action") || "")) { suppress(); return false; }
+    return true;
+  }
+
   document.addEventListener("submit", (event) => {
+    if (MOBILE && !event.defaultPrevented && formNavigates(event.target)) {
+      show();
+      setTimeout(() => { if (event.defaultPrevented) hide(); }, 0);
+      return;
+    }
     setTimeout(() => {
       if (event.defaultPrevented) return;
-      const form = event.target;
-      if (!(form instanceof HTMLFormElement)) return;
-      if (form.hasAttribute("data-no-loader") || (form.target && form.target !== "_self")) return;
-      if (DOWNLOAD_RE.test(form.getAttribute("action") || "")) { suppress(); return; }
-      show();
+      if (formNavigates(event.target)) show();
     }, 0);
   });
 
   window.addEventListener("beforeunload", show);
   window.addEventListener("pageshow", hide);
+  // Leaving for another app or tab is not leaving the page: if a phone
+  // comes back to it without a reload, the circle must not still be up.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && !loader.hidden) setTimeout(hide, 600);
+  });
 })();
 
 
