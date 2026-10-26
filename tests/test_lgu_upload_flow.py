@@ -373,7 +373,9 @@ def test_the_market_template_actually_imports(app, lgu_user):
     assert status == "success", message
 
 
-def test_the_upload_route_reports_the_result(app, lgu_user):
+def test_the_upload_route_stages_the_file_and_changes_nothing_live(app, lgu_user):
+    from app.models import UploadBatch
+
     client = _login(app)
     path = _csv(_register_rows(n_per_barangay=4, barangays=BARANGAY_NAMES[:3]), REGISTER_HEADER)
     try:
@@ -384,8 +386,14 @@ def test_the_upload_route_reports_the_result(app, lgu_user):
     finally:
         os.unlink(path)
     page = response.get_data(as_text=True)
-    assert "uploaded to Market Data" in page
-    assert "City-wide recommendations now use this data" in page
+    assert "Saved to the staging area as batch #" in page
+    assert "City-wide recommendations now use this data" not in page
+    assert "Your uploads" in page and "Waiting for review" in page
+    with app.app_context():
+        batch = UploadBatch.query.one()
+        assert batch.status == "pending_review" and batch.uploaded_by == lgu_user
+        assert batch.market_rows > 0 and batch.payload
+        assert MarketData.query.filter_by(source="DTI").count() == 0, "nothing is live before it is published"
 
 
 @pytest.fixture
@@ -443,12 +451,16 @@ def test_a_long_upload_runs_in_the_background_and_reports_back(background_app):
     assert state["status"] == "success", state
 
     page = client.get("/lgu/government-data-upload").get_data(as_text=True)
-    assert "uploaded to Market Data" in page
-    assert "uploaded to Market Data" not in client.get("/lgu/government-data-upload").get_data(as_text=True), (
+    assert "Saved to the staging area" in page
+    assert "Saved to the staging area" not in client.get("/lgu/government-data-upload").get_data(as_text=True), (
         "the result is shown once"
     )
+    from app.models import UploadBatch
+
     with background_app.app_context():
-        assert MarketData.query.filter_by(source="DTI").count() == 8
+        batch = UploadBatch.query.one()
+        assert state["batch_id"] == batch.id and batch.market_rows == 8
+        assert MarketData.query.filter_by(source="DTI").count() == 0, "staged, not live"
 
 
 ZONING_SAMPLE = os.path.join(SAMPLE_DIR, "MarketLens_LGU_Zoning_Sample_Tarlac_City.xlsx")

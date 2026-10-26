@@ -14,6 +14,28 @@ from app.config import config_by_name
 from app.extensions import db, login_manager, csrf, cache
 
 
+def _harden_mysql_engine(app):
+    """MySQL (Aiven) connections that never hang a worker: give up on a
+    connection after 10 s and on a query after DB_QUERY_TIMEOUT seconds
+    (default 110, just inside gunicorn's 120 s), and recycle pooled
+    connections before the server's idle timeout drops them. An upload
+    that cannot reach the database then fails with a message instead of
+    a progress card that waits forever. SQLite (tests) is left alone."""
+    uri = app.config.get("SQLALCHEMY_DATABASE_URI") or ""
+    if not uri.startswith("mysql"):
+        return
+    timeout = int(float(os.environ.get("DB_QUERY_TIMEOUT", "110") or 110))
+    options = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
+    options.setdefault("pool_pre_ping", True)
+    options.setdefault("pool_recycle", 280)
+    connect_args = dict(options.get("connect_args") or {})
+    connect_args.setdefault("connect_timeout", 10)
+    connect_args.setdefault("read_timeout", timeout)
+    connect_args.setdefault("write_timeout", timeout)
+    options["connect_args"] = connect_args
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = options
+
+
 def create_app(config_name=None):
     config_name = config_name or os.environ.get("FLASK_CONFIG", "development")
 
@@ -31,6 +53,7 @@ def create_app(config_name=None):
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
     os.makedirs(app.config["MODEL_DIR"], exist_ok=True)
 
+    _harden_mysql_engine(app)
     db.init_app(app)
 
     if cache is not None:
@@ -93,6 +116,25 @@ def create_app(config_name=None):
 
     app.jinja_env.filters["mask_email"] = mask_email
     app.jinja_env.filters["mask_phone"] = mask_phone
+
+    from datetime import timedelta as _timedelta
+
+    def _pht(value, fmt="%b %d, %Y %I:%M %p"):
+        """A stored UTC time shown in Philippine time."""
+        return (value + _timedelta(hours=8)).strftime(fmt) + " PHT" if value else "—"
+
+    app.jinja_env.filters["pht"] = _pht
+
+    def _staging_waiting(status):
+        """How many upload batches are waiting at a step (sidebar badge)."""
+        from app.services.staging_service import count_waiting
+
+        try:
+            return count_waiting(status)
+        except Exception:
+            return 0
+
+    app.jinja_env.globals["staging_waiting"] = _staging_waiting
 
     from app.services.account_params import PASSWORD_HINT, PASSWORD_MIN_LENGTH, PASSWORD_RULES
 

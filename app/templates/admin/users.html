@@ -89,7 +89,23 @@
                   <button type="button" class="btn btn-link btn-sm p-0 align-baseline dss-unmask" aria-label="Show email"><i class="bi bi-eye"></i></button>
                   &middot; UID #{{ u.user_id }}</div>
               </td>
-              <td>{{ role_badge(u.role) }}</td>
+              <td>
+                {{ role_badge(u.role) }}
+                {% if u.role == 'LGU' %}
+                  {# The LGU sub-role decides who uploads and who reviews (Gov't Data Upload workflow). #}
+                  <form method="POST" action="{{ url_for('admin.set_lgu_role', user_id=u.user_id) }}" class="mt-1">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <label class="visually-hidden" for="lgu-role-{{ u.user_id }}">LGU role of {{ u.name }}</label>
+                    <select id="lgu-role-{{ u.user_id }}" name="lgu_role" class="form-select form-select-sm dss-lgu-role"
+                            onchange="this.form.submit()">
+                      {% for key, label in lgu_roles.items() %}
+                        <option value="{{ key }}" {{ 'selected' if u.lgu_role_key == key }}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                    <noscript><button type="submit" class="btn btn-sm btn-outline-primary mt-1">Save</button></noscript>
+                  </form>
+                {% endif %}
+              </td>
               <td>
                 <span class="badge {{ badge[0] }}">{{ badge[1] }}</span>
                 {% if u.is_suspended %}
@@ -233,9 +249,11 @@
             <label class="form-label" for="cu-role">Role</label>
             <select id="cu-role" class="form-select" name="role">
               <option value="SME">SME (Entrepreneur / Business Owner)</option>
-              <option value="LGU">LGU Official</option>
-              <option value="Admin">Administrator</option>
+              <option value="LGU_ENCODER">LGU Encoder (uploads data to the staging area)</option>
+              <option value="LGU_STEWARD">LGU Data Steward (reviews and approves uploads)</option>
+              <option value="Admin">System Administrator (publishes approved data)</option>
             </select>
+            <div class="form-text">A Data Steward never reviews their own upload, and only an administrator publishes.</div>
           </div>
         </div>
         <div class="modal-footer">

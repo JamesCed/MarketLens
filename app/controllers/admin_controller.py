@@ -363,6 +363,7 @@ def users():
         status=status,
         status_choices=USER_STATUS_CHOICES,
         suspension_choices=SUSPENSION_CHOICES,
+        lgu_roles=User.LGU_ROLES,
         counts={
             "all": User.query.filter(User.archived_at.is_(None)).count(),
             "suspended": User.query.filter(User.archived_at.is_(None), User.status == "inactive").count(),
@@ -384,6 +385,10 @@ def create_user():
     email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
     role = request.form.get("role", "SME")
+    lgu_role = None
+    if role in ("LGU_ENCODER", "LGU_STEWARD"):
+        lgu_role = "steward" if role == "LGU_STEWARD" else "encoder"
+        role = "LGU"
     raw_contact = request.form.get("contact_number", "").strip()
     contact_number = normalise_ph_mobile(raw_contact) if raw_contact else None
 
@@ -407,7 +412,7 @@ def create_user():
         flash("A user with that email already exists.", "danger")
         return redirect(url_for("admin.users"))
 
-    user = User(name=name, email=email, role=role, contact_number=contact_number,
+    user = User(name=name, email=email, role=role, contact_number=contact_number, lgu_role=lgu_role,
                 first_name=first or None, middle_name=middle or None, last_name=last or None, suffix=suffix or None)
     user.set_password(password)
     db.session.add(user)
@@ -415,6 +420,72 @@ def create_user():
     log_action("admin_create_user", details=f"{role}: {email}", target=user)
     flash(f"Account created for {email}.", "success")
     return redirect(url_for("admin.users"))
+
+
+@admin_bp.route("/users/<int:user_id>/lgu-role", methods=["POST"])
+@role_required("Admin")
+def set_lgu_role(user_id):
+    """Make an LGU account an Encoder (uploads to staging) or a Data
+    Steward (reviews and approves staged uploads)."""
+    user = db.session.get(User, user_id)
+    lgu_role = request.form.get("lgu_role")
+    if user is None or user.role != "LGU" or lgu_role not in User.LGU_ROLES:
+        flash("Choose an LGU account and a valid LGU role.", "danger")
+        return redirect(url_for("admin.users"))
+    before = user.lgu_role_key
+    if before != lgu_role:
+        user.lgu_role = lgu_role
+        db.session.commit()
+        log_action("admin_set_lgu_role", details=f"{user.email}: {User.LGU_ROLES[before]} -> {User.LGU_ROLES[lgu_role]}",
+                   target=user, changes={"lgu_role": [before, lgu_role]})
+    flash(f"{user.name} is now an {User.LGU_ROLES[lgu_role]}.", "success")
+    return redirect(url_for("admin.users"))
+
+
+@admin_bp.route("/publish-data")
+@role_required("Admin")
+def publish_data():
+    """Approved staging batches waiting to go live, and recent history."""
+    from app.models.upload_batch import STATUS_APPROVED, STATUS_PENDING, STATUS_PUBLISHED, STATUS_REJECTED
+    from app.services import staging_service
+
+    return render_template(
+        "admin/publish_data.html",
+        approved=staging_service.batches([STATUS_APPROVED], limit=50),
+        pending_count=staging_service.count_waiting(STATUS_PENDING),
+        history=staging_service.batches([STATUS_PUBLISHED, STATUS_REJECTED], limit=25),
+    )
+
+
+@admin_bp.route("/publish-data/<int:batch_id>/publish", methods=["POST"])
+@role_required("Admin")
+def publish_batch(batch_id):
+    from app.services import staging_service, upload_jobs
+
+    ok, message = staging_service.publish(batch_id, current_user)
+    if ok:
+        log_action("staging_publish", details=message[:500], target_type="UploadBatch", target_id=batch_id)
+        # publish() already cleared the memoised figures; the alert sweep
+        # and the warm-up run on a low-priority thread, not in this request.
+        upload_jobs.schedule_followups(current_app._get_current_object())
+        flash(message, "success")
+    else:
+        flash(message, "danger")
+    return redirect(url_for("admin.publish_data"))
+
+
+@admin_bp.route("/publish-data/<int:batch_id>/reject", methods=["POST"])
+@role_required("Admin")
+def reject_batch(batch_id):
+    from app.services import staging_service
+
+    note = request.form.get("reason", "")
+    ok, message = staging_service.reject_by_admin(batch_id, current_user, note)
+    if ok:
+        log_action("staging_admin_reject", details=f"batch #{batch_id}", target_type="UploadBatch",
+                   target_id=batch_id, reason=note or None)
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin.publish_data"))
 
 
 @admin_bp.route("/users/<int:user_id>/toggle-active", methods=["POST"])

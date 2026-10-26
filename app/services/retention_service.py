@@ -17,6 +17,11 @@ now have a retention period an Admin sets in System Settings:
                             sub-category counts, counted from the upload.
   audit_log_retention_days  (default 365 = 1 year) -- audit_logs entries.
 
+The staging area of the Gov't Data Upload (upload_batches) follows the
+upload period too, and a batch still waiting for review or publishing
+after STAGING_EXPIRY_DAYS expires: it is marked rejected and its staged
+rows are cleared.
+
 A row a saved forecast still points to is kept until that forecast is
 gone: forecast_result references its market_data and lgu_data rows, and
 deleting them would delete the business owner's saved forecast with
@@ -43,6 +48,7 @@ DEFAULT_AUDIT_DAYS = 365
 RETENTION_RANGE = (30, 3650)
 UPLOADED_MARKET_SOURCES = ("DTI", "PSA")
 RUN_INTERVAL_SECONDS = 24 * 3600
+STAGING_EXPIRY_DAYS = 60
 
 _state = {"next": 0.0}
 _state_lock = threading.Lock()
@@ -68,10 +74,11 @@ def retention_days():
 def apply_retention(today=None):
     """Delete what has outlived its retention period. Returns the counts
     removed per table."""
-    from sqlalchemy import delete, or_, select
+    from sqlalchemy import delete, or_, select, update
 
     from app.extensions import db
     from app.models import AuditLog, ForecastResult, LguData, MarketData, SubcategoryMarketData, SystemSetting
+    from app.models.upload_batch import STATUS_APPROVED, STATUS_PENDING, STATUS_REJECTED, UploadBatch
     from app.services.data_import_service import _clear_analytics_caches, _system_user_id_or_none
     from app.services.forecasting_service import PLACEHOLDER_ZONING_NOTE
 
@@ -109,6 +116,23 @@ def apply_retention(today=None):
         ).rowcount,
         "audit_logs": db.session.execute(
             delete(AuditLog).where(AuditLog.created_at < audit_cutoff), execution_options=no_sync,
+        ).rowcount,
+        # Staging area: a batch record follows the uploaded-data period ...
+        "upload_batches": db.session.execute(
+            delete(UploadBatch).where(
+                UploadBatch.uploaded_at < datetime.combine(upload_cutoff, datetime.min.time())),
+            execution_options=no_sync,
+        ).rowcount,
+        # ... and staged rows nobody approved or published in time are not
+        # kept "just in case": the batch expires and its rows are cleared.
+        "staged_expired": db.session.execute(
+            update(UploadBatch).where(
+                UploadBatch.status.in_((STATUS_PENDING, STATUS_APPROVED)),
+                UploadBatch.uploaded_at < datetime.combine(today - timedelta(days=STAGING_EXPIRY_DAYS),
+                                                           datetime.min.time()),
+            ).values(status=STATUS_REJECTED, payload=None,
+                     review_note=f"Expired: not reviewed and published within {STAGING_EXPIRY_DAYS} days."),
+            execution_options=no_sync,
         ).rowcount,
     }
     counts = {table: max(0, int(n or 0)) for table, n in counts.items()}

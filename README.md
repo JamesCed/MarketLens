@@ -1949,3 +1949,55 @@ steps and the LGU-developer agreement.
 - Links to both in the footer of every page; the sign-up checkbox reads
   "I agree to the Terms & Conditions and the Privacy Policy", each
   opening in a dialog.
+
+---
+
+## 15. V3.4: faster uploads and the Encoder → Data Steward → Admin workflow
+
+**Why an upload sat on "Waiting to start · 158 s".** Only one import runs
+at a time, and the previous upload kept the import lock while it ran the
+market-alert sweep and re-computed every city-wide figure (the warm-up)
+-- minutes of CPU on Render's free instance. The next upload waited for
+all of it before reading a single row.
+
+| Cause | Fix |
+|---|---|
+| The import lock was held through the alert sweep and the warm-up | The lock covers only reading, checking and staging the file. Sweeps and warm-up run only after an Admin publishes, on one low-priority thread (`upload_jobs.schedule_followups`) |
+| openpyxl built an object for every cell (~1.7 s for the 10,442-row sample on a laptop) | A streaming expat reader (`app/utils/xlsx_reader.py`), about 3x faster, same values as openpyxl (dates use openpyxl's own format rules); anything unusual falls back to openpyxl |
+| Personal-data scan ran a regex per cell | One regex pass per column |
+| A worker could wait forever on the database | MySQL `connect_timeout` 10 s, `read/write_timeout` 110 s (`DB_QUERY_TIMEOUT`), `pool_recycle` 280 s |
+| Progress card polled every 1.5 s | First poll after 0.7 s, then every second |
+
+Measured on the 10,442-permit sample: reading, checking and staging take
+about 1 s locally with 7 database statements (5 SELECT, 2 INSERT); the
+staged rows are stored compressed (~49 KB instead of ~1 MB). The page
+waits up to `UPLOAD_WAIT_SECONDS` (15 s) for the result.
+
+**Separation of duties (`app/services/staging_service.py`).**
+
+1. **LGU Encoder** uploads a file. It is checked exactly as before and
+   saved to the *staging area* as an upload batch (`upload_batches`).
+   Nothing live changes.
+2. **LGU Data Steward** opens *Data Review*, compares the batch with the
+   live figures, and approves it or rejects it with a reason (sent to the
+   encoder). A steward never reviews a batch they uploaded.
+3. **System Admin** opens *Admin › Publish Data* and publishes the
+   approved batch: its rows are written in one transaction and every
+   city-wide figure recalculates. The Admin can also reject it. A batch
+   is claimed with a conditional UPDATE, so it can never be published
+   twice.
+
+Each step notifies the next people in line and writes an audit entry
+(`dataset_upload`, `staging_review_approve`, `staging_review_reject`,
+`staging_publish`, `staging_admin_reject`). Staged rows are cleared when a
+batch is published or rejected; a batch not published within 60 days
+expires, and batch records follow the uploaded-data retention period.
+
+**Roles.** `user.lgu_role` is `encoder` or `steward` (an LGU account
+without one is an encoder). Set it in *Admin › Manage Users* (the select
+under the LGU badge) or when creating the account ("LGU Encoder" /
+"LGU Data Steward"). The column is added automatically at start-up.
+**After deploying, make at least one LGU account a Data Steward**,
+otherwise uploads wait in review. Local demo accounts: `lgu@dss.local`
+(encoder) and `steward@dss.local` / `steward123` (steward).
+

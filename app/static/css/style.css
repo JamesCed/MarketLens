@@ -2478,3 +2478,31 @@ select.form-select[size="1"] { overflow: hidden; text-overflow: ellipsis; }
   z-index: 2100;
 }
 .dss-captcha-holder:empty { display: none; }
+
+/* ---------------------------------------------------------------
+   GOV'T DATA WORKFLOW (shared/_data_workflow.html): Encoder ->
+   Data Steward -> System Admin, the current step highlighted.
+   --------------------------------------------------------------- */
+.dss-workflow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
+.dss-workflow-step {
+  display: flex; gap: .65rem; align-items: flex-start;
+  padding: .75rem .85rem; border: 1px solid rgba(100,116,139,.25); border-radius: .6rem;
+}
+.dss-workflow-step.is-current { border-color: var(--dss-blue); background: var(--dss-blue-light); }
+.dss-workflow-num {
+  flex: 0 0 1.75rem; height: 1.75rem; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: .85rem; background: rgba(100,116,139,.15);
+}
+.dss-workflow-step.is-current .dss-workflow-num { background: var(--dss-blue); color: #fff; }
+@media (max-width: 767.98px) { .dss-workflow { grid-template-columns: 1fr; } }
+.dss-nav-count { margin-left: auto; font-size: .7rem; }
+/* Small secondary line under a value (also in admin.css); the LGU upload
+   and Data Review pages use it too. */
+.dss-meta { font-size: .78rem; line-height: 1.35; color: var(--bs-secondary-color); }
+.dss-meta code { font-size: inherit; color: inherit; }
+/* A data table that scrolls sideways on a phone instead of breaking its
+   words letter by letter (Data Review's barangay rows). */
+.dss-wide-table { min-width: 44rem; }
+.dss-wide-table th, .dss-wide-table td { word-break: normal; overflow-wrap: normal; }
+.dss-wide-table th { white-space: nowrap; }

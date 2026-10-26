@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Data Review{% endblock %}
+
+{#
+  lgu/data_review.html
+  ----------------------
+  Step 2 of the Gov't Data Upload: the LGU Data Steward's queue.
+  Batches an LGU Encoder uploaded wait here until a steward approves or
+  rejects them; approved batches move on to Admin > Publish Data.
+#}
+
+{% block content %}
+<div class="mb-3">
+  <h4 class="mb-0"><i class="bi bi-clipboard-check text-primary"></i> Data Review</h4>
+  <p class="text-muted small mb-0">Check data uploaded by LGU Encoders before it can go live.</p>
+</div>
+
+<div class="dss-card mb-4">
+  {% with step=2 %}{% include "shared/_data_workflow.html" %}{% endwith %}
+</div>
+
+<div class="dss-card mb-4">
+  <h6 class="mb-3">
+    Waiting for your review
+    <span class="badge rounded-pill text-bg-{{ 'warning' if pending else 'secondary' }} ms-1">{{ pending|length }}</span>
+  </h6>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle dss-wide-table">
+      <thead>
+        <tr><th>Batch</th><th>File</th><th>Dataset</th><th>Contents</th><th>Uploaded by</th><th>Uploaded</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for b in pending %}
+        {% set own = b.uploaded_by == current_user.user_id %}
+        <tr>
+          <td class="text-nowrap">#{{ b.id }}</td>
+          <td class="text-break"><code>{{ b.filename }}</code></td>
+          <td>{{ b.dataset_label }}<div class="dss-meta">{{ b.source }}</div></td>
+          <td class="small">
+            {{ b.barangays }} barangay{{ 's' if b.barangays != 1 }}
+            {% if b.market_rows %}<div class="dss-meta">{{ '{:,}'.format(b.market_rows) }} industry count{{ 's' if b.market_rows != 1 }}</div>{% endif %}
+            {% if b.permits_in_force is not none %}<div class="dss-meta">{{ '{:,}'.format(b.permits_in_force) }} permits in force</div>{% endif %}
+          </td>
+          <td>{% if b.uploader %}{{ b.uploader.name }}<div class="dss-meta">{{ b.uploader.email|mask_email }}</div>{% else %}&mdash;{% endif %}</td>
+          <td class="dss-meta text-nowrap">{{ b.uploaded_at|pht }}</td>
+          <td class="text-end text-nowrap">
+            {% if own %}
+              <span class="dss-meta" title="Another Data Steward must review a batch you uploaded">Your upload</span>
+            {% else %}
+              <a class="btn btn-sm btn-primary" href="{{ url_for('lgu.review_batch', batch_id=b.id) }}">
+                <i class="bi bi-search" aria-hidden="true"></i> Review
+              </a>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted py-4">
+          <i class="bi bi-check2-circle display-6 d-block mb-2" aria-hidden="true"></i>Nothing is waiting for review.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="dss-card">
+  <h6 class="mb-3">Recent decisions</h6>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle dss-wide-table">
+      <thead><tr><th>Batch</th><th>File</th><th>Status</th><th>Reviewed by</th><th>Note</th><th>Reviewed</th></tr></thead>
+      <tbody>
+        {% for b in decided %}
+        <tr>
+          <td>#{{ b.id }}</td>
+          <td class="text-break"><code>{{ b.filename }}</code><div class="dss-meta">{{ b.dataset_label }}</div></td>
+          <td>{% include "shared/_batch_status.html" %}</td>
+          <td>{{ b.reviewer.name if b.reviewer else '—' }}</td>
+          <td class="small text-break">{{ b.review_note or '—' }}</td>
+          <td class="dss-meta text-nowrap">{{ b.reviewed_at|pht }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-3">No decisions yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

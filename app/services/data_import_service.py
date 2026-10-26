@@ -198,17 +198,28 @@ def _build_table(header, raw_rows):
         if normalised and normalised not in columns:
             columns.append(normalised)
             positions.append(position)
+    pairs = tuple(zip(columns, positions))
     rows, overflow = [], []
     width = len(header)
+    append = rows.append
     for index, values in enumerate(raw_rows):
-        values = list(values)
+        count = len(values)
         record = {}
-        for column, position in zip(columns, positions):
-            record[column] = _clean(values[position]) if position < len(values) else None
-        if len(values) > width and any(_clean(value) is not None for value in values[width:]):
+        filled = False
+        for column, position in pairs:
+            value = values[position] if position < count else None
+            if value is not None:
+                if value.__class__ is str:
+                    value = value.strip() or None
+                elif value.__class__ is float and value != value:
+                    value = None
+                if value is not None:
+                    filled = True
+            record[column] = value
+        if count > width and any(_clean(value) is not None for value in values[width:]):
             overflow.append(index + _SPREADSHEET_ROW_OFFSET)
-        if any(value is not None for value in record.values()):
-            rows.append((index + _SPREADSHEET_ROW_OFFSET, record))
+        if filled:
+            append((index + _SPREADSHEET_ROW_OFFSET, record))
     return _Table(columns, rows, overflow)
 
 
@@ -226,8 +237,21 @@ def _read_csv(file_path):
 
 def _read_xlsx(file_path):
     """The data sheet of a workbook: the first sheet whose header row
-    names a barangay, else the first sheet. read_only streams the rows
-    instead of building the whole workbook in memory."""
+    names a barangay, else the first sheet. Read with the fast reader in
+    app/utils/xlsx_reader.py; a workbook it cannot read is read with
+    openpyxl instead."""
+    from app.utils.xlsx_reader import read_data_sheet
+
+    try:
+        header, rows = read_data_sheet(
+            file_path, lambda cells: "barangay" in {_normalise_header(cell) for cell in cells})
+        return _build_table(header, rows)
+    except Exception:
+        pass
+    return _read_xlsx_openpyxl(file_path)
+
+
+def _read_xlsx_openpyxl(file_path):
     import openpyxl
 
     try:
@@ -246,7 +270,7 @@ def _read_xlsx(file_path):
             chosen = workbook.worksheets[0]
         rows = chosen.iter_rows(values_only=True)
         header = list(next(rows, None) or [])
-        return _build_table(header, rows)
+        return _build_table(header, (list(row) for row in rows))
     finally:
         workbook.close()
 
@@ -399,6 +423,7 @@ def _permit_in_force(record):
     return not status or status in _IN_FORCE_STATUSES
 
 
+@functools.lru_cache(maxsize=4096)
 def _is_industry_identifier(raw_value):
     """True when an industry cell is a code rather than a description:
     an exact section name, a single section letter, or a numeric PSIC
@@ -821,10 +846,19 @@ def _personal_columns(table):
 
 def _personal_values(table):
     """(column, row) of the first cell holding an e-mail address or a
-    Philippine mobile number, in any column."""
-    for row_number, record in table.rows:
-        for column, value in record.items():
-            if isinstance(value, str) and (_EMAIL_RE.search(value) or _MOBILE_RE.search(value)):
+    Philippine mobile number, in any column. Each column is scanned as
+    one block of text, so the regular expressions run once per column
+    rather than once per cell."""
+    for column in table.columns:
+        texts = [record[column] for _row, record in table.rows if record[column].__class__ is str]
+        if not texts:
+            continue
+        block = "\n".join(texts)
+        if not (("@" in block and _EMAIL_RE.search(block)) or _MOBILE_RE.search(block)):
+            continue
+        for row_number, record in table.rows:
+            value = record[column]
+            if value.__class__ is str and (_EMAIL_RE.search(value) or _MOBILE_RE.search(value)):
                 return column, row_number
     return None
 
@@ -886,12 +920,13 @@ def _rows_note(rows, what):
     return f"{len(rows):,} {what} (row {sample}{more})"
 
 
-def _success_message(summary):
+def _success_message(summary, live=True):
     parts = []
+    verb = "saved to" if live else "for"
     if summary.get("lgu"):
-        parts.append(f"{summary['lgu']:,} barangay row(s) saved to Gov't / Zoning Data")
+        parts.append(f"{summary['lgu']:,} barangay row(s) {verb} Gov't / Zoning Data")
     if summary.get("market"):
-        parts.append(f"{summary['market']:,} industry count(s) saved to Market Data")
+        parts.append(f"{summary['market']:,} industry count(s) {verb} Market Data")
     if summary.get("subcategory"):
         parts.append(f"{summary['subcategory']:,} sub-category count(s)")
     message = "; ".join(parts) + "."
@@ -906,7 +941,8 @@ def _success_message(summary):
             message += "."
         if register.duplicate_rows:
             message += " " + _rows_note(register.duplicate_rows, "repeated permit number(s) were counted once") + "."
-    message += " City-wide recommendations now use this data."
+    if live:
+        message += " City-wide recommendations now use this data."
     return message
 
 
@@ -920,26 +956,39 @@ class _Progress:
         pass
 
 
-def process_upload(dataset_type, file_path, source, uploaded_by_user_id, progress=None):
-    """Returns (records_saved, status, message).
+class PreparedUpload:
+    """A file that has been read and validated: the rows it adds to each
+    live table, and what was found in it. Nothing has been written."""
 
-    dataset_type is the target picked on the upload form -- 'LGU_DATA'
-    (Gov't / Zoning Data) or 'MARKET_DATA'. source is the matching ENUM
-    value for that table. uploaded_by_user_id is the LGU account's id.
-    `progress`, when given, is told each step and receives the result as
-    soon as the data is committed -- before the alert sweep and the
-    cache warm-up that follow, which the uploader need not wait for.
+    __slots__ = ("dataset_type", "source", "uploaded_by", "lgu_rows", "market_rows",
+                 "subcategory_rows", "register")
 
-    ONE TRANSACTION, ALL OR NOTHING: nothing is committed until the
-    whole file has parsed and validated, and any failure rolls the
-    session back to exactly the state it was in before.
-    """
+    def __init__(self, dataset_type, source, uploaded_by, lgu_rows, market_rows, subcategory_rows, register):
+        self.dataset_type = dataset_type
+        self.source = source
+        self.uploaded_by = uploaded_by
+        self.lgu_rows = lgu_rows
+        self.market_rows = market_rows
+        self.subcategory_rows = subcategory_rows
+        self.register = register
+
+    @property
+    def count(self):
+        return len(self.lgu_rows) + len(self.market_rows)
+
+    def summary(self):
+        return {"register": self.register, "lgu": len(self.lgu_rows), "market": len(self.market_rows),
+                "subcategory": len(self.subcategory_rows)}
+
+
+def prepare_upload(dataset_type, file_path, source, uploaded_by_user_id, progress=None):
+    """Read and validate an uploaded file. Returns (PreparedUpload, None)
+    or (None, message for the uploader). Writes nothing."""
     progress = progress or _Progress()
     if dataset_type not in DATASET_LABELS:
-        return 0, "error", f"Unknown dataset_type: {dataset_type}"
+        return None, f"Unknown dataset_type: {dataset_type}"
 
     errors = []
-    summary = {}
     try:
         progress.step_to("Checking the file")
         from app.utils.upload_checks import check_upload_content
@@ -983,38 +1032,72 @@ def process_upload(dataset_type, file_path, source, uploaded_by_user_id, progres
 
         if register is not None and not errors:
             market_rows, subcategory_rows = _register_market_rows(register)
-        summary.update(register=register)
 
         if errors:
             db.session.rollback()
-            return 0, "failed", _format_errors(errors)
+            return None, _format_errors(errors)
         if not lgu_rows and not market_rows:
             db.session.rollback()
-            return 0, "failed", "No usable data rows were found in that file."
-
-        progress.step_to("Saving to the database")
-        from app.models import SubcategoryMarketData
-
-        _bulk_insert(LguData, lgu_rows)
-        _bulk_insert(MarketData, market_rows)
-        _bulk_insert(SubcategoryMarketData, subcategory_rows)
-        db.session.commit()
-        summary.update(lgu=len(lgu_rows), market=len(market_rows), subcategory=len(subcategory_rows))
+            return None, "No usable data rows were found in that file."
+        return PreparedUpload(dataset_type, source, uploaded_by_user_id, lgu_rows, market_rows,
+                              subcategory_rows, register), None
     except UploadRefused as refused:
         db.session.rollback()
-        return 0, "failed", str(refused)
+        return None, str(refused)
     except Exception as exc:
         db.session.rollback()
-        return 0, "failed", f"The file could not be imported: {exc}"
+        return None, f"The file could not be imported: {exc}"
     finally:
         _READ_CACHE.clear()
 
-    count = len(lgu_rows) + len(market_rows)
-    message = _success_message(summary)
+
+def write_live(lgu_rows, market_rows, subcategory_rows):
+    """Stage the rows into the live tables (executemany, a few statements
+    for the whole file). Does not commit -- the caller owns the
+    transaction."""
+    from app.models import SubcategoryMarketData
+
+    _bulk_insert(LguData, lgu_rows)
+    _bulk_insert(MarketData, market_rows)
+    _bulk_insert(SubcategoryMarketData, subcategory_rows)
+
+
+def process_upload(dataset_type, file_path, source, uploaded_by_user_id, progress=None, run_followups=True):
+    """Read, validate and write a file straight to the live tables.
+    Returns (records_saved, status, message).
+
+    The Gov't Data Upload page no longer calls this: an LGU Encoder's
+    upload goes to the staging area (staging_service.stage_upload) and
+    reaches these tables only when a Data Steward has approved it and a
+    System Admin publishes it. This remains the single-step import for
+    scripts and tests.
+
+    ONE TRANSACTION, ALL OR NOTHING. `progress` receives the result as
+    soon as the data is committed; with run_followups the alert sweep
+    runs after that, otherwise the caller schedules it.
+    """
+    progress = progress or _Progress()
+    if dataset_type not in DATASET_LABELS:
+        return 0, "error", f"Unknown dataset_type: {dataset_type}"
+    prepared, failure = prepare_upload(dataset_type, file_path, source, uploaded_by_user_id, progress)
+    if failure:
+        return 0, "failed", failure
+
+    try:
+        progress.step_to("Saving to the database")
+        write_live(prepared.lgu_rows, prepared.market_rows, prepared.subcategory_rows)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return 0, "failed", f"The file could not be imported: {exc}"
+
+    count = prepared.count
+    message = _success_message(prepared.summary())
     _clear_analytics_caches()
     progress.finish(count, "success", message)
-    progress.step_to("Updating alerts")
-    _run_alert_sweeps()
+    if run_followups:
+        progress.step_to("Updating alerts")
+        _run_alert_sweeps()
     return count, "success", message
 
 

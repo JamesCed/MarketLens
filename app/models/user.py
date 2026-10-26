@@ -69,6 +69,7 @@ class User(ArchivableMixin, UserMixin, db.Model):
     email = db.Column(db.String(150), unique=True, nullable=False, index=True)
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.Enum("Admin", "SME", "LGU", name="user_role"), nullable=False)
+    lgu_role = db.Column(db.String(20), nullable=True)
 
     first_name = db.Column(db.String(60), nullable=True)
     middle_name = db.Column(db.String(60), nullable=True)
@@ -234,6 +235,27 @@ class User(ArchivableMixin, UserMixin, db.Model):
 
     def is_lgu(self):
         return self.role == "LGU"
+
+    LGU_ROLES = {"encoder": "LGU Encoder", "steward": "LGU Data Steward"}
+
+    @property
+    def lgu_role_key(self):
+        """'encoder' or 'steward' for an LGU account (a blank value counts
+        as encoder), None for any other role. See staging_service."""
+        if self.role != "LGU":
+            return None
+        return self.lgu_role if self.lgu_role in self.LGU_ROLES else "encoder"
+
+    @property
+    def lgu_role_label(self):
+        key = self.lgu_role_key
+        return self.LGU_ROLES[key] if key else None
+
+    def is_lgu_encoder(self):
+        return self.lgu_role_key == "encoder"
+
+    def is_data_steward(self):
+        return self.lgu_role_key == "steward"
 
     def __repr__(self):
         return f"<User {self.email} ({self.role})>"

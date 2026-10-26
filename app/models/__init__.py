@@ -33,6 +33,7 @@ from app.models.audit_log import AuditLog
 from app.models.system_setting import SystemSetting
 from app.models.industry_migration_log import IndustryMigrationLog
 from app.models.subcategory_market_data import SubcategoryMarketData
+from app.models.upload_batch import UploadBatch
 
 __all__ = [
     "User",
@@ -46,4 +47,5 @@ __all__ = [
     "SystemSetting",
     "IndustryMigrationLog",
     "SubcategoryMarketData",
+    "UploadBatch",
 ]

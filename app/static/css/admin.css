@@ -74,3 +74,4 @@
 .dss-audit-detail > td { background: var(--bs-tertiary-bg); }
 .dss-changes-table { --bs-table-bg: transparent; font-size: .8rem; }
 .dss-changes-table th { font-size: .7rem; text-transform: uppercase; color: var(--bs-secondary-color); }
+.dss-lgu-role { max-width: 11.5rem; font-size: .75rem; padding-top: .15rem; padding-bottom: .15rem; }

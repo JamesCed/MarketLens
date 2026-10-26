@@ -8,7 +8,18 @@
   <div class="alert alert-warning small mt-2 mb-0">
     <i class="bi bi-shield-lock"></i> This page is only visible to <strong>LGU</strong> accounts.
     Entrepreneur / Business Owner (SME) and Admin accounts cannot open it (HTTP 403).
+    You are signed in as an <strong>{{ current_user.lgu_role_label }}</strong>.
   </div>
+</div>
+
+{#
+  THE THREE-STEP WORKFLOW (app/services/staging_service.py). An upload
+  goes to the staging area, not the live dataset: an LGU Data Steward
+  reviews it, then a System Admin publishes it.
+#}
+<div class="dss-card mb-4">
+  <h6 class="mb-3"><i class="bi bi-diagram-2"></i> How an upload goes live</h6>
+  {% with step=(2 if current_user.is_data_steward() else 1) %}{% include "shared/_data_workflow.html" %}{% endwith %}
 </div>
 
 {#
@@ -31,10 +42,11 @@
         the Diversification Plan &mdash; nothing else. Never sold or shared outside MarketLens.</p>
     </div>
     <div class="col-md-6">
-      <p class="mb-1"><strong>Who can see it.</strong> LGU accounts and system administrators. Business owners see only
-        the resulting scores and counts per barangay, never your file.</p>
+      <p class="mb-1"><strong>Who can see it.</strong> LGU accounts (Encoders and Data Stewards) and system
+        administrators. Business owners see only the resulting scores and counts per barangay, never your file.</p>
       <p class="mb-1"><strong>How long.</strong> Uploaded data: {{ kept_upload_days }} days after upload. Audit trail
-        (who uploaded what, when, from which device): {{ kept_audit_days }} days. Both are then deleted automatically.</p>
+        (who uploaded what, when, from which device): {{ kept_audit_days }} days. Both are then deleted automatically.
+        A staged upload not published within 60 days expires and is deleted.</p>
       <p class="mb-0"><strong>Questions or requests.</strong> {% include "shared/_dpo_contact.html" %}.
         <a href="{{ url_for('auth.privacy') }}#lgu-data">Full Privacy Policy</a></p>
     </div>
@@ -67,15 +79,30 @@
         <span id="uploadJobElapsed">{{ upload_job.elapsed }}</span> s
       </div>
       <div class="small text-muted mt-1">
-        You can keep using MarketLens while this runs. The result appears here when it is done.
+        You can keep using MarketLens while this runs. The file goes to the staging area when it is checked.
       </div>
     </div>
   </div>
 </div>
 {% endif %}
 
+{% if current_user.is_data_steward() %}
+<div class="alert alert-info d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <i class="bi bi-clipboard-check"></i> <strong>You are an LGU Data Steward.</strong>
+    LGU Encoders upload the files; you review and approve or reject them before a System Admin publishes them.
+  </div>
+  <a class="btn btn-sm btn-primary" href="{{ url_for('lgu.data_review') }}">
+    Open Data Review{% if pending_review %} <span class="badge text-bg-warning ms-1">{{ pending_review }} waiting</span>{% endif %}
+  </a>
+</div>
+{% endif %}
+
 <div class="dss-card mb-4">
-  <h6 class="mb-3">Upload Dataset</h6>
+  <h6 class="mb-1">Upload Dataset</h6>
+  <p class="dss-meta mb-3">The file is checked straight away and saved to the <strong>staging area</strong>. It goes live
+    only after an LGU Data Steward approves it and a System Admin publishes it.</p>
+  {% if current_user.is_lgu_encoder() %}
   <form method="POST" action="{{ url_for('lgu.government_upload') }}" enctype="multipart/form-data" id="uploadForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row g-3 align-items-end">
@@ -104,6 +131,10 @@
       </div>
     </div>
   </form>
+  {% else %}
+  <p class="small text-muted mb-0"><i class="bi bi-lock"></i> Uploading is done by LGU Encoders. The column guide and
+    templates below are what they work from.</p>
+  {% endif %}
 
   {#
     WHAT TO PUT IN THE FILE.
@@ -202,18 +233,44 @@
         and the pages stay fast.</li>
       <li><strong>A combined file works too.</strong> A permit list that also carries the
         zoning columns (like the sample dataset) fills both tables, whichever target you pick.</li>
-      <li><strong>Everything recalculates on success.</strong> City-wide recommendations, the
-        saturation map and the trend reports are refreshed in the background right after the
-        upload &mdash; no re-seeding, no restart.</li>
-      <li>The uploaded file itself is not stored &mdash; only the parsed data rows are saved.</li>
+      <li><strong>Staged first, live after approval.</strong> A file that passes these checks is
+        saved to the staging area as a batch. An LGU Data Steward reviews it (and can reject it
+        with a reason, shown under <em>Your uploads</em>); a System Admin then publishes it. Only
+        then do city-wide recommendations, the saturation map and the trend reports use it
+        &mdash; no re-seeding, no restart.</li>
+      <li>The uploaded file itself is not stored &mdash; only the parsed totals are saved, and a
+        staged batch&rsquo;s rows are cleared once it is published or rejected.</li>
     </ul>
   </div>
 </div>
 
+{% if my_batches %}
+<div class="dss-card mb-4" id="myUploads">
+  <h6 class="mb-3">Your uploads</h6>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle dss-wide-table">
+      <thead><tr><th>Batch</th><th>File</th><th>Contents</th><th>Status</th><th>Note</th><th>Uploaded</th></tr></thead>
+      <tbody>
+        {% for b in my_batches %}
+        <tr>
+          <td>#{{ b.id }}</td>
+          <td class="text-break"><code>{{ b.filename }}</code><div class="dss-meta">{{ b.dataset_label }}</div></td>
+          <td class="small">{{ b.barangays }} barangay{{ 's' if b.barangays != 1 }}{% if b.market_rows %}, {{ '{:,}'.format(b.market_rows) }} industry count{{ 's' if b.market_rows != 1 }}{% endif %}</td>
+          <td>{% include "shared/_batch_status.html" %}</td>
+          <td class="small text-break">{{ b.review_note or '—' }}</td>
+          <td class="dss-meta text-nowrap">{{ b.uploaded_at|pht }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 <div class="row g-4">
   <div class="col-lg-6">
     <div class="dss-card">
-      <h6 class="mb-3">Recent Gov't / Zoning Data</h6>
+      <h6 class="mb-3">Live Gov't / Zoning Data</h6>
       {% if recent_lgu_data %}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
@@ -237,7 +294,7 @@
   </div>
   <div class="col-lg-6">
     <div class="dss-card">
-      <h6 class="mb-3">Recent Market Data</h6>
+      <h6 class="mb-3">Live Market Data</h6>
       {% if recent_market_data %}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
@@ -273,29 +330,30 @@
     const opts = datasetType.value === 'MARKET_DATA' ? MARKET_SOURCES : LGU_SOURCES;
     sourceSelect.innerHTML = opts.map(s => `<option value="${s}">${s}</option>`).join('');
   }
-  datasetType.addEventListener('change', refreshSources);
+  if (datasetType) datasetType.addEventListener('change', refreshSources);
 
   // Show the column guide for whichever table is selected and highlight
   // its template -- downloading the wrong template is a guaranteed
   // failed upload.
   function refreshGuide() {
+    const chosen = datasetType ? datasetType.value : 'LGU_DATA';
     document.querySelectorAll('.dss-column-guide').forEach((box) => {
-      box.hidden = box.dataset.dataset !== datasetType.value;
+      box.hidden = box.dataset.dataset !== chosen;
     });
     document.querySelectorAll('.dss-template-link').forEach((link) => {
-      const selected = link.dataset.dataset === datasetType.value;
+      const selected = link.dataset.dataset === chosen;
       link.classList.toggle('btn-primary', selected);
       link.classList.toggle('btn-outline-primary', !selected);
     });
   }
-  datasetType.addEventListener('change', refreshGuide);
+  if (datasetType) datasetType.addEventListener('change', refreshGuide);
   refreshGuide();
 
   const uploadForm = document.getElementById('uploadForm');
   if (uploadForm) {
     uploadForm.addEventListener('submit', () => {
       const text = document.querySelector('#dssPageLoader .dss-page-loader-text');
-      if (text) text.textContent = 'Uploading and checking your file…';
+      if (text) text.textContent = 'Uploading and checking your file for the staging area…';
       const button = document.getElementById('uploadButton');
       if (button) button.disabled = true;
     });
@@ -317,11 +375,11 @@
             window.location.replace(card.dataset.doneUrl);
             return;
           }
-          setTimeout(poll, 1500);
+          setTimeout(poll, 1000);
         })
-        .catch(() => setTimeout(poll, 3000));
+        .catch(() => setTimeout(poll, 2500));
     }
-    setTimeout(poll, 1000);
+    setTimeout(poll, 700);
   })();
 </script>
 {% endblock %}

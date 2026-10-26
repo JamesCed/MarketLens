@@ -1,0 +1,32 @@
+{#
+  shared/_data_workflow.html
+  ----------------------------
+  The three steps every Gov't Data Upload goes through, shown on the
+  upload page, the Data Review pages and Admin > Publish Data so each
+  person sees where their part sits. Set `step` (1, 2 or 3) to
+  highlight the step the page is for.
+
+    1. LGU Encoder       uploads the file to the staging area
+    2. LGU Data Steward  reviews it, approves or rejects with a reason
+    3. System Admin      publishes approved data to the live dataset
+
+  Nothing reaches the live dataset (and so the recommendations, the map
+  and the trend reports) until step 3. See app/services/staging_service.py.
+#}
+{% set steps = [
+  ('bi-cloud-upload', 'LGU Encoder', 'Uploads the file to the staging area. It is checked straight away; nothing live changes.'),
+  ('bi-clipboard-check', 'LGU Data Steward', 'Reviews the staged data and approves it, or rejects it with a reason for the encoder.'),
+  ('bi-broadcast', 'System Admin', 'Publishes approved data to the live dataset. Every city-wide figure then recalculates.'),
+] %}
+<ol class="dss-workflow list-unstyled mb-0" aria-label="How uploaded data goes live">
+  {% for icon, who, what in steps %}
+    <li class="dss-workflow-step {{ 'is-current' if step == loop.index }}"
+        {{ 'aria-current="step"'|safe if step == loop.index }}>
+      <span class="dss-workflow-num" aria-hidden="true">{{ loop.index }}</span>
+      <div>
+        <div class="fw-semibold"><i class="bi {{ icon }}" aria-hidden="true"></i> {{ who }}</div>
+        <div class="small text-muted">{{ what }}</div>
+      </div>
+    </li>
+  {% endfor %}
+</ol>

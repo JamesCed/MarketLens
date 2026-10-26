@@ -1,0 +1,9 @@
+{# The status of one upload batch `b` as a badge (staging workflow). #}
+{% set tone = {
+  'pending_review': 'text-bg-warning',
+  'approved': 'text-bg-info',
+  'publishing': 'text-bg-info',
+  'published': 'text-bg-success',
+  'rejected': 'text-bg-danger',
+}.get(b.status, 'text-bg-secondary') %}
+<span class="badge {{ tone }}">{{ b.status_label }}</span>

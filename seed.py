@@ -35,12 +35,13 @@ WHAT IT DOES
 =====================================================================
 DEMO ACCOUNTS AND WHY THEY TURN THEMSELVES OFF IN PRODUCTION
 =====================================================================
-On localhost this script creates three fixed accounts so you can log in
+On localhost this script creates four fixed accounts so you can log in
 straight away:
 
     admin@dss.local / admin123     (Administrator)
     sme@dss.local   / sme12345     (SME / Entrepreneur)
-    lgu@dss.local   / lgu12345     (LGU Official)
+    lgu@dss.local     / lgu12345     (LGU Encoder: uploads to staging)
+    steward@dss.local / steward123   (LGU Data Steward: reviews uploads)
 
 Those passwords are written, in plain text, in this file -- which lives
 in your GitHub repository. On localhost that is fine. On a PUBLIC URL it
@@ -117,8 +118,14 @@ PLAN_MODEL_FILE = os.path.join(os.path.dirname(MODEL_FILE), "plan_model.pkl")
 DEMO_ACCOUNTS = [
     ("System Administrator", "admin@dss.local", "admin123", "Admin"),
     ("Juan Dela Cruz", "sme@dss.local", "sme12345", "SME"),
-    ("Maria Santos", "lgu@dss.local", "lgu12345", "LGU"),
+    ("Maria Santos", "lgu@dss.local", "lgu12345", "LGU_ENCODER"),
+    ("Ana Reyes", "steward@dss.local", "steward123", "LGU_STEWARD"),
 ]
+
+# LGU_ENCODER / LGU_STEWARD are role LGU with that sub-role (the Gov't
+# Data Upload workflow: an Encoder uploads, a Data Steward approves, an
+# Administrator publishes).
+_LGU_SUB_ROLES = {"LGU_ENCODER": "encoder", "LGU_STEWARD": "steward"}
 
 
 def _bool(value, default=False):
@@ -131,7 +138,8 @@ def _create_account_if_missing(name, email, password, role, show_password=True):
     if User.query.filter_by(email=email).first() is not None:
         print(f"  {email} already exists, skipping.")
         return False
-    user = User(name=name, email=email, role=role)
+    lgu_role = _LGU_SUB_ROLES.get(role)
+    user = User(name=name, email=email, role="LGU" if lgu_role else role, lgu_role=lgu_role)
     user.set_password(password)
     db.session.add(user)
     shown = password if show_password else "(the password you set in the environment)"

@@ -31,7 +31,9 @@ from flask_login import current_user
 
 from app.models import LguData, MarketData, ForecastResult
 from app.ml.constants import CLUSTER_THRESHOLDS
-from app.utils.decorators import role_required
+from app.models.upload_batch import STATUS_APPROVED, STATUS_PENDING, STATUS_PUBLISHED, STATUS_REJECTED
+from app.services import staging_service
+from app.utils.decorators import lgu_role_required, role_required
 from app.utils.helpers import allowed_file, unique_upload_path
 from app.utils.audit import log_action
 from app.services.diversification_service import build_diversification_plan
@@ -333,6 +335,9 @@ def government_upload():
     from app.services import upload_jobs
 
     if request.method == "POST":
+        if not current_user.is_lgu_encoder():
+            flash("Only an LGU Encoder uploads files. As a Data Steward you review them in Data Review.", "warning")
+            return redirect(url_for("lgu.government_upload"))
         dataset_type = request.form.get("dataset_type", "LGU_DATA")
         source = request.form.get("source", "Other")
         uploaded_file = request.files.get("dataset_file")
@@ -371,7 +376,9 @@ def government_upload():
         job.done.wait(timeout=float(current_app.config.get("UPLOAD_WAIT_SECONDS", 15)))
 
         if upload_jobs.claim_result_logging(job):
-            log_action("dataset_upload", details=f"{dataset_type}/{source}: {uploaded_file.filename} ({job.status})")
+            staged = f", staged as batch #{job.batch_id}" if job.batch_id else ""
+            log_action("dataset_upload",
+                       details=f"{dataset_type}/{source}: {uploaded_file.filename} ({job.status}{staged})")
             job.shown = True
             _flash_job_result(job)
             return redirect(url_for("lgu.government_upload"))
@@ -398,15 +405,51 @@ def government_upload():
         dataset_guides=DATASET_GUIDES,
         importance=IMPORTANCE,
         upload_job=running.as_dict() if running is not None else None,
+        my_batches=staging_service.batches(uploaded_by=current_user.user_id, limit=15),
+        pending_review=staging_service.count_waiting(STATUS_PENDING) if current_user.is_data_steward() else 0,
     )
 
 
 def _flash_job_result(job):
     label = "Gov't / Zoning Data" if job.dataset_type == "LGU_DATA" else "Market Data"
     if job.status == "success":
-        flash(f"'{job.filename}' uploaded to {label}: {job.message}", "success")
+        flash(f"'{job.filename}' ({label}): {job.message}", "success")
     else:
         flash(f"'{job.filename}' could not be processed: {job.message}", "danger")
+
+
+@lgu_bp.route("/lgu/data-review")
+@lgu_role_required("steward")
+def data_review():
+    """The LGU Data Steward's queue: batches waiting for review, and the
+    latest decisions."""
+    return render_template(
+        "lgu/data_review.html",
+        pending=staging_service.batches([STATUS_PENDING], limit=50),
+        decided=staging_service.batches([STATUS_APPROVED, STATUS_REJECTED, STATUS_PUBLISHED], limit=20),
+    )
+
+
+@lgu_bp.route("/lgu/data-review/<int:batch_id>", methods=["GET", "POST"])
+@lgu_role_required("steward")
+def review_batch(batch_id):
+    """One batch: what it would change, and the approve / reject decision."""
+    from app.models import UploadBatch
+
+    batch = UploadBatch.query.get_or_404(batch_id)
+    if request.method == "POST":
+        decision = request.form.get("decision")
+        note = request.form.get("note", "")
+        ok, message = staging_service.review(batch_id, current_user, decision == "approve", note)
+        if ok:
+            log_action("staging_review_approve" if decision == "approve" else "staging_review_reject",
+                       details=f"batch #{batch_id}: {batch.filename}", target_type="UploadBatch",
+                       target_id=batch_id, target_label=batch.filename, reason=note or None)
+            flash(message, "success")
+            return redirect(url_for("lgu.data_review"))
+        flash(message, "danger")
+        return redirect(url_for("lgu.review_batch", batch_id=batch_id))
+    return render_template("lgu/review_batch.html", batch=batch, preview=staging_service.preview(batch))
 
 
 @lgu_bp.route("/lgu/upload-status/<job_id>")

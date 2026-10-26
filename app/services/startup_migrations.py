@@ -77,6 +77,7 @@ _USER_COLUMNS = {
     "address_line_enc": ("TEXT NULL", "TEXT NULL"),
     "address_barangay_enc": ("TEXT NULL", "TEXT NULL"),
     "terms_accepted_at": ("DATETIME NULL", "DATETIME NULL"),
+    "lgu_role": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
 }
 
 _ADDITIVE_COLUMNS = {

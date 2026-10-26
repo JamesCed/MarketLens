@@ -33,3 +33,22 @@ def role_required(*roles):
         return wrapped
 
     return decorator
+
+
+def lgu_role_required(*lgu_roles):
+    """An LGU account with one of the given LGU roles ('encoder',
+    'steward') -- the staging workflow's separation of duties. Anyone
+    else gets HTTP 403."""
+    allowed = set(lgu_roles)
+
+    def decorator(view_func):
+        @wraps(view_func)
+        @login_required
+        def wrapped(*args, **kwargs):
+            if current_user.role != "LGU" or current_user.lgu_role_key not in allowed:
+                abort(403)
+            return view_func(*args, **kwargs)
+
+        return wrapped
+
+    return decorator

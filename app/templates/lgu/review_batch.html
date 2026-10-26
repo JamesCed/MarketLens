@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Review batch #{{ batch.id }}{% endblock %}
+
+{#
+  lgu/review_batch.html
+  -----------------------
+  One staged batch, as the LGU Data Steward sees it before deciding:
+  what the file contains, how each barangay's figures compare with what
+  is live now, and the approve / reject form. Rejecting needs a reason,
+  which is sent to the encoder who uploaded it.
+#}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <a href="{{ url_for('lgu.data_review') }}" class="small text-decoration-none">
+      <i class="bi bi-arrow-left" aria-hidden="true"></i> Data Review
+    </a>
+    <h4 class="mb-0 mt-1">Batch #{{ batch.id }} <span class="fs-6 align-middle">{% with b=batch %}{% include "shared/_batch_status.html" %}{% endwith %}</span></h4>
+    <p class="text-muted small mb-0 text-break"><code>{{ batch.filename }}</code> &middot; {{ batch.dataset_label }} &middot; {{ batch.source }}</p>
+  </div>
+</div>
+
+<div class="row g-4 mb-4">
+  <div class="col-lg-7">
+    <div class="dss-card h-100">
+      <h6 class="mb-3">What this batch contains</h6>
+      <div class="row g-3 text-center mb-3">
+        <div class="col-4"><div class="fs-4 fw-semibold">{{ batch.barangays }}</div><div class="dss-meta">barangays</div></div>
+        <div class="col-4"><div class="fs-4 fw-semibold">{{ '{:,}'.format(batch.market_rows) }}</div><div class="dss-meta">industry counts</div></div>
+        <div class="col-4"><div class="fs-4 fw-semibold">{{ '{:,}'.format(batch.subcategory_rows) }}</div><div class="dss-meta">sub-category counts</div></div>
+      </div>
+      {% if batch.permits_read is not none %}
+        <p class="small mb-2">Permit list: <strong>{{ '{:,}'.format(batch.permits_read) }}</strong> permit(s) read,
+          <strong>{{ '{:,}'.format(batch.permits_in_force or 0) }}</strong> in force (counted as competitors).</p>
+      {% endif %}
+      {% if batch.summary %}<p class="small text-muted mb-2">{{ batch.summary }}</p>{% endif %}
+      <dl class="row small mb-0">
+        <dt class="col-sm-4">Uploaded by</dt>
+        <dd class="col-sm-8">{% if batch.uploader %}{{ batch.uploader.name }} <span class="dss-meta">({{ batch.uploader.email|mask_email }})</span>{% else %}&mdash;{% endif %}</dd>
+        <dt class="col-sm-4">Uploaded</dt><dd class="col-sm-8">{{ batch.uploaded_at|pht }}</dd>
+        {% if batch.reviewed_at %}
+          <dt class="col-sm-4">Reviewed by</dt><dd class="col-sm-8">{{ batch.reviewer.name if batch.reviewer else '—' }}, {{ batch.reviewed_at|pht }}</dd>
+        {% endif %}
+        {% if batch.review_note %}<dt class="col-sm-4">Note</dt><dd class="col-sm-8 text-break">{{ batch.review_note }}</dd>{% endif %}
+      </dl>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="dss-card h-100">
+      <h6 class="mb-3">Your decision</h6>
+      {% if batch.status != 'pending_review' %}
+        <div class="alert alert-secondary small mb-0">This batch is no longer waiting for review ({{ batch.status_label|lower }}).</div>
+      {% elif batch.uploaded_by == current_user.user_id %}
+        <div class="alert alert-warning small mb-0">You uploaded this batch, so another LGU Data Steward must review it.</div>
+      {% else %}
+        <form method="POST" action="{{ url_for('lgu.review_batch', batch_id=batch.id) }}" id="reviewForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label for="reviewNote" class="form-label">Note to the encoder</label>
+          <textarea class="form-control mb-1" id="reviewNote" name="note" rows="4" maxlength="500"
+                    placeholder="Required when you reject: say what is wrong so the encoder can fix the file."></textarea>
+          <div class="form-text mb-3" id="reviewNoteHelp">Optional when approving. Saved to the audit trail.</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <button type="submit" name="decision" value="approve" class="btn btn-success">
+              <i class="bi bi-check2-circle" aria-hidden="true"></i> Approve
+            </button>
+            <button type="submit" name="decision" value="reject" class="btn btn-outline-danger" id="rejectButton">
+              <i class="bi bi-x-circle" aria-hidden="true"></i> Reject
+            </button>
+          </div>
+          <p class="small text-muted mt-3 mb-0">
+            Approving sends the batch to a System Admin, who publishes it to the live dataset. Nothing live changes
+            until then.
+          </p>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if not preview.available %}
+  <div class="dss-card">
+    <p class="text-muted mb-0">The staged rows are no longer kept for this batch (it was {{ batch.status_label|lower }}).</p>
+  </div>
+{% else %}
+  <div class="row g-4">
+    <div class="col-xl-8">
+      <div class="dss-card">
+        <h6 class="mb-1">Barangay rows</h6>
+        <p class="dss-meta mb-3">
+          The figures this batch would publish, next to what is live now.
+          {% if preview.lgu_total > preview.lgu|length %}Showing {{ preview.lgu|length }} of {{ preview.lgu_total }}.{% endif %}
+        </p>
+        <div class="table-responsive" style="max-height: 32rem;">
+          <table class="table table-sm align-middle small dss-wide-table">
+            <thead class="table-light" style="position: sticky; top: 0;">
+              <tr><th>Barangay</th><th class="text-end">Permits</th><th class="text-end">Live permits</th>
+                  <th class="text-end">Density</th><th class="text-end">Live density</th><th class="text-end">Closures</th><th>Zoning</th></tr>
+            </thead>
+            <tbody>
+              {% for r in preview.lgu %}
+              {% set changed = r.live_permit_count is not none and r.permit_count is not none and r.permit_count != r.live_permit_count %}
+              <tr>
+                <td>{{ r.barangay }}</td>
+                <td class="text-end {{ 'fw-semibold' if changed }}">{{ r.permit_count if r.permit_count is not none else '—' }}</td>
+                <td class="text-end text-muted">{{ r.live_permit_count if r.live_permit_count is not none else '—' }}</td>
+                <td class="text-end">{{ '%.2f'|format(r.business_density) if r.business_density is not none else '—' }}</td>
+                <td class="text-end text-muted">{{ '%.2f'|format(r.live_density) if r.live_density is not none else '—' }}</td>
+                <td class="text-end">{{ r.closure_records if r.closure_records is not none else '—' }}</td>
+                <td class="text-muted">{{ (r.zoning_info or '—')|truncate(40, True, '…') }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7" class="text-center text-muted py-3">No barangay rows.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-4">
+      <div class="dss-card">
+        <h6 class="mb-1">Competitors per industry</h6>
+        <p class="dss-meta mb-3">Permits in force counted per industry, all barangays together.</p>
+        {% if preview.industries %}
+          <table class="table table-sm small mb-0">
+            <tbody>
+              {% for industry, count in preview.industries %}
+              <tr><td>{{ industry }}</td><td class="text-end">{{ '{:,}'.format(count) }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="text-muted small mb-0">This batch has no industry counts (zoning figures only).</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Rejecting needs a reason (the server checks too): ask for it here
+  // instead of a round trip.
+  (function () {
+    const reject = document.getElementById('rejectButton');
+    const note = document.getElementById('reviewNote');
+    if (!reject || !note) return;
+    reject.addEventListener('click', (event) => {
+      if (note.value.trim()) return;
+      event.preventDefault();
+      note.classList.add('is-invalid');
+      document.getElementById('reviewNoteHelp').textContent = 'Please give the reason for rejecting the batch.';
+      note.focus();
+    });
+    note.addEventListener('input', () => note.classList.remove('is-invalid'));
+  })();
+</script>
+{% endblock %}

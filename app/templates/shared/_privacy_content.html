@@ -86,6 +86,11 @@
     industry and kind of business, with the uploading account and the date. The file is deleted as soon as it has been
     processed; no business name, permit number or row of the file is stored. Business owners see only the resulting
     scores and counts per barangay.</p>
+  <p>Uploads follow a separation of duties. An <strong>LGU Encoder</strong>&rsquo;s upload first goes to a
+    <strong>staging area</strong>, where an <strong>LGU Data Steward</strong> reviews it and approves or rejects it,
+    and only a <strong>System Administrator</strong> publishes approved data to the live dataset. Staged totals are
+    deleted when the batch is published or rejected; a batch not published within 60 days expires and its totals are
+    deleted. Each step is recorded in the audit trail.</p>
 
   <h3>7. Who receives it</h3>
   <ul>
@@ -102,7 +107,8 @@
   <ul>
     <li>Account details and plans: while your account exists. Plans in Trash are deleted after 30 days.</li>
     <li>Audit trail entries: {{ kept_audit_days }} days, then deleted automatically.</li>
-    <li>LGU uploads: {{ kept_upload_days }} days after upload, then deleted automatically.</li>
+    <li>LGU uploads: {{ kept_upload_days }} days after upload, then deleted automatically. Staged uploads waiting for
+      review or publishing: at most 60 days.</li>
     <li>Uploaded files: deleted right after processing.</li>
   </ul>
 
