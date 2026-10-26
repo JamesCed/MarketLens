@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set legal_links_inline = true %}
 {% block title %}Sign in{% endblock %}
 
 {#
@@ -88,7 +89,7 @@
           <p>Sign in to your MarketLens account.</p>
         </div>
 
-        <form method="POST" action="{{ url_for('auth.login') }}">
+        <form method="POST" action="{{ url_for('auth.login') }}" data-captcha="login">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
           <div class="mb-3">
@@ -275,6 +276,11 @@
     </div>
     <p class="ml-footer-note">
       An undergraduate capstone project. Forecasts are decision support, not financial advice.
+    </p>
+    <p class="ml-footer-note ml-footer-legal">
+      <a href="{{ url_for('auth.terms') }}">Terms &amp; Conditions</a>
+      <span aria-hidden="true">&middot;</span>
+      <a href="{{ url_for('auth.privacy') }}">Privacy Policy</a>
     </p>
   </footer>
 </div>

@@ -1,10 +1,12 @@
 {# The sign-up dialog that shows shared/_terms_content.html. The link that
-   opens it also points at /terms, so it still works without JavaScript. #}
+   opens it also points at /terms, so it still works without JavaScript.
+   "I agree" ticks the sign-up checkbox only when the Privacy Policy has
+   been agreed to as well (the one checkbox covers both). #}
 <div class="modal fade" id="termsModal" tabindex="-1" aria-labelledby="termsModalTitle" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h2 class="modal-title fs-5" id="termsModalTitle"><i class="bi bi-shield-lock"></i> Terms and Conditions &amp; Data Privacy Notice</h2>
+        <h2 class="modal-title fs-5" id="termsModalTitle"><i class="bi bi-file-earmark-text"></i> Terms and Conditions</h2>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">

@@ -214,49 +214,76 @@ def diversification_csv():
                     headers={"Content-Disposition": "attachment; filename=diversification_plan.csv"})
 
 
+IMPORTANCE = {
+    "required": ("Required", "The upload is refused without it. Fill it on every row."),
+    "important": ("Important", "Used by the analysis. A blank cell is allowed and handled as described."),
+    "record": ("For records", "Saved and shown in the dataset records; not part of the calculations."),
+}
+
 UPLOAD_COLUMNS = {
     "LGU_DATA": [
-        ("barangay", True,
-         "Official Tarlac City barangay name. Must match exactly (case is forgiven); "
-         "an unrecognised name is rejected with a suggestion rather than imported.",
+        ("barangay", "required",
+         "Official Tarlac City barangay name, one row per barangay. Case is forgiven; a "
+         "misspelt name is rejected with a suggestion rather than imported.",
          "San Roque"),
-        ("psic_code", False,
-         "PSIC code, section letter, or the line of business. Include this and each row "
-         "is treated as ONE business permit, so the system can count competitors per "
-         "industry per barangay -- this is what makes an upload change the "
-         "recommendations rather than only the totals.",
-         "56101"),
-        ("business_name", False, "The registered business name. Kept for your reference.",
-         "Aling Nena's Carinderia"),
-        ("status", False,
-         "Permit status. Only active/approved/released/issued/valid/renewed are counted "
-         "as competitors; anything else (expired, cancelled) is ignored.",
-         "active"),
-        ("permit_count", False,
-         "Total permits in this barangay across all trades. Use this for a barangay "
-         "SUMMARY row instead of one row per business.", "240"),
-        ("business_density", False, "Businesses per hectare, if your office computes it.", "1.4"),
-        ("closure_records", False, "Businesses that closed in the period.", "12"),
-        ("zoning_info", False, "Zoning classification or notes.", "Commercial"),
-        ("effective_date", False, "The date these figures describe. Defaults to today.",
-         "2026-09-01"),
+        ("zoning_info", "required",
+         "Zoning classification of the barangay's business area: Commercial, Residential, "
+         "Mixed-use, Industrial, Institutional or Agricultural.",
+         "Commercial"),
+        ("business_density", "required",
+         "Businesses per hectare. The AI saturation model reads this figure for every "
+         "forecast and ranking in the barangay.",
+         "1.4"),
+        ("permit_count", "record",
+         "Business permits in force in the barangay, all trades together.",
+         "240"),
+        ("closure_records", "record",
+         "Businesses that closed or did not renew in the period.",
+         "12"),
+        ("effective_date", "record",
+         "The date these figures describe (YYYY-MM-DD). Blank means the upload date.",
+         "2026-09-30"),
     ],
     "MARKET_DATA": [
-        ("industry_type", True, "PSIC section name, code, or trade description.",
+        ("barangay", "required",
+         "Official Tarlac City barangay name where the business operates, matched as above.",
+         "San Roque"),
+        ("industry_type", "required",
+         "The business's industry: a PSIC section name (e.g. Food and Beverage), section "
+         "letter (I) or PSIC code (56101). Permits are counted per industry per barangay -- "
+         "the competitor counts every recommendation is scored from.",
          "Food and Beverage"),
-        ("location", True, "Official Tarlac City barangay name, matched as above.", "San Roque"),
-        ("competitor_count", False, "Businesses of this industry operating in this barangay.",
-         "14"),
-        ("population_density", False, "People per square kilometre.", "2500"),
-        ("historical_success_rate", False,
-         "A FRACTION between 0 and 1, not a percentage. 0.85 means 85%; writing 85 is "
-         "rejected, because it would move the figure by two orders of magnitude.",
-         "0.85"),
-        ("foot_traffic_index", False, "Relative foot traffic, 0-100.", "48"),
-        ("average_rent", False, "Typical monthly commercial rent in pesos.", "19000"),
-        ("date_recorded", False, "The date these figures describe. Defaults to today.",
-         "2026-09-01"),
+        ("status", "important",
+         "Permit status. active, renewed, approved, released, issued or valid permits are "
+         "counted as competitors; expired, cancelled or closed are not. Blank counts as active.",
+         "active"),
+        ("line_of_business", "important",
+         "What the business sells or does, in a few words. Used to count DIRECT competitors "
+         "(bakeries, not all food businesses).",
+         "Bakery"),
+        ("permit_no", "important",
+         "Business permit number. Used only while the file is processed, so a permit listed "
+         "twice is counted once; it is not stored.",
+         "TC-2026-00001"),
     ],
+}
+
+DATASET_GUIDES = {
+    "LGU_DATA": {
+        "title": "Gov't / Zoning Data template",
+        "rows": "One row per barangay.",
+        "note": "",
+    },
+    "MARKET_DATA": {
+        "title": "Market Data template",
+        "rows": "One row per business (the business permit register).",
+        "note": ("Only these counts are saved: in-force permits per industry, per kind of business "
+                 "and per barangay. No business name, permit number or row of the file is stored. "
+                 "Already have counts instead of a permit list? A file with industry_type, "
+                 "barangay and competitor_count (one row per industry per barangay, plus "
+                 "population_density, foot_traffic_index, average_rent and "
+                 "historical_success_rate if you have them) is accepted too."),
+    },
 }
 
 
@@ -283,10 +310,11 @@ def dataset_template(dataset_type):
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow([name for name, _required, _meaning, _example in columns])
-    writer.writerow([example for _name, _required, _meaning, example in columns])
+    writer.writerow([name for name, _level, _meaning, _example in columns])
+    writer.writerow([example for _name, _level, _meaning, example in columns])
 
-    filename = f"marketlens_{dataset_type.lower()}_template.csv"
+    filename = {"LGU_DATA": "marketlens_zoning_data_template.csv",
+                "MARKET_DATA": "marketlens_market_data_template.csv"}[dataset_type]
     return Response(
         buffer.getvalue(),
         mimetype="text/csv",
@@ -297,13 +325,20 @@ def dataset_template(dataset_type):
 @lgu_bp.route("/lgu/government-data-upload", methods=["GET", "POST"])
 @role_required("LGU")
 def government_upload():
+    """Upload page. The POST saves the file and hands it to a background
+    job (app/services/upload_jobs.py), then waits up to
+    UPLOAD_WAIT_SECONDS for the result: a normal file is reported on the
+    next page exactly as before, a long one gets a progress card instead
+    of a page that hangs until the server gives up on it."""
+    from app.services import upload_jobs
+
     if request.method == "POST":
         dataset_type = request.form.get("dataset_type", "LGU_DATA")
         source = request.form.get("source", "Other")
         uploaded_file = request.files.get("dataset_file")
 
         if dataset_type not in ("LGU_DATA", "MARKET_DATA"):
-            flash("Please choose a target table (Gov't/Zoning Data or Market Data).", "danger")
+            flash("Please choose a target table (Gov't / Zoning Data or Market Data).", "danger")
             return redirect(url_for("lgu.government_upload"))
 
         allowed_sources = LGU_SOURCES if dataset_type == "LGU_DATA" else MARKET_SOURCES
@@ -319,31 +354,35 @@ def government_upload():
             flash("Only Excel (.xlsx, .xls) or CSV (.csv) files are accepted.", "danger")
             return redirect(url_for("lgu.government_upload"))
 
+        if upload_jobs.running_job_for(current_user.user_id) is not None:
+            flash("Your previous upload is still being processed. Wait for it to finish, then "
+                  "upload the next file.", "warning")
+            return redirect(url_for("lgu.government_upload"))
+
         upload_folder = current_app.config["UPLOAD_FOLDER"]
         os.makedirs(upload_folder, exist_ok=True)
         _safe_name, absolute_path = unique_upload_path(upload_folder, uploaded_file.filename)
         uploaded_file.save(absolute_path)
 
-        try:
-            records_count, status, error_message = process_upload(
-                dataset_type, absolute_path, source, current_user.user_id
-            )
-        finally:
-            if os.path.exists(absolute_path):
-                os.remove(absolute_path)
+        job = upload_jobs.start_upload(
+            current_app._get_current_object(), current_user.user_id, absolute_path,
+            uploaded_file.filename, dataset_type, source,
+        )
+        job.done.wait(timeout=float(current_app.config.get("UPLOAD_WAIT_SECONDS", 15)))
 
-        log_action("dataset_upload", details=f"{dataset_type}/{source}: {uploaded_file.filename} ({status})")
+        if upload_jobs.claim_result_logging(job):
+            log_action("dataset_upload", details=f"{dataset_type}/{source}: {uploaded_file.filename} ({job.status})")
+            job.shown = True
+            _flash_job_result(job)
+            return redirect(url_for("lgu.government_upload"))
 
-        if status == "success":
-            flash(
-                f"'{uploaded_file.filename}' processed successfully -- "
-                f"{records_count} row(s) saved to {dataset_type.replace('_', ' ').title()}.",
-                "success",
-            )
-        else:
-            flash(f"'{uploaded_file.filename}' could not be processed: {error_message}", "danger")
+        return redirect(url_for("lgu.government_upload", job=job.id))
 
-        return redirect(url_for("lgu.government_upload"))
+    for finished in upload_jobs.unshown_results_for(current_user.user_id):
+        _flash_job_result(finished)
+    running = upload_jobs.get_job(request.args.get("job"), current_user.user_id)
+    if running is None or running.done.is_set():
+        running = upload_jobs.running_job_for(current_user.user_id)
 
     recent_lgu_data = LguData.query.order_by(LguData.upload_date.desc(), LguData.lgu_id.desc()).limit(20).all()
     recent_market_data = (
@@ -356,4 +395,29 @@ def government_upload():
         lgu_sources=LGU_SOURCES,
         market_sources=MARKET_SOURCES,
         upload_columns=UPLOAD_COLUMNS,
+        dataset_guides=DATASET_GUIDES,
+        importance=IMPORTANCE,
+        upload_job=running.as_dict() if running is not None else None,
     )
+
+
+def _flash_job_result(job):
+    label = "Gov't / Zoning Data" if job.dataset_type == "LGU_DATA" else "Market Data"
+    if job.status == "success":
+        flash(f"'{job.filename}' uploaded to {label}: {job.message}", "success")
+    else:
+        flash(f"'{job.filename}' could not be processed: {job.message}", "danger")
+
+
+@lgu_bp.route("/lgu/upload-status/<job_id>")
+@role_required("LGU")
+def upload_status(job_id):
+    """Where a background upload has got to, for the progress card."""
+    from flask import jsonify
+
+    from app.services import upload_jobs
+
+    job = upload_jobs.get_job(job_id, current_user.user_id)
+    if job is None:
+        return jsonify({"state": "unknown"}), 404
+    return jsonify(job.as_dict())

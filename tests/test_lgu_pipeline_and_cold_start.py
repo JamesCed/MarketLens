@@ -60,10 +60,13 @@ def lgu_user(app):
 
 
 def _csv(rows, header):
-    handle = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8")
-    handle.write(",".join(header) + "\n")
+    import csv
+
+    handle = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8", newline="")
+    writer = csv.writer(handle)
+    writer.writerow(header)
     for row in rows:
-        handle.write(",".join("" if cell is None else str(cell) for cell in row) + "\n")
+        writer.writerow(["" if cell is None else cell for cell in row])
     handle.close()
     return handle.name
 
@@ -73,11 +76,11 @@ def test_one_bad_row_leaves_the_database_untouched(app, lgu_user):
 
     path = _csv(
         [
-            (BARANGAY_NAMES[0], 12, 1.4),
-            (BARANGAY_NAMES[1], 8, 1.1),
-            (BARANGAY_NAMES[2], "12o", 0.9),
+            (BARANGAY_NAMES[0], "Commercial", 12, 1.4),
+            (BARANGAY_NAMES[1], "Commercial", 8, 1.1),
+            (BARANGAY_NAMES[2], "Residential", "12o", 0.9),
         ],
-        ["barangay", "permit_count", "business_density"],
+        ["barangay", "zoning_info", "permit_count", "business_density"],
     )
     try:
         with app.app_context():
@@ -100,8 +103,8 @@ def test_a_good_file_lands_completely(app, lgu_user):
     from app.services.data_import_service import process_upload
 
     path = _csv(
-        [(name, 10 + index, 1.2) for index, name in enumerate(BARANGAY_NAMES[:5])],
-        ["barangay", "permit_count", "business_density"],
+        [(name, "Commercial", 10 + index, 1.2) for index, name in enumerate(BARANGAY_NAMES[:5])],
+        ["barangay", "zoning_info", "permit_count", "business_density"],
     )
     try:
         with app.app_context():
@@ -119,8 +122,8 @@ def test_a_bad_cell_is_reported_with_its_row_and_column(app, lgu_user):
     from app.services.data_import_service import process_upload
 
     path = _csv(
-        [(BARANGAY_NAMES[0], 5, 1.0), (BARANGAY_NAMES[1], "twelve", 1.0)],
-        ["barangay", "permit_count", "business_density"],
+        [(BARANGAY_NAMES[0], "Commercial", 5, 1.0), (BARANGAY_NAMES[1], "Commercial", "twelve", 1.0)],
+        ["barangay", "zoning_info", "permit_count", "business_density"],
     )
     try:
         with app.app_context():
@@ -142,7 +145,7 @@ def test_an_unknown_barangay_is_rejected_with_a_suggestion(app, lgu_user):
 
     target = BARANGAY_NAMES[0]
     typo = target[:-1] if len(target) > 4 else target + "x"
-    path = _csv([(typo, 5, 1.0)], ["barangay", "permit_count", "business_density"])
+    path = _csv([(typo, "Commercial", 5, 1.0)], ["barangay", "zoning_info", "permit_count", "business_density"])
     try:
         with app.app_context():
             _count, status, message = process_upload("LGU_DATA", path, "DTI", lgu_user)
@@ -190,7 +193,7 @@ def test_a_permit_register_with_psic_codes_produces_competitor_counts(app, lgu_u
     path = _csv(rows, ["barangay", "psic_code", "status"])
     try:
         with app.app_context():
-            _count, status, message = process_upload("LGU_DATA", path, "DTI", lgu_user)
+            _count, status, message = process_upload("MARKET_DATA", path, "DTI", lgu_user)
 
             food = MarketData.query.filter_by(
                 location=BARANGAY_NAMES[0],
@@ -211,12 +214,12 @@ def test_a_permit_register_with_psic_codes_produces_competitor_counts(app, lgu_u
 
 
 def test_a_register_without_a_trade_column_still_imports(app, lgu_user):
-    """Plenty of registers are barangay summaries with no per-business
-    detail. That is not an error -- they just yield no per-industry
-    counts."""
+    """Zoning data is a barangay summary with no per-business detail.
+    That is not an error -- it just yields no per-industry counts."""
     from app.services.data_import_service import process_upload
 
-    path = _csv([(BARANGAY_NAMES[0], 30)], ["barangay", "permit_count"])
+    path = _csv([(BARANGAY_NAMES[0], "Commercial", 1.3, 30)],
+                ["barangay", "zoning_info", "business_density", "permit_count"])
     try:
         with app.app_context():
             count, status, _message = process_upload("LGU_DATA", path, "DTI", lgu_user)
@@ -325,7 +328,8 @@ def test_a_real_upload_switches_it_on(app, lgu_user):
         active_lgu_dataset_summary, has_active_lgu_data, process_upload,
     )
 
-    path = _csv([(name, 10) for name in BARANGAY_NAMES[:4]], ["barangay", "permit_count"])
+    path = _csv([(name, "Commercial", 1.1, 10) for name in BARANGAY_NAMES[:4]],
+                ["barangay", "zoning_info", "business_density", "permit_count"])
     try:
         with app.app_context():
             assert has_active_lgu_data() is False
@@ -436,8 +440,8 @@ def test_after_an_upload_the_panel_ranks_barangays(app, lgu_user):
     from app.services.data_import_service import process_upload
 
     path = _csv(
-        [(name, 10) for name in BARANGAY_NAMES[:6]],
-        ["barangay", "permit_count"],
+        [(name, "Commercial", 1.1, 10) for name in BARANGAY_NAMES[:6]],
+        ["barangay", "zoning_info", "business_density", "permit_count"],
     )
     try:
         with app.app_context():
@@ -550,7 +554,7 @@ def test_an_upload_changes_what_the_trend_reports_read(app, lgu_user):
             db.session.commit()
 
             before = latest_market_data_by_key()[(industry, location)].competitor_count
-            _count, status, message = process_upload("LGU_DATA", path, "DTI", lgu_user)
+            _count, status, message = process_upload("MARKET_DATA", path, "DTI", lgu_user)
             assert status == "success", message
 
             row = latest_market_data_by_key()[(industry, location)]

@@ -6,14 +6,77 @@
   <h4 class="mb-0"><i class="bi bi-database-add text-primary"></i> Government Data Repository</h4>
   <p class="text-muted small mb-0">Upload official datasets (Excel/CSV) for SME market analysis and decision support.</p>
   <div class="alert alert-warning small mt-2 mb-0">
-    <i class="bi bi-shield-lock"></i> This page is only visible to <strong>LGU</strong> and <strong>Admin</strong> accounts.
-    Entrepreneur / Business Owner (SME) accounts cannot see this link and are blocked (HTTP 403) if they try the URL directly.
+    <i class="bi bi-shield-lock"></i> This page is only visible to <strong>LGU</strong> accounts.
+    Entrepreneur / Business Owner (SME) and Admin accounts cannot open it (HTTP 403).
   </div>
 </div>
 
+{#
+  PRIVACY NOTICE FOR UPLOADS -- Data Privacy Act of 2012 (RA 10173),
+  Sec. 11: transparency (what, why, who, how long), legitimate purpose
+  and proportionality (no personal fields; totals only). The full notice
+  is section 4 of /terms.
+#}
+{% set kept_upload_days, kept_audit_days = retention_days() %}
+<div class="dss-card mb-4" id="uploadPrivacyNotice">
+  <h6 class="mb-2"><i class="bi bi-shield-check text-success"></i> Privacy notice for uploads</h6>
+  <div class="row g-3 small">
+    <div class="col-md-6">
+      <p class="mb-1"><strong>What is collected.</strong> Barangay zoning figures and business permit lists. From a
+        permit list only the barangay, industry, line of business, status and permit number are read.</p>
+      <p class="mb-1"><strong>What is kept.</strong> Totals only &mdash; one row per barangay and permit counts per
+        industry per barangay, with your account and the upload date. The file is deleted right after processing; no
+        business name, permit number or file row is stored.</p>
+      <p class="mb-0"><strong>Purpose.</strong> Market saturation scores, city-wide recommendations, trend reports and
+        the Diversification Plan &mdash; nothing else. Never sold or shared outside MarketLens.</p>
+    </div>
+    <div class="col-md-6">
+      <p class="mb-1"><strong>Who can see it.</strong> LGU accounts and system administrators. Business owners see only
+        the resulting scores and counts per barangay, never your file.</p>
+      <p class="mb-1"><strong>How long.</strong> Uploaded data: {{ kept_upload_days }} days after upload. Audit trail
+        (who uploaded what, when, from which device): {{ kept_audit_days }} days. Both are then deleted automatically.</p>
+      <p class="mb-0"><strong>Questions or requests.</strong> {% include "shared/_dpo_contact.html" %}.
+        <a href="{{ url_for('auth.privacy') }}#lgu-data">Full Privacy Policy</a></p>
+    </div>
+  </div>
+  <div class="alert alert-warning small mt-3 mb-0">
+    <i class="bi bi-person-x"></i> <strong>Before you upload, remove personal information.</strong>
+    Delete columns with owner or proprietor names, contact numbers, e-mail addresses, home addresses, TIN or other ID
+    numbers and birth dates. MarketLens does not need them, and a file that contains them is refused.
+  </div>
+</div>
+
+{#
+  A LONG UPLOAD IS A JOB, NOT A HANGING PAGE.
+
+  The POST hands the file to a background job (app/services/upload_jobs.py)
+  and waits a few seconds for it. A file that takes longer lands here with
+  this card, which asks the server how far the job has got and reloads the
+  page with the result once it is done.
+#}
+{% if upload_job %}
+<div class="dss-card mb-4 border border-primary-subtle" id="uploadJobCard"
+     data-status-url="{{ url_for('lgu.upload_status', job_id=upload_job.id) }}"
+     data-done-url="{{ url_for('lgu.government_upload') }}">
+  <div class="d-flex align-items-center gap-3">
+    <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
+    <div class="flex-grow-1">
+      <div class="fw-semibold">Processing <code>{{ upload_job.filename }}</code></div>
+      <div class="small text-muted">
+        <span id="uploadJobStep">{{ upload_job.step }}</span> &middot;
+        <span id="uploadJobElapsed">{{ upload_job.elapsed }}</span> s
+      </div>
+      <div class="small text-muted mt-1">
+        You can keep using MarketLens while this runs. The result appears here when it is done.
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="dss-card mb-4">
   <h6 class="mb-3">Upload Dataset</h6>
-  <form method="POST" action="{{ url_for('lgu.government_upload') }}" enctype="multipart/form-data">
+  <form method="POST" action="{{ url_for('lgu.government_upload') }}" enctype="multipart/form-data" id="uploadForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row g-3 align-items-end">
       <div class="col-md-3">
@@ -34,7 +97,10 @@
         <input type="file" name="dataset_file" class="form-control" accept=".xlsx,.xls,.csv" required>
       </div>
       <div class="col-md-2">
-        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-upload"></i> Upload</button>
+        <button type="submit" class="btn btn-primary w-100" id="uploadButton"
+                {% if upload_job %}disabled title="Wait for the current upload to finish"{% endif %}>
+          <i class="bi bi-upload"></i> Upload
+        </button>
       </div>
     </div>
   </form>
@@ -42,56 +108,74 @@
   {#
     WHAT TO PUT IN THE FILE.
 
-    This used to be four bullet points naming the columns. It is a
-    table now because the questions an LGU officer actually has are
-    "is this one required", "what goes in it" and "what does a valid
-    value look like" -- and a comma-separated list in a sentence
-    answers none of the three.
-
-    Both the table and the downloadable template are rendered from
-    lgu_controller.UPLOAD_COLUMNS, so the guidance, the example file
-    and the importer cannot drift apart.
+    Two datasets, two templates: zoning figures per barangay, and the
+    business permit register (market data). Each column is marked by how
+    much the data process depends on it -- Required, Important or For
+    records -- and both the guide and the downloadable templates are
+    rendered from lgu_controller.UPLOAD_COLUMNS, so the guidance, the
+    example files and the importer cannot drift apart.
   #}
   <div class="mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
       <h6 class="mb-0"><i class="bi bi-list-check"></i> Columns for this dataset</h6>
-      <a id="templateLink" class="btn btn-sm btn-outline-primary"
-         href="{{ url_for('lgu.dataset_template', dataset_type='LGU_DATA') }}">
-        <i class="bi bi-download"></i> Download template CSV
-      </a>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-sm btn-outline-primary dss-template-link" data-dataset="LGU_DATA"
+           href="{{ url_for('lgu.dataset_template', dataset_type='LGU_DATA') }}">
+          <i class="bi bi-download"></i> Zoning template (CSV)
+        </a>
+        <a class="btn btn-sm btn-outline-primary dss-template-link" data-dataset="MARKET_DATA"
+           href="{{ url_for('lgu.dataset_template', dataset_type='MARKET_DATA') }}">
+          <i class="bi bi-download"></i> Market template (CSV)
+        </a>
+      </div>
     </div>
 
     {% for dataset_type, columns in upload_columns.items() %}
-      <div class="dss-column-guide table-responsive" data-dataset="{{ dataset_type }}"
+      {% set guide = dataset_guides[dataset_type] %}
+      <div class="dss-column-guide" data-dataset="{{ dataset_type }}"
            {% if dataset_type != 'LGU_DATA' %}hidden{% endif %}>
-        <table class="table table-sm align-middle small mb-0">
-          <thead class="table-light">
-            <tr>
-              <th style="width:20%;">Column</th>
-              <th style="width:10%;">Required</th>
-              <th>What goes in it</th>
-              <th style="width:18%;">Example</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for name, required, meaning, example in columns %}
+        <p class="small mb-2">
+          <strong>{{ guide.title }}</strong> &middot; {{ guide.rows }}
+        </p>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle small mb-0">
+            <thead class="table-light">
               <tr>
-                <td><code>{{ name }}</code></td>
-                <td>
-                  {% if required %}
-                    <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle">Required</span>
-                  {% else %}
-                    <span class="text-muted">Optional</span>
-                  {% endif %}
-                </td>
-                <td class="text-muted">{{ meaning }}</td>
-                <td><code>{{ example }}</code></td>
+                <th style="width:20%;">Column</th>
+                <th style="width:12%;">Importance</th>
+                <th>What goes in it</th>
+                <th style="width:18%;">Example</th>
               </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {% for name, level, meaning, example in columns %}
+                <tr>
+                  <td><code>{{ name }}</code></td>
+                  <td>
+                    {% if level == 'required' %}
+                      <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle">{{ importance[level][0] }}</span>
+                    {% elif level == 'important' %}
+                      <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">{{ importance[level][0] }}</span>
+                    {% else %}
+                      <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle">{{ importance[level][0] }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-muted">{{ meaning }}</td>
+                  <td><code>{{ example }}</code></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if guide.note %}<p class="small text-muted mt-2 mb-0">{{ guide.note }}</p>{% endif %}
       </div>
     {% endfor %}
+
+    <ul class="list-unstyled small text-muted mt-2 mb-0">
+      {% for level, info in importance.items() %}
+        <li><strong>{{ info[0] }}</strong> &mdash; {{ info[1] }}</li>
+      {% endfor %}
+    </ul>
   </div>
 
   <div class="alert alert-info mt-3 mb-0 small">
@@ -100,20 +184,27 @@
       <li><strong>All or nothing.</strong> If any row cannot be read, nothing is imported and
         your existing data is left exactly as it was. You will get the row number, the column
         and the value for each problem, so you can fix the file and upload again.</li>
-      <li><strong>Blank is fine; wrong is not.</strong> An empty numeric cell is filled with that
-        column's own average (data imputation). A cell with something unreadable in it &mdash;
-        <code>12o</code> instead of <code>120</code> &mdash; is reported and refused, because
-        silently averaging a typo would hide it.</li>
+      <li><strong>Required columns must be filled; wrong is never accepted.</strong> An empty
+        cell in a numeric column that is not required is filled with that column's own average
+        (data imputation). A cell with something unreadable in it &mdash; <code>12o</code>
+        instead of <code>120</code> &mdash; is reported and refused.</li>
+      <li><strong>Personal information is refused.</strong> A file with owner names, contact numbers, e-mail or
+        home addresses, ID numbers or birth dates is not imported; remove those columns first.</li>
+      <li><strong>The contents are checked, not only the file name.</strong> A renamed program, PDF or web page, a
+        workbook with macros, and a password-protected or damaged workbook are refused.</li>
       <li><strong>Barangay names must be official.</strong> A misspelling is rejected with a
         suggestion. Importing it as typed would create a row nothing in the system ever reads.</li>
-      <li><strong>One row per business beats one row per barangay.</strong> Include
-        <code>psic_code</code> and the system counts competitors per industry per barangay,
-        which is what drives the saturation scores, the city-wide rankings and the trend
-        reports. A barangay summary with only <code>permit_count</code> still imports, but it
-        cannot tell a coffee shop from a hardware store.</li>
-      <li><strong>Everything recalculates on success.</strong> The city-wide recommendations,
-        the saturation map and the trend reports all pick up the new figures on the next page
-        load &mdash; no re-seeding, no restart.</li>
+      <li><strong>Market Data drives the recommendations.</strong> Each permit in force is
+        counted as one competitor for its industry in its barangay. Those counts drive the
+        saturation scores, the city-wide rankings and the trend reports.</li>
+      <li><strong>One record per barangay.</strong> Every upload saves one Gov't / Zoning row
+        per barangay (a permit list is totalled per barangay), so the dataset records stay small
+        and the pages stay fast.</li>
+      <li><strong>A combined file works too.</strong> A permit list that also carries the
+        zoning columns (like the sample dataset) fills both tables, whichever target you pick.</li>
+      <li><strong>Everything recalculates on success.</strong> City-wide recommendations, the
+        saturation map and the trend reports are refreshed in the background right after the
+        upload &mdash; no re-seeding, no restart.</li>
       <li>The uploaded file itself is not stored &mdash; only the parsed data rows are saved.</li>
     </ul>
   </div>
@@ -122,15 +213,16 @@
 <div class="row g-4">
   <div class="col-lg-6">
     <div class="dss-card">
-      <h6 class="mb-3">Recent LGU Data</h6>
+      <h6 class="mb-3">Recent Gov't / Zoning Data</h6>
       {% if recent_lgu_data %}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
-          <thead><tr><th>Barangay</th><th>Source</th><th>Uploaded</th></tr></thead>
+          <thead><tr><th>Barangay</th><th>Zoning</th><th>Source</th><th>Uploaded</th></tr></thead>
           <tbody>
             {% for d in recent_lgu_data %}
             <tr>
               <td>{{ d.barangay }}</td>
+              <td class="small text-muted">{{ (d.zoning_info or '—')|truncate(40, True, '…') }}</td>
               <td><span class="badge bg-light text-dark">{{ d.source }}</span></td>
               <td class="text-muted small">{{ d.upload_date.strftime('%b %d, %Y') if d.upload_date else '—' }}</td>
             </tr>
@@ -149,12 +241,13 @@
       {% if recent_market_data %}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
-          <thead><tr><th>Industry</th><th>Location</th><th>Recorded</th></tr></thead>
+          <thead><tr><th>Industry</th><th>Location</th><th>Businesses</th><th>Recorded</th></tr></thead>
           <tbody>
             {% for m in recent_market_data %}
             <tr>
               <td>{{ m.industry_type }}</td>
               <td>{{ m.location }}</td>
+              <td>{{ m.competitor_count if m.competitor_count is not none else '—' }}</td>
               <td class="text-muted small">{{ m.date_recorded.strftime('%b %d, %Y') if m.date_recorded else '—' }}</td>
             </tr>
             {% endfor %}
@@ -182,20 +275,53 @@
   }
   datasetType.addEventListener('change', refreshSources);
 
-  // Show the column guide for whichever table is selected, and point
-  // the template download at the same one -- downloading the wrong
-  // template is a guaranteed failed upload.
-  const templateLink = document.getElementById('templateLink');
-  const templateBase = "{{ url_for('lgu.dataset_template', dataset_type='__TYPE__') }}";
+  // Show the column guide for whichever table is selected and highlight
+  // its template -- downloading the wrong template is a guaranteed
+  // failed upload.
   function refreshGuide() {
     document.querySelectorAll('.dss-column-guide').forEach((box) => {
       box.hidden = box.dataset.dataset !== datasetType.value;
     });
-    if (templateLink) {
-      templateLink.href = templateBase.replace('__TYPE__', datasetType.value);
-    }
+    document.querySelectorAll('.dss-template-link').forEach((link) => {
+      const selected = link.dataset.dataset === datasetType.value;
+      link.classList.toggle('btn-primary', selected);
+      link.classList.toggle('btn-outline-primary', !selected);
+    });
   }
   datasetType.addEventListener('change', refreshGuide);
   refreshGuide();
+
+  const uploadForm = document.getElementById('uploadForm');
+  if (uploadForm) {
+    uploadForm.addEventListener('submit', () => {
+      const text = document.querySelector('#dssPageLoader .dss-page-loader-text');
+      if (text) text.textContent = 'Uploading and checking your file…';
+      const button = document.getElementById('uploadButton');
+      if (button) button.disabled = true;
+    });
+  }
+
+  // Background upload: ask how far it has got, then reload with the result.
+  (function () {
+    const card = document.getElementById('uploadJobCard');
+    if (!card) return;
+    const step = document.getElementById('uploadJobStep');
+    const elapsed = document.getElementById('uploadJobElapsed');
+    function poll() {
+      fetch(card.dataset.statusUrl, { headers: { 'Accept': 'application/json' } })
+        .then((r) => r.json())
+        .then((job) => {
+          if (step && job.step) step.textContent = job.step;
+          if (elapsed && job.elapsed !== undefined) elapsed.textContent = job.elapsed;
+          if (job.state === 'done' || job.state === 'unknown') {
+            window.location.replace(card.dataset.doneUrl);
+            return;
+          }
+          setTimeout(poll, 1500);
+        })
+        .catch(() => setTimeout(poll, 3000));
+    }
+    setTimeout(poll, 1000);
+  })();
 </script>
 {% endblock %}

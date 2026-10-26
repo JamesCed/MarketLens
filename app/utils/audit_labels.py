@@ -75,6 +75,7 @@ ACTION_META = {
     "admin_archive_market_data": ("Archived a market data row", "Data maintenance"),
     "admin_restore_market_data": ("Restored an archived market data row", "Data maintenance"),
     "admin_update_settings": ("Changed system settings", "System configuration"),
+    "retention_purge": ("Deleted data past its retention period", "Data maintenance"),
     "admin_llm_probe": ("Tested the AI provider connection", "System diagnostics"),
     "admin_email_probe": ("Tested the email transport", "System diagnostics"),
     "export_barangay_seed_csv": ("Downloaded the barangay seed dataset", "Data export"),
@@ -116,7 +117,7 @@ _CATEGORY_OF = {
     "save_recommended_location": "plans",
     "dataset_upload": "data", "admin_delete_lgu_data": "data", "admin_delete_market_data": "data",
     "admin_archive_lgu_data": "data", "admin_restore_lgu_data": "data", "admin_archive_market_data": "data",
-    "admin_restore_market_data": "data", "export_barangay_seed_csv": "data",
+    "admin_restore_market_data": "data", "export_barangay_seed_csv": "data", "retention_purge": "data",
     "view_diversification_plan": "data", "export_diversification_plan": "data", "export_trend_report": "data",
     "admin_update_settings": "settings", "admin_llm_probe": "settings", "admin_email_probe": "settings",
     "export_audit_log": "settings",
@@ -131,7 +132,7 @@ _HIGH = frozenset({
     "dataset_upload", "admin_delete_lgu_data", "admin_delete_market_data", "admin_archive_lgu_data",
     "admin_restore_lgu_data", "admin_archive_market_data", "admin_restore_market_data",
     "admin_update_settings", "export_audit_log", "export_barangay_seed_csv", "purge_plan", "delete_plan",
-    "export_diversification_plan",
+    "export_diversification_plan", "retention_purge",
 })
 _LOW = frozenset({
     "select_plan", "update_theme", "update_notification_prefs", "clear_notifications",

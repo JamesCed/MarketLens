@@ -1868,3 +1868,84 @@ Admin > Datasets > Archived records.
   under the page content is clipped at the screen edge as a backstop.
 - The loading circle now appears on phones too, as soon as a link or
   button is tapped.
+
+## 14. V3.3: LGU uploads fixed, separate templates, data privacy
+
+**Why an upload "did not upload" and the page hung.** The importer saved
+a permit register one row at a time -- about 15,000 INSERTs for the
+10,442-permit sample, each a network round trip to the Aiven database.
+The request ran past gunicorn's 120 s limit, the worker was killed, the
+transaction rolled back, and City-wide Recommendations stayed on "No
+record yet".
+
+| Cause | Fix |
+|---|---|
+| One INSERT per row | Batched (`executemany`): the sample now takes about 5 statements instead of ~15,000 |
+| One `lgu_data` row stored per permit (10,000+ rows that every scoring call then loaded) | One Gov't / Zoning row per barangay per upload; permits become per-industry and per-sub-category counts |
+| The import ran inside the web request | It runs on a background job (`app/services/upload_jobs.py`); the page waits up to `UPLOAD_WAIT_SECONDS` (15 s), then shows a progress card that polls `/lgu/upload-status/<id>` |
+| The first visitor after an upload recomputed every cleared figure | The LGU dashboard figures, rankings, Diversification Plan and trend sweep are recomputed in the background right after the upload |
+| "Newest row" lookups loaded every historical row | One `ROW_NUMBER()` query per lookup (`forecasting_service._newest_per_group`) |
+
+**Two templates.** *Gov't / Zoning Data* (one row per barangay: `barangay`,
+`zoning_info`, `business_density` required; `permit_count`,
+`closure_records`, `effective_date` for records) and *Market Data* (the
+permit register, one row per business: `barangay`, `industry_type`
+required; `status`, `line_of_business`, `permit_no` important). The word
+"Optional" is gone: each column is marked Required, Important or For
+records. A file sent to the wrong target is refused with a pointer to
+the right one; a combined file (like the original sample) fills both
+tables under either target. Split samples are in `sample_data/`
+(`MarketLens_LGU_Zoning_Sample_Tarlac_City`, `MarketLens_LGU_Market_Sample_Tarlac_City`).
+
+**Data Privacy Act (RA 10173).** See `docs/DATA_PRIVACY.md` for the
+principle-by-principle mapping, the DPO details, the breach response
+steps and the LGU-developer agreement.
+
+- A privacy notice on the upload page (what is collected and kept, the
+  purpose, who can see it, how long), and section 4 of `/terms`.
+- Files with personal information (owner names, contact numbers,
+  e-mail/home addresses, ID numbers, birth dates) are refused.
+  Business names and permit numbers are read only while processing and
+  never stored.
+- Retention: uploaded data 1,095 days and audit trail 365 days by
+  default, editable in Admin > System Settings; deleted automatically
+  once a day.
+- Uploads are checked by content, not only by extension (renamed
+  programs/PDFs/web pages, macro workbooks, encrypted or damaged
+  workbooks and zip bombs are refused).
+- `PII_ENCRYPTION_KEY` can be rotated: set the old key in
+  `PII_ENCRYPTION_PREVIOUS_KEYS` and the next start re-encrypts every
+  stored detail.
+
+**New settings:** `UPLOAD_IN_BACKGROUND`, `UPLOAD_WAIT_SECONDS`,
+`WARM_AFTER_UPLOAD`, `DATA_RETENTION_ENABLED`,
+`PII_ENCRYPTION_PREVIOUS_KEYS`, `DPO_NAME`, `DPO_OFFICE`, `DPO_EMAIL`,
+`DPO_PHONE` (see `.env.sample`).
+
+**Bot protection, Terms and Privacy Policy (also V3.3).**
+
+- *Invisible CAPTCHA* (`app/utils/captcha.py`, `static/js/captcha.js`):
+  Cloudflare Turnstile by default (`CAPTCHA_PROVIDER=recaptcha` for
+  reCAPTCHA v3). Sign-in, sign-up and forgot-password need a fresh token
+  on every submit. Creating, re-forecasting or saving a plan, the
+  single-location forecast, the nearby-competitor search, the Places
+  batch refresh and the AI transcript need a "human pass" (one verified
+  token per 30 minutes, kept in the signed session); a fetch() refused
+  with `403 X-Captcha-Required` is retried automatically after
+  `/api/captcha/verify`. Off until `CAPTCHA_SITE_KEY` and
+  `CAPTCHA_SECRET_KEY` are set.
+- *Rate limits* (`app/utils/rate_limit.py`): 5 failed sign-ins per
+  network and e-mail per 15 minutes, sign-ups, password resets and code
+  resends per network, and per-account limits on the AI / Places routes
+  (HTTP 429 with `Retry-After`).
+- *Terms & Conditions* (`/terms`): disclaimer of warranty (scores,
+  density ratings and viability models are analytical estimates, not
+  financial or business advice), limitation of liability, acceptable use
+  (no scraping, reverse-engineering or API spamming), third-party data
+  (Google Places API and others).
+- *Privacy Policy* (`/privacy`, RA 10173): hashed passwords, signed
+  HttpOnly session cookies (no JWTs are issued), encrypted personal
+  details, how location queries are used, LGU uploads, retention, rights.
+- Links to both in the footer of every page; the sign-up checkbox reads
+  "I agree to the Terms & Conditions and the Privacy Policy", each
+  opening in a dialog.

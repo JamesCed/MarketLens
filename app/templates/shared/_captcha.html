@@ -1,0 +1,10 @@
+{#
+  shared/_captcha.html
+  ----------------------
+  Invisible human verification (Cloudflare Turnstile or reCAPTCHA v3) --
+  see app/utils/captcha.py and static/js/captcha.js. Only the public site
+  key is written here; the provider's script itself is loaded on demand,
+  so pages that never ask for a token never download it.
+#}
+<script>window.DSS_CAPTCHA = {{ captcha_config()|tojson }};</script>
+<script src="{{ url_for('static', filename='js/captcha.js') }}"></script>

@@ -204,7 +204,18 @@ def register():
 
     if request.method == "POST":
         from app.services.account_params import parse_personal_info, password_problems
+        from app.utils import captcha
         from app.utils.privacy import encrypt_value
+        from app.utils.rate_limit import client_ip, hit, wait_text
+
+        allowed, retry_after = hit("register", client_ip())
+        if not allowed:
+            flash(f"Too many sign-up attempts from this network. Please wait {wait_text(retry_after)} "
+                  f"and try again.", "danger")
+            return render_template("auth/register.html", **_register_form_context(request.form)), 429
+        if not captcha.is_human("register", fresh=True):
+            flash(captcha.REQUIRED_MESSAGE, "danger")
+            return render_template("auth/register.html", **_register_form_context(request.form))
 
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
@@ -222,7 +233,7 @@ def register():
         if password != confirm_password:
             errors.append("Passwords do not match.")
         if not request.form.get("accept_terms"):
-            errors.append("Please read and accept the Terms and Conditions and the Data Privacy Notice.")
+            errors.append("Please read and accept the Terms and Conditions and the Privacy Policy.")
         if role is None:
             errors.append("Invalid account type.")
         if User.query.filter_by(email=email).first():
@@ -295,10 +306,17 @@ def register():
 
 @auth_bp.route("/terms")
 def terms():
-    """The Terms and Conditions and Data Privacy Notice -- public, so it
-    can be read before signing up (the sign-up form links here and opens
-    the same text in a dialog)."""
+    """The Terms and Conditions -- public, so they can be read before
+    signing up (the sign-up form links here and opens the same text in a
+    dialog)."""
     return render_template("auth/terms.html")
+
+
+@auth_bp.route("/privacy")
+def privacy():
+    """The Privacy Policy (Data Privacy Act of 2012, RA 10173) -- public
+    for the same reason as the terms."""
+    return render_template("auth/privacy.html")
 
 
 @auth_bp.route("/register/verify", methods=["GET", "POST"])
@@ -362,10 +380,16 @@ def verify_email():
 
 @auth_bp.route("/register/resend-code", methods=["POST"])
 def resend_verification_code():
+    from app.utils.rate_limit import client_ip, hit, wait_text
+
     pending = session.get(PENDING_SESSION_KEY)
     if not pending:
         flash("Start registration again.", "warning")
         return redirect(url_for("auth.register"))
+    allowed, retry_after = hit("send_code", client_ip())
+    if not allowed:
+        flash(f"Too many codes requested. Please wait {wait_text(retry_after)}.", "danger")
+        return redirect(url_for("auth.verify_email"))
 
     cooldown = int(current_app.config.get("EMAIL_VERIFICATION_RESEND_SECONDS", 60))
     last_sent = pending.get("last_sent_at")
@@ -400,15 +424,33 @@ def login():
         return redirect(_home_url())
 
     if request.method == "POST":
+        from app.utils import captcha
+        from app.utils.rate_limit import client_ip, hit, peek, reset, wait_text
+
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         remember = bool(request.form.get("remember"))
+        attempt_key = f"{client_ip()}|{email}"
+
+        allowed, retry_after = peek("login_failed", attempt_key)
+        if allowed:
+            allowed, retry_after = hit("login_ip", client_ip())
+        if not allowed:
+            flash(f"Too many sign-in attempts. Please wait {wait_text(retry_after)} and try again, "
+                  f"or reset your password.", "danger")
+            return render_template("auth/login.html", email=email), 429
+
+        if not captcha.is_human("login", fresh=True):
+            flash(captcha.REQUIRED_MESSAGE, "danger")
+            return render_template("auth/login.html", email=email)
 
         user = User.query.filter_by(email=email).first()
         if user is None or not user.check_password(password):
+            hit("login_failed", attempt_key)
             log_action("login_failed", details=f"email={email}")
             flash("Invalid email or password.", "danger")
             return render_template("auth/login.html", email=email)
+        reset("login_failed", attempt_key)
 
         if user.lift_expired_suspension():
             db.session.commit()
@@ -452,10 +494,20 @@ def forgot_password():
         return redirect(_home_url())
 
     if request.method == "POST":
+        from app.utils import captcha
+        from app.utils.rate_limit import client_ip, hit, wait_text
+
         email = request.form.get("email", "").strip().lower()
         if not email:
             flash("Please enter the email address you registered with.", "danger")
             return render_template("auth/forgot_password.html", email="")
+        allowed, retry_after = hit("forgot_password", client_ip())
+        if not allowed:
+            flash(f"Too many reset requests. Please wait {wait_text(retry_after)} and try again.", "danger")
+            return render_template("auth/forgot_password.html", email=email), 429
+        if not captcha.is_human("forgot_password", fresh=True):
+            flash(captcha.REQUIRED_MESSAGE, "danger")
+            return render_template("auth/forgot_password.html", email=email)
 
         user = User.query.filter_by(email=email).first()
         ttl = int(current_app.config.get("PASSWORD_RESET_CODE_TTL_MINUTES", 15))
@@ -566,9 +618,15 @@ def reset_password():
 
 @auth_bp.route("/reset-password/resend", methods=["POST"])
 def resend_password_reset_code():
+    from app.utils.rate_limit import client_ip, hit, wait_text
+
     pending = session.get(PASSWORD_RESET_SESSION_KEY)
     if not pending:
         return redirect(url_for("auth.forgot_password"))
+    allowed, retry_after = hit("send_code", client_ip())
+    if not allowed:
+        flash(f"Too many codes requested. Please wait {wait_text(retry_after)}.", "danger")
+        return redirect(url_for("auth.reset_password"))
 
     cooldown = int(current_app.config.get("EMAIL_VERIFICATION_RESEND_SECONDS", 60))
     last_sent = pending.get("last_sent_at")

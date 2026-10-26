@@ -77,6 +77,32 @@ services:
       - key: PII_ENCRYPTION_KEY
         sync: false
 
+      # Only while rotating PII_ENCRYPTION_KEY: the previous key(s),
+      # comma-separated. The next deploy re-encrypts every stored detail
+      # under the new key (see the log line), then delete this variable.
+      - key: PII_ENCRYPTION_PREVIOUS_KEYS
+        sync: false
+
+      # Invisible human verification (Cloudflare Turnstile) for sign-in,
+      # sign-up, password reset and the AI / Google Places routes. Create
+      # a widget at dash.cloudflare.com > Turnstile for this hostname and
+      # paste the two keys here. Blank = verification off (a warning is
+      # logged at start-up).
+      - key: CAPTCHA_PROVIDER
+        value: turnstile
+      - key: CAPTCHA_SITE_KEY
+        sync: false
+      - key: CAPTCHA_SECRET_KEY
+        sync: false
+
+      # The LGU's Data Protection Officer, shown on the privacy notices.
+      - key: DPO_NAME
+        sync: false
+      - key: DPO_OFFICE
+        sync: false
+      - key: DPO_EMAIL
+        sync: false
+
       - key: FLASK_CONFIG
         value: production
 

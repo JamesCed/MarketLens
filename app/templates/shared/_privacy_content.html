@@ -1,0 +1,126 @@
+{#
+  shared/_privacy_content.html
+  ------------------------------
+  The Privacy Policy (Data Privacy Act of 2012, RA 10173), shown on the
+  public /privacy page and in the sign-up dialog. docs/DATA_PRIVACY.md
+  explains how each statement is met in the code; keep the two in step.
+  Written for the capstone system as built, not as legal advice.
+#}
+{% set kept_upload_days, kept_audit_days = retention_days() %}
+<div class="dss-terms">
+  <p class="text-muted small mb-3">Last updated {{ TERMS_UPDATED or 'October 2026' }}</p>
+
+  <p>MarketLens processes personal information in line with the <strong>Data Privacy Act of 2012 (Republic Act
+    No. 10173)</strong>, its Implementing Rules and Regulations, and the issuances of the National Privacy Commission
+    (NPC), following the principles of <strong>transparency</strong>, <strong>legitimate purpose</strong> and
+    <strong>proportionality</strong>.</p>
+
+  <h3>1. Who is responsible</h3>
+  <p>The LGU that runs MarketLens is the personal information controller; the MarketLens development team processes
+    data on its behalf. Questions, requests and complaints go to {% include "shared/_dpo_contact.html" %}.</p>
+
+  <h3>2. What we collect</h3>
+  <ul>
+    <li><strong>Account details:</strong> name, e-mail address, gender, birthday, contact number, address, and your
+      role (business owner or LGU official).</li>
+    <li><strong>Sign-in credentials:</strong> your password (stored only as a hash, see section 4) and the one-time
+      codes we e-mail you.</li>
+    <li><strong>Business plans:</strong> business name, industry, barangay, capital, staff, prices and ideas you enter,
+      and the forecasts computed for them.</li>
+    <li><strong>Location queries:</strong> the industry and barangay you choose when you plan, search, or open the map.
+      MarketLens never asks for your device&rsquo;s GPS location.</li>
+    <li><strong>Security records:</strong> an audit trail of significant actions (what was done, when, from which page,
+      IP address and browser), and failed sign-in attempts.</li>
+    <li><strong>Human-verification signals:</strong> when a form is protected by Cloudflare Turnstile, Cloudflare checks
+      browser and network signals to tell people from bots and returns only a pass/fail token.</li>
+  </ul>
+
+  <h3>3. Why we use it</h3>
+  <ul>
+    <li>to create and secure your account and keep you signed in;</li>
+    <li>to produce your forecasts, recommendations and alerts, and the city-wide figures the LGU plans with;</li>
+    <li>to keep the service safe: stopping bots, brute-force sign-ins and abuse, and investigating incidents.</li>
+  </ul>
+  <p>We rely on your consent and the Terms you accept at sign-up (RA 10173, Sec. 12(a) and (b)) and, for records the
+    LGU uploads, on the LGU&rsquo;s public functions (Sec. 12(e)). Your data is never sold and never used for
+    advertising.</p>
+
+  <h3 id="credentials">4. How your credentials and session are protected</h3>
+  <ul>
+    <li><strong>Passwords are hashed, never stored.</strong> Each password is turned into a salted one-way hash (scrypt;
+      accounts created before October 2026 use PBKDF2-SHA256 until the password is next changed). Nobody &mdash; not
+      administrators, not the developers &mdash; can read your password, and it is never sent by e-mail.</li>
+    <li><strong>Sessions use a signed cookie, not a JSON Web Token.</strong> MarketLens does not issue JWTs, API keys or
+      other bearer tokens to users. After you sign in, a session cookie signed with a server-side secret identifies you.
+      It is <em>HttpOnly</em> (page scripts cannot read it), <em>Secure</em> (sent only over HTTPS) and
+      <em>SameSite=Lax</em> (not sent with requests from other sites), and it ends when you sign out. &ldquo;Remember
+      me&rdquo; adds a separate signed cookie that keeps you signed in on that device until you sign out.</li>
+    <li><strong>Forms are protected</strong> by anti-forgery (CSRF) tokens, and every page checks your role on the
+      server.</li>
+    <li><strong>One-time codes</strong> for e-mail verification and password reset expire after a few minutes and allow
+      only a few attempts.</li>
+    <li><strong>Brute force is slowed down:</strong> repeated failed sign-ins are blocked for a while, and sign-in,
+      sign-up and password reset are protected by invisible human verification.</li>
+    <li><strong>Personal details are encrypted at rest:</strong> gender, birthday, contact number and address are
+      encrypted in the database (AES with an authentication code), with a key kept outside the database. Administrators
+      see them masked.</li>
+  </ul>
+
+  <h3 id="location">5. How location queries are used</h3>
+  <ul>
+    <li>To count competitors, the <strong>server</strong> &mdash; not your device &mdash; asks the Google Places API for
+      businesses of an industry in a barangay (for example, bakeries in San Roque, Tarlac City). The query contains the
+      industry and the barangay only: never your name, account or location. What comes back is kept as counts per
+      industry and barangay.</li>
+    <li>The Saturation Map&rsquo;s tiles are loaded by your browser from OpenStreetMap&rsquo;s servers, which, like any
+      website, see your IP address.</li>
+    <li>Barangay choices in your plans are used to score those plans. City-wide figures that the LGU sees are totals,
+      never your individual plan or identity.</li>
+  </ul>
+
+  <h3 id="lgu-data">6. Government data uploaded by LGU accounts</h3>
+  <p>LGU accounts upload barangay zoning figures and business permit lists. From a permit list only each
+    permit&rsquo;s barangay, industry, line of business, status and permit number are read. Owner names, contact
+    numbers, e-mail and home addresses, TIN and other ID numbers and birth dates must not be included &mdash; a file
+    that contains them is refused. Only totals are kept: one row per barangay and counts of permits in force per
+    industry and kind of business, with the uploading account and the date. The file is deleted as soon as it has been
+    processed; no business name, permit number or row of the file is stored. Business owners see only the resulting
+    scores and counts per barangay.</p>
+
+  <h3>7. Who receives it</h3>
+  <ul>
+    <li><strong>Within MarketLens:</strong> you see your own plans; LGU officials see city-wide totals; administrators
+      manage accounts and see your name and e-mail, with other details masked.</li>
+    <li><strong>Service providers</strong> that run parts of the system for us, each only for its task: Render (web
+      hosting), Aiven (database hosting), Brevo or Gmail (sending e-mails: your address and name), Google (Places
+      counts and Gemini explanations: no personal details), Cloudflare (human verification). Some of them process data
+      outside the Philippines, under their own security and privacy terms.</li>
+    <li>Authorities, only when the law requires it.</li>
+  </ul>
+
+  <h3>8. How long it is kept</h3>
+  <ul>
+    <li>Account details and plans: while your account exists. Plans in Trash are deleted after 30 days.</li>
+    <li>Audit trail entries: {{ kept_audit_days }} days, then deleted automatically.</li>
+    <li>LGU uploads: {{ kept_upload_days }} days after upload, then deleted automatically.</li>
+    <li>Uploaded files: deleted right after processing.</li>
+  </ul>
+
+  <h3>9. If something goes wrong</h3>
+  <p>If a personal data breach that the law requires us to report occurs, the National Privacy Commission and the people
+    affected are notified within 72 hours of its discovery, as NPC Circular 16-03 requires, with what happened, what data
+    was involved, what is being done and whom to contact.</p>
+
+  <h3>10. Your rights</h3>
+  <p>Under RA 10173 you have the right to be informed, to access your data, to object to its processing, to have it
+    corrected, erased or blocked, to data portability, to damages, and to file a complaint with the National Privacy
+    Commission (<a href="https://privacy.gov.ph" target="_blank" rel="noopener">privacy.gov.ph</a>). You can correct
+    most details yourself in Settings; for anything else contact {% include "shared/_dpo_contact.html" %}.</p>
+
+  <h3>11. Cookies</h3>
+  <p>MarketLens uses only the cookies it needs to work: the session cookie, the optional &ldquo;remember me&rdquo;
+    cookie and the anti-forgery token. There are no advertising or analytics cookies.</p>
+
+  <h3>12. Changes</h3>
+  <p>This policy may be updated; the date above shows the latest version.</p>
+</div>

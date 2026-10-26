@@ -1,15 +1,13 @@
 {#
   shared/_terms_content.html
   ----------------------------
-  The Terms and Conditions and Data Privacy Notice, written once and shown
-  in two places: the sign-up dialog (shared/_terms_modal.html) and the
-  public /terms page (auth/terms.html). IT expert review: the site is
-  online and collects personal and business details, so people must know
-  how those are handled before they hand them over.
+  The Terms and Conditions, written once and shown in two places: the
+  sign-up dialog (shared/_terms_modal.html) and the public /terms page.
+  The Privacy Policy is its own text (shared/_privacy_content.html, /privacy).
 
-  Have your adviser (and, for a real deployment, the LGU's data
-  protection officer) review this wording -- it is written for the
-  capstone system as built, not as legal advice.
+  Have your adviser (and, for a real deployment, the LGU's legal officer
+  and data protection officer) review this wording -- it is written for
+  the capstone system as built, not as legal advice.
 #}
 <div class="dss-terms">
   <p class="text-muted small mb-3">Last updated {{ TERMS_UPDATED or 'October 2026' }}</p>
@@ -17,8 +15,8 @@
   <h3>1. What MarketLens is</h3>
   <p>MarketLens is a decision support system that estimates how crowded (saturated) each industry is in Tarlac City&rsquo;s
     76 barangays and helps business owners and the city plan where businesses should open. It is an undergraduate
-    capstone project. Its forecasts, scores and AI-written explanations are <strong>decision support, not financial,
-    legal or investment advice</strong>. Some figures are estimates; the pages label them as such.</p>
+    capstone project. By creating an account or using MarketLens you agree to these Terms and to the
+    <a href="{{ url_for('auth.privacy') }}">Privacy Policy</a>.</p>
 
   <h3>2. Your account</h3>
   <ul>
@@ -29,27 +27,71 @@
     <li>An administrator may suspend or archive an account that breaks these terms. Archived accounts can be restored.</li>
   </ul>
 
-  <h3>3. Data Privacy Notice</h3>
-  <p>MarketLens processes personal information in line with the Data Privacy Act of 2012 (Republic Act No. 10173).</p>
-  <p><strong>What we collect.</strong> Your name, email address, gender, birthday, contact number and address; the business
-    plans you enter (business name, industry, barangay, capital, staff, prices and ideas); and a record of actions taken in the
-    system (who did what, when, from which page and device) for security.</p>
-  <p><strong>Why.</strong> To create and secure your account, to produce your forecasts and recommendations, to let the
-    city plan with aggregated, city-wide figures, to send the alerts you switch on, and to keep an audit trail.</p>
-  <p><strong>Who can see it.</strong> Your plans and forecasts are visible to you. LGU officials see city-wide totals and
-    trends, not your personal details. Administrators manage accounts and see your name and email; your other personal
-    details are shown to them masked. Your details are never sold. AI-written explanations are generated from your
-    plan&rsquo;s figures, not from your personal details.</p>
-  <p><strong>How it is protected.</strong> Your password is stored only as a one-way hash. Your gender, birthday, contact
-    number and address are encrypted in the database. Pages are served over HTTPS, every form is protected against forged
-    requests, and each role can open only its own pages.</p>
-  <p><strong>How long it is kept.</strong> For as long as your account exists. Records are archived rather than deleted so
-    they cannot disappear by accident; a plan moved to Trash is deleted for good after 30 days.</p>
-  <p><strong>Your rights.</strong> You may ask to see, correct, or have your personal information archived, and you may
-    object to its processing, by contacting {{ SUPPORT_EMAIL or 'the system administrator' }}. You can correct most details
-    yourself in Settings.</p>
+  <h3 id="disclaimer">3. Disclaimer of warranty</h3>
+  <p>The <strong>market saturation scores (MSI), competitor density ratings, business viability scores, quarterly
+    outlooks, location recommendations and AI-written explanations</strong> are <strong>analytical estimates produced by
+    statistical and machine-learning models</strong> from the data available to the system. They are provided for
+    <strong>decision support only</strong>.</p>
+  <ul>
+    <li>They are <strong>not</strong> financial, investment, legal, tax or business advice, and they are not a promise
+      that a business will succeed or fail.</li>
+    <li>They can be incomplete, out of date or wrong: competitor counts depend on public listings and uploaded records,
+      some figures are estimates (the pages label them), and the models were trained partly on synthetic data.</li>
+    <li>MarketLens is provided <strong>&ldquo;as is&rdquo; and &ldquo;as available&rdquo;</strong>, without warranties
+      of any kind, express or implied, including accuracy, fitness for a particular purpose and uninterrupted service.</li>
+    <li>Before you commit money, verify the figures yourself and consult the proper offices (for example the DTI, the
+      Business Permits and Licensing Office) and qualified professionals.</li>
+  </ul>
 
-  <h3>4. Changes</h3>
-  <p>These terms may be updated. The date above shows the latest version; continuing to use MarketLens after a change means
-    you accept it.</p>
+  <h3>4. Limitation of liability</h3>
+  <p>To the extent the law allows, the MarketLens developers, their school and any LGU using MarketLens are not liable
+    for any loss or damage &mdash; including lost profits, lost capital or business interruption &mdash; that results
+    from relying on its scores, forecasts or recommendations, or from the service being unavailable.</p>
+
+  <h3 id="acceptable-use">5. Acceptable use</h3>
+  <p>You may not, and may not help anyone else to:</p>
+  <ul>
+    <li><strong>scrape, crawl or harvest</strong> pages, scores, maps, datasets or API responses by automated means
+      (bots, scripts, headless browsers or similar tools);</li>
+    <li><strong>reverse-engineer, decompile or extract</strong> the forecasting models, their parameters or their
+      training data, or rebuild them from the system&rsquo;s outputs;</li>
+    <li><strong>spam or flood</strong> the forms or the API &mdash; for example by sending requests faster than a person
+      could, re-running forecasts in a loop, or triggering Google Places lookups in bulk;</li>
+    <li>get around the human verification (CAPTCHA), the rate limits, sign-in protections or role restrictions;</li>
+    <li>upload malware, files disguised as spreadsheets, or records containing personal information MarketLens does not
+      ask for;</li>
+    <li>use another person&rsquo;s account, or resell or republish the system&rsquo;s data.</li>
+  </ul>
+  <p>Requests that look automated are slowed down or refused. Breaking these rules can lead to suspension, blocking and,
+    where it amounts to illegal access or interference, a report under the Cybercrime Prevention Act of 2012
+    (Republic Act No. 10175).</p>
+
+  <h3 id="third-party">6. Third-party data and services</h3>
+  <p>MarketLens relies on outside providers. Their data and services remain theirs and follow their own terms:</p>
+  <ul>
+    <li><strong>Google Places API</strong> &mdash; business listings and competitor counts for each industry and
+      barangay. Listings come from Google and may be missing, duplicated or out of date. Use of this data is subject to
+      the <a href="https://maps.google.com/help/terms_maps/" target="_blank" rel="noopener">Google Maps / Google Earth
+      Additional Terms of Service</a> and the
+      <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google Privacy Policy</a>.</li>
+    <li><strong>OpenStreetMap</strong> &mdash; the map tiles behind the Saturation Map (&copy; OpenStreetMap
+      contributors).</li>
+    <li><strong>Philippine Statistics Authority (PSA)</strong> &mdash; barangay population figures.</li>
+    <li><strong>Google Gemini</strong> &mdash; writes the plain-language explanation of a forecast from its figures.</li>
+    <li><strong>Cloudflare Turnstile</strong> &mdash; tells people from bots on the sign-in, sign-up and forecasting
+      forms (<a href="https://www.cloudflare.com/turnstile-privacy-policy/" target="_blank" rel="noopener">Turnstile
+      privacy addendum</a>).</li>
+    <li><strong>Records uploaded by the LGU</strong> &mdash; business permit and zoning data.</li>
+  </ul>
+  <p>MarketLens is not affiliated with, verified or endorsed by Google, Cloudflare, the DTI or the PSA.</p>
+
+  <h3>7. Data privacy</h3>
+  <p>MarketLens processes personal information in line with the Data Privacy Act of 2012 (Republic Act No. 10173).
+    Passwords are stored only as one-way hashes and your gender, birthday, contact number and address are encrypted in
+    the database. The <a href="{{ url_for('auth.privacy') }}">Privacy Policy</a> explains what is collected, why, who
+    can see it, how long it is kept and how to exercise your rights.</p>
+
+  <h3>8. Changes and governing law</h3>
+  <p>These terms may be updated; the date above shows the latest version, and continuing to use MarketLens after a
+    change means you accept it. They are governed by the laws of the Republic of the Philippines.</p>
 </div>

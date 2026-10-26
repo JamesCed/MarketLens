@@ -574,6 +574,29 @@ def planning():
     )
 
 
+def _heavy_request_refusal(json_reply=False, back=None):
+    """Rate limit and human verification for the routes that run the AI
+    models and may spend Google Places quota (creating, re-forecasting
+    and saving plans). None when the request may go ahead; otherwise the
+    response to return. See app/utils/captcha.py."""
+    from app.utils import captcha
+    from app.utils.rate_limit import hit, wait_text
+
+    allowed, retry_after = hit("analysis", f"user:{current_user.user_id}")
+    if not allowed:
+        if json_reply:
+            return captcha.rate_limited_response(retry_after)
+        flash(f"You have run many forecasts in a short time. Please wait {wait_text(retry_after)} "
+              f"and try again.", "warning")
+        return redirect(back or url_for("sme.planning"))
+    if not captcha.is_human("analysis"):
+        if json_reply:
+            return captcha.required_response("analysis")
+        flash(captcha.REQUIRED_MESSAGE, "danger")
+        return redirect(back or url_for("sme.planning"))
+    return None
+
+
 @sme_bp.route("/home/analyze", methods=["POST"])
 @role_required("SME")
 def analyze():
@@ -586,6 +609,10 @@ def analyze():
     cannot disagree about what a plan is (capital required, monthly
     revenue not collected by any of them)."""
     from app.services.plan_params import apply_plan_data, parse_plan_form
+
+    refusal = _heavy_request_refusal()
+    if refusal is not None:
+        return refusal
 
     data, errors = parse_plan_form(request.form)
     if errors:
@@ -628,6 +655,10 @@ def update_plan(sme_id):
 
     profile = _owned_plan(sme_id)
     wants_json = _wants_json()
+
+    refusal = _heavy_request_refusal(json_reply=wants_json, back=url_for("sme.planning", plan=sme_id))
+    if refusal is not None:
+        return refusal
 
     form = request.form.copy()
     if not form.get("business_stage"):
@@ -937,6 +968,10 @@ def save_recommended_location():
     Nothing is invented: the only new information is the industry and
     location the user just chose off a card.
     """
+    refusal = _heavy_request_refusal(back=url_for("sme.recommendations"))
+    if refusal is not None:
+        return refusal
+
     industry_type = (request.form.get("industry_type") or "").strip()
     location = (request.form.get("location") or "").strip()
     source_id = request.form.get("source_sme_id", type=int)

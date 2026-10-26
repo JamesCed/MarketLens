@@ -114,6 +114,29 @@ def create_app(config_name=None):
 
     app.jinja_env.globals["BARANGAY_LIST"] = sorted(BARANGAY_NAMES)
 
+    app.jinja_env.globals["DPO"] = {
+        "name": app.config.get("DPO_NAME", ""),
+        "office": app.config.get("DPO_OFFICE", ""),
+        "email": app.config.get("DPO_EMAIL", ""),
+        "phone": app.config.get("DPO_PHONE", ""),
+    }
+
+    def _retention_days():
+        from app.services.retention_service import DEFAULT_AUDIT_DAYS, DEFAULT_UPLOAD_DAYS, retention_days
+
+        try:
+            return retention_days()
+        except Exception:
+            return DEFAULT_UPLOAD_DAYS, DEFAULT_AUDIT_DAYS
+
+    app.jinja_env.globals["retention_days"] = _retention_days
+
+    from app.utils.captcha import client_config as _captcha_config, warn_if_disabled
+
+    app.jinja_env.globals["captcha_config"] = _captcha_config
+    app.jinja_env.globals["TERMS_UPDATED"] = app.config.get("TERMS_UPDATED", "")
+    warn_if_disabled(app)
+
     @app.context_processor
     def inject_globals():
         from flask_login import current_user
@@ -135,6 +158,10 @@ def create_app(config_name=None):
     from app.services.startup_migrations import run_startup_migrations
 
     run_startup_migrations(app)
+
+    from app.services.retention_service import install as install_retention
+
+    install_retention(app)
 
     from sqlalchemy.orm import Session as _OrmSession
 

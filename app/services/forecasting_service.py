@@ -490,30 +490,26 @@ def reconciled_competitor_counts(industries, locations, with_source=False):
     register instead -- crediting it to Places would be a false claim
     about where the number came from.
     """
-    rows = (
-        db.session.query(
-            MarketData.industry_type,
-            MarketData.location,
-            MarketData.source,
-            MarketData.competitor_count,
-            MarketData.date_recorded,
-            MarketData.market_id,
-        )
-        .filter(
+    newest = _newest_per_group(
+        (MarketData.industry_type, MarketData.location, MarketData.source,
+         MarketData.competitor_count),
+        partition_by=(MarketData.industry_type, MarketData.location, MarketData.source),
+        order_by=(MarketData.date_recorded.desc(), MarketData.market_id.desc()),
+        filters=(
             MarketData.industry_type.in_(industries),
             MarketData.location.in_(locations),
             MarketData.source.in_(_COMPETITOR_SOURCES),
             MarketData.competitor_count.isnot(None),
-        )
-        .all()
+            MarketData.archived_at.is_(None),
+        ),
     )
-
-    freshest = {}
-    for industry, location, source, count, recorded, market_id in rows:
-        key = (industry, location, source)
-        rank = (recorded, market_id)
-        if key not in freshest or rank > freshest[key][0]:
-            freshest[key] = (rank, int(count))
+    source_order = {source: position for position, source in enumerate(_COMPETITOR_SOURCES)}
+    freshest = {
+        (industry, location, source): (None, int(count))
+        for industry, location, source, count in sorted(
+            db.session.execute(newest).all(), key=lambda row: source_order.get(row[2], len(source_order))
+        )
+    }
 
     merged = {}
     for (industry, location, source), (_rank, count) in freshest.items():
@@ -908,59 +904,74 @@ def _score_dict(industry_type, location, market, lgu, saturation_index, confiden
 
 def _latest_market_rows(industries, locations):
     """{(industry_type, location): freshest MarketData row} for the
-    given combos, in two queries.
+    given combos, in one query.
 
     market_data keeps one row per refresh -- a full history -- so
-    "freshest" is a greatest-n-per-group problem. It is solved here in
-    SQL (GROUP BY the pair, take the newest date, then the highest
-    market_id among any same-date ties) so the database returns one
-    row per combo instead of the app pulling the whole table and
-    discarding most of it.
+    "freshest" is a greatest-n-per-group problem. It is solved in SQL
+    (newest date, then the highest market_id among same-date ties --
+    see _newest_per_group) so the database returns one row per combo
+    instead of the app pulling the whole table and discarding most of
+    it.
     """
-    newest = (
-        db.session.query(
-            MarketData.industry_type.label("industry_type"),
-            MarketData.location.label("location"),
-            db.func.max(MarketData.date_recorded).label("newest_date"),
-        )
-        .filter(MarketData.industry_type.in_(industries), MarketData.location.in_(locations))
-        .group_by(MarketData.industry_type, MarketData.location)
-        .subquery()
-    )
-    winning_ids = (
-        db.session.query(db.func.max(MarketData.market_id))
-        .join(
-            newest,
-            db.and_(
-                MarketData.industry_type == newest.c.industry_type,
-                MarketData.location == newest.c.location,
-                MarketData.date_recorded == newest.c.newest_date,
-            ),
-        )
-        .group_by(MarketData.industry_type, MarketData.location)
-        .all()
-    )
-    ids = [row[0] for row in winning_ids if row[0] is not None]
-    if not ids:
+    if not industries or not locations:
         return {}
-    rows = MarketData.query.filter(MarketData.market_id.in_(ids)).all()
+    newest = _newest_per_group(
+        (MarketData,),
+        partition_by=(MarketData.industry_type, MarketData.location),
+        order_by=(MarketData.date_recorded.desc(), MarketData.market_id.desc()),
+        filters=(
+            MarketData.industry_type.in_(industries),
+            MarketData.location.in_(locations),
+            MarketData.archived_at.is_(None),
+        ),
+        entity=MarketData,
+    )
+    rows = newest.all()
     return {(row.industry_type, row.location): row for row in rows}
 
 
 def _lgu_rows(locations):
     """{location: freshest LguData row} for the given barangays, in one
-    query. Same greatest-n-per-group reasoning as above, resolved on
-    the (much smaller) result rather than with a second round trip."""
-    rows = (
-        LguData.query.filter(LguData.barangay.in_(locations))
-        .order_by(LguData.barangay, LguData.upload_date.desc(), LguData.lgu_id.desc())
-        .all()
+    query that returns only that row per barangay (see
+    _newest_per_group), however many uploads lgu_data holds."""
+    locations = list(locations)
+    if not locations:
+        return {}
+    newest = _newest_per_group(
+        (LguData,),
+        partition_by=(LguData.barangay,),
+        order_by=(LguData.upload_date.desc(), LguData.lgu_id.desc()),
+        filters=(LguData.barangay.in_(locations), LguData.archived_at.is_(None)),
+        entity=LguData,
     )
-    latest = {}
-    for row in rows:
-        if row.barangay not in latest:
-            latest[row.barangay] = row
-    return latest
+    return {row.barangay: row for row in newest.all()}
+
+
+def _newest_per_group(columns, partition_by, order_by, filters, entity=None):
+    """The newest row of each group, in ONE query: ROW_NUMBER() over the
+    group, keep number 1. Supported by MySQL 8, MariaDB 10.2+ and SQLite
+    3.25+.
+
+    market_data and lgu_data keep every upload and every refresh -- a
+    full history -- while each caller only wants the current row per
+    combination. Selecting the whole history and discarding most of it
+    in Python made every scoring call slower after each upload, and
+    a GROUP BY + join took two round trips; this returns exactly one
+    row per group in one.
+
+    With `entity`, returns a Query of ORM objects of that model;
+    otherwise a Core select of `columns`.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import aliased
+
+    rank = func.row_number().over(partition_by=partition_by, order_by=order_by).label("dss_rank")
+    if entity is not None:
+        inner = select(entity, rank).where(*filters).subquery()
+        alias = aliased(entity, inner)
+        return db.session.query(alias).filter(inner.c.dss_rank == 1)
+    inner = select(*columns, rank).where(*filters).subquery()
+    return select(*(inner.c[column.key] for column in columns)).where(inner.c.dss_rank == 1)
 
 
 def generate_forecast_for_profile(sme_profile, defer_ai=False):

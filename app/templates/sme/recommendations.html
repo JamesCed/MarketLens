@@ -429,7 +429,7 @@
             <i class="bi bi-check2"></i> Saved to My Plans
           </button>
         {% else %}
-          <form method="POST" action="{{ url_for('sme.save_recommended_location') }}" class="flex-fill">
+          <form method="POST" action="{{ url_for('sme.save_recommended_location') }}" class="flex-fill" data-captcha="analysis">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="industry_type" value="{{ opp.industry_type }}">
             <input type="hidden" name="location" value="{{ opp.location }}">

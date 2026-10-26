@@ -98,6 +98,12 @@ class Config:
     PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
 
     PII_ENCRYPTION_KEY = os.environ.get("PII_ENCRYPTION_KEY", "")
+    PII_ENCRYPTION_PREVIOUS_KEYS = os.environ.get("PII_ENCRYPTION_PREVIOUS_KEYS", "")
+
+    DPO_NAME = os.environ.get("DPO_NAME", "").strip()
+    DPO_OFFICE = os.environ.get("DPO_OFFICE", "").strip()
+    DPO_EMAIL = os.environ.get("DPO_EMAIL", "").strip()
+    DPO_PHONE = os.environ.get("DPO_PHONE", "").strip()
 
     DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
     DB_PORT = os.environ.get("DB_PORT", "3306")
@@ -121,6 +127,20 @@ class Config:
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "instance", "uploads")
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024
     ALLOWED_UPLOAD_EXTENSIONS = {"csv", "xlsx", "xls"}
+    UPLOAD_IN_BACKGROUND = _bool(os.environ.get("UPLOAD_IN_BACKGROUND"), True)
+    UPLOAD_WAIT_SECONDS = float(os.environ.get("UPLOAD_WAIT_SECONDS", "15") or 15)
+    WARM_AFTER_UPLOAD = _bool(os.environ.get("WARM_AFTER_UPLOAD"), True)
+    DATA_RETENTION_ENABLED = _bool(os.environ.get("DATA_RETENTION_ENABLED"), True)
+
+    CAPTCHA_PROVIDER = (os.environ.get("CAPTCHA_PROVIDER") or "turnstile").strip().lower()
+    CAPTCHA_SITE_KEY = os.environ.get("CAPTCHA_SITE_KEY", "").strip()
+    CAPTCHA_SECRET_KEY = os.environ.get("CAPTCHA_SECRET_KEY", "").strip()
+    CAPTCHA_MIN_SCORE = float(os.environ.get("CAPTCHA_MIN_SCORE", "0.5") or 0.5)
+    CAPTCHA_PASS_MINUTES = float(os.environ.get("CAPTCHA_PASS_MINUTES", "30") or 30)
+    CAPTCHA_FAIL_OPEN = _bool(os.environ.get("CAPTCHA_FAIL_OPEN"), False)
+    CAPTCHA_EXPECTED_HOSTNAME = os.environ.get("CAPTCHA_EXPECTED_HOSTNAME", "").strip()
+    RATE_LIMIT_ENABLED = _bool(os.environ.get("RATE_LIMIT_ENABLED"), True)
+    TERMS_UPDATED = "October 26, 2026"
 
     GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "")
 
@@ -237,6 +257,11 @@ class TestingConfig(Config):
     TESTING = True
     WTF_CSRF_ENABLED = False
     WARM_ON_BOOT = False
+    UPLOAD_IN_BACKGROUND = False
+    WARM_AFTER_UPLOAD = False
+    CAPTCHA_SITE_KEY = ""
+    CAPTCHA_SECRET_KEY = ""
+    RATE_LIMIT_ENABLED = False
     SQLALCHEMY_DATABASE_URI = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
     GEMINI_RETRY_BACKOFF_SECONDS = (0, 0)
 

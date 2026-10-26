@@ -383,6 +383,20 @@ def run_startup_migrations(app):
             db.session.rollback()
 
         try:
+            from app.utils.privacy import rotate_encrypted_values
+
+            rotation = rotate_encrypted_values()
+            if rotation["rotated"]:
+                app.logger.info("Re-encrypted %s personal detail(s) under the current PII_ENCRYPTION_KEY; "
+                                "PII_ENCRYPTION_PREVIOUS_KEYS can now be removed", rotation["rotated"])
+            if rotation["unreadable"]:
+                app.logger.warning("%s personal detail(s) could not be decrypted with any configured key -- "
+                                   "add the key they were written under to PII_ENCRYPTION_PREVIOUS_KEYS",
+                                   rotation["unreadable"])
+        except Exception:
+            db.session.rollback()
+
+        try:
             hidden = _hide_personal_details_in_audit_trail()
             if hidden:
                 app.logger.info("Hid personal details in %s audit trail entr(ies)", hidden)

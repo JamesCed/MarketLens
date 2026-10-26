@@ -66,7 +66,7 @@ def _upload(app, lgu_user, rows):
     path = _csv(rows, ["barangay", "industry_type", "line_of_business", "status"])
     try:
         with app.app_context():
-            return process_upload("LGU_DATA", path, "DTI", lgu_user)
+            return process_upload("MARKET_DATA", path, "DTI", lgu_user)
     finally:
         os.unlink(path)
 
@@ -136,8 +136,8 @@ def test_the_upload_reads_the_file_once(app, lgu_user, monkeypatch):
     from app.services import data_import_service
 
     reads = []
-    real = data_import_service._pandas().read_csv
-    monkeypatch.setattr(data_import_service._pandas(), "read_csv",
+    real = data_import_service._read_csv
+    monkeypatch.setattr(data_import_service, "_read_csv",
                         lambda *a, **k: reads.append(a[0]) or real(*a, **k))
     _count, status, message = _upload(app, lgu_user, [(BARANGAY_NAMES[0], FOOD, "Bakery", "active")])
     assert status == "success", message

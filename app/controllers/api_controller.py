@@ -31,6 +31,7 @@ from app.ml.seed_data import BARANGAY_NAMES
 from app.services.response_cache import cached_on_data
 from app.services.forecasting_service import compute_scores, compute_scores_batch
 from app.services.places_service import search_competitors, search_competitors_detailed
+from app.utils.captcha import protect_api
 
 api_bp = Blueprint("api", __name__)
 
@@ -176,8 +177,29 @@ def lgu_recommendations():
     })
 
 
+@api_bp.route("/captcha/verify", methods=["POST"])
+@login_required
+def captcha_verify():
+    """Turn one CAPTCHA token into a short "human pass" in the session, so
+    the AI and Google Places routes below stop asking for a while. Called
+    by static/js/captcha.js when one of them answers 403 + X-Captcha-Required."""
+    from app.utils import captcha
+    from app.utils.rate_limit import hit
+
+    allowed, retry_after = hit("captcha_verify", f"user:{current_user.user_id}")
+    if not allowed:
+        return captcha.rate_limited_response(retry_after)
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action") or "analysis")[:32]
+    if captcha.verify_token(str(payload.get("token") or ""), action):
+        captcha.grant_human_pass()
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": captcha.REQUIRED_MESSAGE}), 400
+
+
 @api_bp.route("/forecast")
 @login_required
+@protect_api("analysis", "api_forecast")
 def forecast():
     """Ephemeral single-location lookup -- e.g. a map pin's info window,
     or a 'quick check' before an SME commits to a full business plan."""
@@ -191,6 +213,7 @@ def forecast():
 
 @api_bp.route("/places/nearby")
 @login_required
+@protect_api("analysis", "places_nearby")
 def places_nearby():
     location = request.args.get("location", "").strip()
     industry_type = request.args.get("industry_type", BUSINESS_TYPES[0])
@@ -309,6 +332,7 @@ def tarlac_city_boundary():
 
 @api_bp.route("/places-refresh", methods=["POST"])
 @login_required
+@protect_api("analysis", "places_refresh")
 def places_refresh():
     """Fetch real Google Places counts for a BATCH of (industry x
     barangay) combinations that don't have them yet, and report
@@ -544,6 +568,7 @@ def barangay_detail():
 
 @api_bp.route("/forecasts/<int:forecast_id>/transcript", methods=["POST"])
 @login_required
+@protect_api("analysis", "transcript")
 def forecast_transcript(forecast_id):
     """Upgrade ONE stored forecast's text from the rule-based template to
     Gemini's -- the recommendation (headline, summary, reasons, risks,

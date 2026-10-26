@@ -1,0 +1,16 @@
+{#
+  shared/_dpo_contact.html
+  --------------------------
+  Who to contact about personal data: the LGU's Data Protection Officer
+  (NPC Advisory 2017-01: each LGU designates one), set with the DPO_NAME,
+  DPO_OFFICE, DPO_EMAIL and DPO_PHONE environment variables. Until those
+  are set, requests go to the system's support address.
+#}
+{% if DPO.name or DPO.email %}
+  <strong>{{ DPO.name or 'Data Protection Officer' }}</strong>{% if DPO.office %}, {{ DPO.office }}{% endif %}
+  {% if DPO.email %}&middot; <a href="mailto:{{ DPO.email }}">{{ DPO.email }}</a>{% endif %}
+  {% if DPO.phone %}&middot; {{ DPO.phone }}{% endif %}
+{% else %}
+  the Data Protection Officer of the LGU using MarketLens, through
+  <a href="mailto:{{ SUPPORT_EMAIL }}">{{ SUPPORT_EMAIL or 'the system administrator' }}</a>
+{% endif %}

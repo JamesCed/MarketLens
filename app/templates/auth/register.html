@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set legal_links_inline = true %}
 {% block title %}Create an account{% endblock %}
 
 {#
@@ -89,7 +90,7 @@
           <li data-step="4"><span>4</span> Sign-in details</li>
         </ol>
 
-        <form method="POST" action="{{ url_for('auth.register') }}" id="mlSignupForm">
+        <form method="POST" action="{{ url_for('auth.register') }}" id="mlSignupForm" data-captcha="register">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
           {# ------------------------- step 1 ------------------------- #}
@@ -394,8 +395,10 @@
               <input class="form-check-input" type="checkbox" id="ml-terms" name="accept_terms" value="1"
                      {{ 'checked' if f.get('accept_terms') else '' }}>
               <label class="form-check-label small" for="ml-terms">
-                I have read and agree to the
-                <a href="{{ url_for('auth.terms') }}" data-bs-toggle="modal" data-bs-target="#termsModal">Terms and Conditions and Data Privacy Notice</a>.
+                I agree to the
+                <a href="{{ url_for('auth.terms') }}" data-bs-toggle="modal" data-bs-target="#termsModal">Terms &amp; Conditions</a>
+                and the
+                <a href="{{ url_for('auth.privacy') }}" data-bs-toggle="modal" data-bs-target="#privacyModal">Privacy Policy</a>.
               </label>
             </div>
 
@@ -416,6 +419,7 @@
   </section>
 
   {% include "shared/_terms_modal.html" %}
+  {% include "shared/_privacy_modal.html" %}
 
   <footer class="ml-footer">
     <div class="ml-footer-brand">
@@ -424,6 +428,11 @@
     </div>
     <p class="ml-footer-note">
       An undergraduate capstone project. Forecasts are decision support, not financial advice.
+    </p>
+    <p class="ml-footer-note ml-footer-legal">
+      <a href="{{ url_for('auth.terms') }}">Terms &amp; Conditions</a>
+      <span aria-hidden="true">&middot;</span>
+      <a href="{{ url_for('auth.privacy') }}">Privacy Policy</a>
     </p>
   </footer>
 </div>

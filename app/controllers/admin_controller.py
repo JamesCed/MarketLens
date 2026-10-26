@@ -997,6 +997,31 @@ def _save_plan_assumptions(form):
     return rejected
 
 
+def _save_retention_settings(form):
+    """Save the two retention periods (whole days, 30-3650) and return a
+    message for any value refused. A blank field leaves the stored value
+    alone."""
+    from app.services.retention_service import AUDIT_RETENTION_KEY, RETENTION_RANGE, UPLOAD_RETENTION_KEY
+
+    rejected = []
+    low, high = RETENTION_RANGE
+    for key, label in ((UPLOAD_RETENTION_KEY, "uploaded data retention"),
+                       (AUDIT_RETENTION_KEY, "audit trail retention")):
+        raw = (form.get(key) or "").strip()
+        if not raw:
+            continue
+        try:
+            days = int(raw)
+        except ValueError:
+            days = None
+        if days is None or not (low <= days <= high):
+            rejected.append(f"Settings saved, except the {label}: it must be a whole number of days "
+                            f"from {low} to {high}.")
+        else:
+            SystemSetting.set(key, str(days))
+    return rejected
+
+
 @admin_bp.route("/settings", methods=["GET", "POST"])
 @role_required("Admin")
 def settings():
@@ -1016,7 +1041,7 @@ def settings():
 
         SystemSetting.set("use_llm_recommendations", "true" if request.form.get("use_llm_recommendations") else "false")
 
-        rejected = _save_plan_assumptions(request.form)
+        rejected = _save_plan_assumptions(request.form) + _save_retention_settings(request.form)
 
         from app.controllers.community_controller import SETTING_KEY, is_valid_invite
 
@@ -1029,6 +1054,7 @@ def settings():
         changed = diff_fields(before, after)
         changed.pop("places_calls_today", None)
         changed.pop("places_calls_day", None)
+        changed.pop("retention_last_run", None)
         if changed:
             _refresh_figures()
         log_action("admin_update_settings",

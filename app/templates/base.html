@@ -97,10 +97,12 @@
     <main class="dss-main">
       {% block content %}{% endblock %}
     </main>
+    {% include "shared/_legal_footer.html" %}
   </div>
   {% include "shared/_onboarding.html" %}
 {% else %}
   {% block auth_content %}{% endblock %}
+  {% if not legal_links_inline %}{% include "shared/_legal_footer.html" %}{% endif %}
 {% endif %}
 
 {# Bootstrap 5 JS bundle #}
@@ -125,6 +127,7 @@
   })();
 </script>
 {% endif %}
+{% include "shared/_captcha.html" %}
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 {% block extra_scripts %}{% endblock %}
 {% if current_user.is_authenticated %}

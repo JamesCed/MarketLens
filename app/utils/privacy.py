@@ -27,6 +27,15 @@ Two tools:
    under makes them unreadable -- they then read back as empty rather
    than crashing a page.
 
+   ROTATING THE KEY. Put the new secret in PII_ENCRYPTION_KEY and the
+   old one(s) in PII_ENCRYPTION_PREVIOUS_KEYS (comma-separated; the old
+   SECRET_KEY too, if details were written before PII_ENCRYPTION_KEY
+   existed and SECRET_KEY is being changed as well). On the next start
+   rotate_encrypted_values() re-encrypts every stored detail under the
+   new key (startup_migrations); after that the previous keys can be
+   removed. Keep PII_ENCRYPTION_KEY different from SECRET_KEY and out of
+   every file -- set it in the host's environment settings only.
+
    Fernet (AES-128-CBC + HMAC-SHA256, from the `cryptography` package
    already in requirements.txt) authenticates as well as encrypts: a
    value altered in the database fails to decrypt instead of reading
@@ -75,18 +84,18 @@ _fernet_cache = {}
 
 def _key_materials():
     """The secrets to derive keys from, newest first: PII_ENCRYPTION_KEY
-    when it is set, then SECRET_KEY. Encryption always uses the first;
-    decryption tries each in turn (MultiFernet), so setting
-    PII_ENCRYPTION_KEY on a deployment that has been running on the
-    SECRET_KEY fallback does not lock anyone's details away -- old values
-    still decrypt, and each is re-encrypted under the new key the next
-    time it is saved."""
+    when it is set, then each of PII_ENCRYPTION_PREVIOUS_KEYS, then
+    SECRET_KEY. Encryption always uses the first; decryption tries each
+    in turn (MultiFernet), so setting or rotating PII_ENCRYPTION_KEY does
+    not lock anyone's details away -- old values still decrypt, and
+    rotate_encrypted_values() re-encrypts them under the new key."""
     from flask import current_app, has_app_context
 
     if not has_app_context():
         return ()
+    previous = re.split(r"[\s,]+", current_app.config.get("PII_ENCRYPTION_PREVIOUS_KEYS") or "")
     materials = []
-    for value in (current_app.config.get("PII_ENCRYPTION_KEY"), current_app.config.get("SECRET_KEY")):
+    for value in (current_app.config.get("PII_ENCRYPTION_KEY"), *previous, current_app.config.get("SECRET_KEY")):
         value = (value or "").strip()
         if value and value not in materials:
             materials.append(value)
@@ -100,14 +109,18 @@ def _fernet():
     hit = _fernet_cache.get(materials)
     if hit is not None:
         return hit
-    from cryptography.fernet import Fernet, MultiFernet
+    from cryptography.fernet import MultiFernet
 
     with _fernet_lock:
-        keys = [Fernet(base64.urlsafe_b64encode(hashlib.sha256(b"marketlens-pii-v1|" + m.encode("utf-8")).digest()))
-                for m in materials]
-        f = MultiFernet(keys)
+        f = MultiFernet([_single_fernet(m) for m in materials])
         _fernet_cache[materials] = f
         return f
+
+
+def _single_fernet(material):
+    from cryptography.fernet import Fernet
+
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(b"marketlens-pii-v1|" + material.encode("utf-8")).digest()))
 
 
 def encrypt_value(plain):
@@ -140,6 +153,62 @@ def decrypt_value(stored):
         logging.getLogger(__name__).warning(
             "A stored personal detail could not be decrypted -- has PII_ENCRYPTION_KEY or SECRET_KEY changed?")
         return None
+
+
+ENCRYPTED_USER_COLUMNS = ("contact_number_enc", "gender_enc", "birthdate_enc",
+                          "address_line_enc", "address_barangay_enc")
+
+
+def rotate_encrypted_values():
+    """Re-encrypt every stored personal detail under the newest key.
+
+    Reads the raw ciphertext (not through EncryptedText), leaves values
+    already under the newest key alone, and re-encrypts the rest with
+    MultiFernet.rotate(). Returns {"rotated": n, "unreadable": n};
+    unreadable values (written under a key that is no longer configured)
+    are left untouched so restoring the old key can still recover them.
+    Does nothing when only one key is configured."""
+    materials = _key_materials()
+    result = {"rotated": 0, "unreadable": 0}
+    if len(materials) < 2:
+        return result
+    from cryptography.fernet import InvalidToken
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text
+
+    from app.extensions import db
+
+    available = {column["name"] for column in sa_inspect(db.engine).get_columns("user")}
+    columns = [column for column in ENCRYPTED_USER_COLUMNS if column in available]
+    if not columns:
+        return result
+    multi = _fernet()
+    newest = _single_fernet(materials[0])
+    quoted = ", ".join(db.engine.dialect.identifier_preparer.quote(c) for c in columns)
+    table = db.engine.dialect.identifier_preparer.quote("user")
+    rows = db.session.execute(text(f"SELECT user_id, {quoted} FROM {table}")).all()
+    for user_id, *values in rows:
+        changes = {}
+        for column, stored in zip(columns, values):
+            if not stored or not str(stored).startswith(_PREFIX):
+                continue
+            token = str(stored)[len(_PREFIX):].encode("ascii")
+            try:
+                newest.decrypt(token)
+                continue
+            except InvalidToken:
+                pass
+            try:
+                changes[column] = _PREFIX + multi.rotate(token).decode("ascii")
+            except InvalidToken:
+                result["unreadable"] += 1
+        if changes:
+            assignments = ", ".join(f"{db.engine.dialect.identifier_preparer.quote(c)} = :{c}" for c in changes)
+            db.session.execute(text(f"UPDATE {table} SET {assignments} WHERE user_id = :user_id"),
+                               {**changes, "user_id": user_id})
+            result["rotated"] += len(changes)
+    db.session.commit()
+    return result
 
 
 class EncryptedText(TypeDecorator):

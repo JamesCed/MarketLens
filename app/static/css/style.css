@@ -2451,3 +2451,30 @@ select.form-select[size="1"] { overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 900px) {
   .dss-main { overflow-x: clip; }
 }
+
+/* ---------------------------------------------------------------------
+   Legal footer (Terms & Conditions, Privacy Policy) and the invisible
+   CAPTCHA's holder, which only shows if Cloudflare needs a click.
+   --------------------------------------------------------------------- */
+.dss-legal-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .35rem .6rem;
+  padding: .9rem 1rem 1.1rem;
+  font-size: .78rem;
+  color: var(--bs-secondary-color, #6c757d);
+  position: relative;
+  z-index: 1;
+}
+.dss-legal-footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.dss-legal-footer a:hover { color: var(--bs-primary, #0d6efd); }
+.ml-footer-legal a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.ml-footer-legal span { margin: 0 .35rem; }
+.dss-captcha-holder {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2100;
+}
+.dss-captcha-holder:empty { display: none; }

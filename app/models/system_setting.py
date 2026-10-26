@@ -36,6 +36,17 @@ DEFAULT_SETTINGS = {
         "then LLM_PROVIDER, then the other; keys in .env), false = the built-in rule-based generator. "
         "Figures always come from the trained models.",
     ),
+    "upload_retention_days": (
+        "1095",
+        "Days uploaded LGU data (zoning rows and permit counts) is kept after its upload before it is deleted "
+        "automatically (30-3650). Data Privacy Act: keep data only as long as its purpose needs it.",
+    ),
+    "audit_log_retention_days": (
+        "365",
+        "Days audit trail entries (who did what, IP address, browser) are kept before they are deleted "
+        "automatically (30-3650).",
+    ),
+    "retention_last_run": ("", "When the retention policy last ran and what it removed (maintained by the app)"),
     "plan_daily_wage_php": (
         "590",
         "Daily wage per employee (PHP) used for plan payroll = employees x wage x 26 days. Default: DOLE "

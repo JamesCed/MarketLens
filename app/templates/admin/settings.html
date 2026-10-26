@@ -80,6 +80,34 @@
   </div>
 
   <div class="dss-card mb-4">
+    <h6 class="mb-1">Data retention (Data Privacy Act of 2012)</h6>
+    <p class="text-muted small mb-3">
+      Data is kept only as long as its purpose needs it (RA 10173, Sec. 11). Once a day the app deletes uploaded
+      LGU data and audit trail entries older than these periods. An uploaded row that a saved forecast still uses
+      is kept until that forecast is gone; such rows hold barangay totals only, no personal data.
+    </p>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label" for="uploadRetention">Uploaded LGU data (days)</label>
+        <input type="number" step="1" min="30" max="3650" id="uploadRetention" name="upload_retention_days"
+               class="form-control"
+               value="{{ settings['upload_retention_days'].setting_value if 'upload_retention_days' in settings else 1095 }}">
+        <div class="form-text">Zoning rows and permit counts, counted from the upload date. Default 1095 (3 years).</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="auditRetention">Audit trail (days)</label>
+        <input type="number" step="1" min="30" max="3650" id="auditRetention" name="audit_log_retention_days"
+               class="form-control"
+               value="{{ settings['audit_log_retention_days'].setting_value if 'audit_log_retention_days' in settings else 365 }}">
+        <div class="form-text">Who did what, with IP address and browser. Default 365 (1 year).</div>
+      </div>
+    </div>
+    {% if settings.get('retention_last_run') and settings['retention_last_run'].setting_value %}
+      <div class="form-text mt-2">Last run: {{ settings['retention_last_run'].setting_value }}</div>
+    {% endif %}
+  </div>
+
+  <div class="dss-card mb-4">
     <h6 class="mb-3">Google Places API</h6>
     <label class="form-label">Max competitor results per Text Search lookup</label>
     <input type="number" min="0" max="60" name="places_max_results" class="form-control"

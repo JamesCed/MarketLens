@@ -544,7 +544,7 @@
 <div class="modal fade" id="addPlanModal" tabindex="-1" aria-hidden="true" aria-labelledby="addPlanTitle">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
     <div class="modal-content">
-      <form method="POST" action="{{ url_for('sme.analyze') }}" data-plan-form class="d-flex flex-column" style="min-height:0;">
+      <form method="POST" action="{{ url_for('sme.analyze') }}" data-plan-form data-captcha="analysis" class="d-flex flex-column" style="min-height:0;">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-header">
           <h5 class="modal-title" id="addPlanTitle"><i class="bi bi-sliders"></i> New Business Plan</h5>

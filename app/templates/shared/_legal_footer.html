@@ -1,0 +1,13 @@
+{#
+  shared/_legal_footer.html
+  ---------------------------
+  The small legal footer on every page: Terms & Conditions and Privacy
+  Policy, both public pages (/terms, /privacy).
+#}
+<footer class="dss-legal-footer" aria-label="Legal">
+  <span>&copy; 2026 MarketLens</span>
+  <span class="dss-legal-sep" aria-hidden="true">&middot;</span>
+  <a href="{{ url_for('auth.terms') }}">Terms &amp; Conditions</a>
+  <span class="dss-legal-sep" aria-hidden="true">&middot;</span>
+  <a href="{{ url_for('auth.privacy') }}">Privacy Policy</a>
+</footer>
