@@ -79,11 +79,30 @@
           and call your office on its number in the LGU directory &mdash; never a number sent in chat.</li>
         <li><strong>You are notified</strong> here and by e-mail. Your LGU pages open with the role you were given.</li>
       </ol>
+      {#
+        DISCORD. The applicant pastes this into a PRIVATE thread in
+        #get-roles (only they and the MarketLens Admins can read it), so the
+        admin can match the Discord member to this request. It carries the
+        code, name, office and role -- never an e-mail, number or ID.
+      #}
       <div class="dss-discord-box">
-        <div class="fw-semibold mb-1"><i class="bi bi-discord" aria-hidden="true"></i> Using the MarketLens Discord?</div>
-        <p class="small mb-2">Open a private thread in <code>#lgu-verification</code> and post <strong>only</strong> your
-          reference code and name. After you are verified, the admin gives you the matching LGU role there.</p>
+        <div class="fw-semibold mb-1"><i class="bi bi-discord" aria-hidden="true"></i> Paste your code in the MarketLens Discord</div>
+        {% if request_row %}
+          <p class="small mb-2">In <code>#get-roles</code>, start a <strong>private thread</strong> named
+            <code>{{ request_row.reference_code }}</code> and paste this message. Only you and the MarketLens Admins can
+            see a private thread. After you are verified, the admin gives you your LGU role there.</p>
+          <pre class="dss-discord-message mb-2" id="lguDiscordMessage">Reference code: {{ request_row.reference_code }}
+Name: {{ current_user.name }}
+Office: {{ request_row.office }}
+Role requested: {{ request_row.requested_role_label }}</pre>
+          <button type="button" class="btn btn-sm btn-primary" id="copyDiscordMessage">
+            <i class="bi bi-clipboard" aria-hidden="true"></i> Copy message
+          </button>
+        {% else %}
+          <p class="small mb-2">Send your request below first; you get a reference code to paste in <code>#get-roles</code>.</p>
+        {% endif %}
         {% if discord_url %}<a class="btn btn-sm btn-outline-primary" href="{{ discord_url }}" target="_blank" rel="noopener">Open the Discord</a>{% endif %}
+        <a class="small ms-1" href="{{ url_for('auth.lgu_access_guide') }}#discord">How to start a private thread</a>
       </div>
       <p class="small text-danger-emphasis mt-3 mb-0"><i class="bi bi-shield-lock" aria-hidden="true"></i>
         MarketLens staff never ask for your password, a verification code or a government ID &mdash; not on Discord, not by
@@ -119,15 +138,18 @@
 {% block extra_scripts %}
 <script>
   (function () {
-    const copy = document.getElementById('copyRefCode');
-    const code = document.getElementById('lguRefCode');
-    if (copy && code && navigator.clipboard) {
-      copy.addEventListener('click', () => {
-        navigator.clipboard.writeText(code.textContent.trim()).then(() => {
-          copy.innerHTML = '<i class="bi bi-check2"></i> Copied';
+    function copier(buttonId, sourceId) {
+      const button = document.getElementById(buttonId);
+      const source = document.getElementById(sourceId);
+      if (!button || !source || !navigator.clipboard) return;
+      button.addEventListener('click', () => {
+        navigator.clipboard.writeText(source.textContent.trim()).then(() => {
+          button.innerHTML = '<i class="bi bi-check2"></i> Copied';
         });
       });
     }
+    copier('copyRefCode', 'lguRefCode');
+    copier('copyDiscordMessage', 'lguDiscordMessage');
     const office = document.getElementById('ml-lgu-office');
     const other = document.getElementById('mlLguOtherOffice');
     if (office && other) {

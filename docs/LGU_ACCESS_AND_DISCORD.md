@@ -76,6 +76,8 @@ Go to **Admin › System Settings › LGU access verification**:
 
 ## 4. Setting up the Discord server for LGU roles
 
+This matches the existing MarketLens server: `#welcome`, `#rules`, `#announcements`, `#get-roles`, `#help-desk`, `#mod-chat` and `#mod-log`. **`#get-roles` is where LGU applicants paste their reference code**, each in a **private thread** that only they and the MarketLens Admins can read. The code, name and office are never posted where every member can see them.
+
 ### 4.1 Server safety settings
 
 - **Server Settings › Safety Setup**:
@@ -86,50 +88,68 @@ Go to **Admin › System Settings › LGU access verification**:
 - Ask every LGU member to turn on 2FA (*User Settings › My Account*). Also ask them to turn off *Allow direct messages from server members* (*Privacy & Safety*), which stops fake-admin DMs.
 - Make the server invite link **never expire** and paste it into Admin › System Settings › Community.
 
-### 4.2 Roles (highest first)
+### 4.2 Roles (Server Settings › Roles, highest first)
 
 | Role | Who gets it | How | Key permissions |
 |---|---|---|---|
-| **MarketLens Admin** | The System Admins only (2–3 people) | Server owner | Manage Roles, Manage Threads, Manage Messages. Display separately, distinct colour. |
+| **MarketLens Admin** | The System Admins only (2–3 people) | Server owner | Manage Roles, Manage Threads, Manage Messages, View Audit Log. Turn on *Display role members separately* and give it a distinct colour. |
 | Moderator *(optional)* | Trusted team members | MarketLens Admin | Manage Messages, Timeout Members. **Not** Manage Roles. |
-| **LGU Data Steward** | Verified in MarketLens as Data Steward | MarketLens Admin, after approval | Sees `#lgu-stewards`, `#lgu-staff` |
-| **LGU Encoder** | Verified in MarketLens as Encoder | MarketLens Admin, after approval | Sees `#lgu-encoders`, `#lgu-staff` |
-| LGU Applicant | Anyone who says they are LGU staff | Self-assigned in Onboarding | Sees `#lgu-access-guide`, `#lgu-help`, can open a private thread in `#lgu-verification` |
-| Community | Business owners and everyone else | Self-assigned in Onboarding | Public channels |
+| **LGU Data Steward** | Verified in MarketLens as Data Steward | MarketLens Admin, after approval | Sees `#lgu-staff` |
+| **LGU Encoder** | Verified in MarketLens as Encoder | MarketLens Admin, after approval | Sees `#lgu-staff` |
+| LGU Applicant | Anyone who says they are LGU staff | Self-assigned in Channels & Roles | Can start a private thread in `#get-roles` |
+| Business Owner | Business owners and everyone else | Self-assigned in Channels & Roles | Public channels |
 
-Never put *LGU Encoder*, *LGU Data Steward* or *MarketLens Admin* in Onboarding or in any self-assign menu. Keep the MarketLens Admin role above every role it manages.
+Drag the roles into this order. The MarketLens Admin role must sit **above** every role it gives out, or Discord won't let admins assign them.
+
+Never put *LGU Encoder*, *LGU Data Steward* or *MarketLens Admin* in Channels & Roles or in any self-assign menu.
 
 ### 4.3 Channels
 
 | Channel | Visible to | Purpose |
 |---|---|---|
-| `#start-here` (read-only) | everyone | Welcome, rules, link to `/lgu-access-guide` |
-| `#lgu-access-guide` (read-only) | LGU Applicant and above | The pinned guide below |
-| `#lgu-help` | LGU Applicant and above | General questions. No personal details. |
-| `#lgu-verification` | LGU Applicant and above, who can **create private threads** but not send messages in the channel | Ticket-style verification. The applicant opens a private thread named after their code. Only they and the MarketLens Admins (Manage Threads) can see it. |
-| `#lgu-staff` | LGU Encoder, LGU Data Steward, MarketLens Admin | Announcements and coordination for verified staff |
-| `#lgu-encoders`, `#lgu-stewards` | that role + MarketLens Admin | Role-specific help |
+| `#welcome`, `#rules` (read-only) | everyone | Welcome message and rules, with the link to `/lgu-access-guide` |
+| `#get-roles` | everyone can read; only LGU Applicants can start **private threads**; nobody but admins can post in the channel itself | The pinned how-to. Each applicant starts a private thread named after their reference code and pastes the message from MarketLens. |
+| `#help-desk` | everyone | General questions. No personal details. |
+| `#lgu-staff` (**new, private**) | LGU Encoder, LGU Data Steward, MarketLens Admin | Announcements and coordination for verified LGU staff |
+| `#mod-log` | MarketLens Admin, Moderator | AutoMod alerts |
 
-Permissions for `#lgu-verification`:
+### 4.4 Setting up `#get-roles` step by step
 
-- @everyone: *View Channel* off.
-- LGU Applicant: *View Channel* on, *Send Messages* off, *Create Private Threads* on, *Send Messages in Threads* on.
-- MarketLens Admin: *Manage Threads* on.
+1. Right-click `#get-roles` › **Edit Channel**.
+   - **Overview:** set the topic to `LGU staff: start a private thread named after your MarketLens reference code. Business owners: pick your role in Channels & Roles.`
+   - Set *Hide After Inactivity* (for threads) to **1 week**.
+2. **Permissions** › **Advanced permissions**:
+   - **@everyone:**
+     - *View Channel* ✔, *Read Message History* ✔.
+     - *Send Messages* ✖, *Add Reactions* ✖.
+     - *Create Public Threads* ✖, *Create Private Threads* ✖.
+   - **LGU Applicant** (add the role):
+     - *Create Private Threads* ✔, *Send Messages in Threads* ✔.
+     - *Attach Files* ✖, *Embed Links* ✖.
+   - **MarketLens Admin:**
+     - *Send Messages* ✔, *Manage Messages* ✔, *Manage Threads* ✔.
+     - *Manage Threads* is what lets admins see every private thread.
+3. Post the **pinned how-to** (section 4.7) as a MarketLens Admin, then hover it › **⋯** › **Pin Message**.
+4. Test it with a second account that has only *LGU Applicant*:
+   - It can start a private thread but not post in the channel.
+   - A third account (*Business Owner*) cannot see that thread.
 
-If you prefer a bot, a ticket bot (for example Ticket Tool) does the same job. It is optional.
+A private thread is visible only to the person who started it, the people they @mention, and members with *Manage Threads*. Applicants must **not** @mention anyone except `@MarketLens Admin`.
 
-### 4.4 Onboarding (Server Settings › Onboarding)
+### 4.5 Channels & Roles (Server Settings › Onboarding)
 
-Question: **"Who are you?"** (required, one answer)
+Add the question **"Who are you?"** (required, one answer):
 
-- "Business owner / entrepreneur" gives **Community**.
-- "LGU staff – applicant (not yet verified)" gives **LGU Applicant**.
+- "Business owner / entrepreneur" gives **Business Owner**.
+- "LGU staff – applicant (not yet verified)" gives **LGU Applicant**, and shows `#get-roles`.
 
-### 4.5 AutoMod (Server Settings › AutoMod)
+Members who joined before you set this up can change their answer under **Channels & Roles** at the top of the channel list.
+
+### 4.6 AutoMod (Server Settings › AutoMod)
 
 - **Block mention spam** and **block suspected spam**.
 - Custom keyword rule **"Personal details"**:
-  - Applies to all channels **except** `#lgu-verification` threads.
+  - Applies to **all channels**, including `#get-roles` threads. The pasted MarketLens message contains none of these.
   - Action: block the message and alert `#mod-log`.
   - Regex patterns:
     - Philippine mobile numbers: `(\+?63|0)9\d{2}[\s-]?\d{3}[\s-]?\d{4}`
@@ -139,39 +159,38 @@ Question: **"Who are you?"** (required, one answer)
   - Action: alert only.
   - Keywords: `send your password`, `your otp`, `verification code`, `send your id`.
 
-### 4.6 Paste-ready messages
+### 4.7 Paste-ready messages
 
-**`#start-here`**
+**`#welcome`** (add to your welcome message)
 
-> **Welcome to the MarketLens community!**
-> **Business owners:** ask questions, share feedback, and read announcements here.
-> **LGU staff and officials:** read **#lgu-access-guide** first. Your LGU role in MarketLens is given only after the System Admin verifies you with your head of office. **A Discord role does not give MarketLens access.**
+> **LGU staff and officials:** your LGU role in MarketLens is given only after the System Admin verifies you with your head of office. **A Discord role does not give MarketLens access.** Choose *LGU staff – applicant* in **Channels & Roles**, then follow the pinned message in **#get-roles**.
 > **Safety:** never post passwords, verification codes, government IDs or personal numbers. MarketLens staff will never ask for them. Trust only members with the **MarketLens Admin** role.
 > Full guide: https://marketlens-w1ov.onrender.com/lgu-access-guide
 
-**`#lgu-access-guide` (pin it)**
+**`#get-roles`** (pin it)
 
-> **How to get your LGU role**
-> **1.** Sign up at MarketLens and choose **LGU Staff / Official**. Fill in your office, position, the role you need (**LGU Encoder** = uploads data, **LGU Data Steward** = reviews uploads) and your head of office's official e-mail. You get a code like `LGU-7K3QPM`.
+> **Getting your LGU role**
+> **1.** Sign up at MarketLens and choose **LGU Staff / Official** (**LGU Encoder** = uploads data, **LGU Data Steward** = reviews uploads). You get a reference code like `LGU-7K3QPM`.
 > **2.** Your **head of office e-mails** the System Admin from their official address, quoting your code. The template is in the guide.
-> **3.** Optional: open a **private thread** in #lgu-verification named after your code, with **only** your code and name.
-> **4.** The System Admin checks the e-mail and **calls your office on its directory number**, then approves you in MarketLens.
-> **5.** You get a notification and e-mail, your LGU pages open, and you get your LGU role here.
-> **Never** post IDs, passwords, codes or personal numbers. Encoder and Data Steward are always **two different people**.
+> **3.** Here in #get-roles, click **Threads › Create**, choose **Private Thread**, and name it with your code.
+> **4.** Paste the message from your MarketLens **LGU Access Request** page (use *Copy message*): your code, name, office and role. **Nothing else.**
+> **5.** The System Admin checks the e-mail and **calls your office on its directory number**, approves you in MarketLens, then gives you your LGU role here and replies in your thread.
+> Never post IDs, passwords, codes from e-mails, or personal numbers. Encoder and Data Steward are always **two different people**.
+> Business owners: pick your role in **Channels & Roles**.
 > Guide: https://marketlens-w1ov.onrender.com/lgu-access-guide
 
-**What the applicant posts in their private thread**
+**What the applicant pastes in their private thread** (MarketLens fills it in for them)
 
 > Reference code: LGU-XXXXXX
 > Name: Juan Dela Cruz
-> Office: BPLO
+> Office: Business Permits and Licensing Office (BPLO)
 > Role requested: LGU Encoder
 
 **Admin replies**
 
 > *Received:* Thanks! We have your request **LGU-XXXXXX**. We'll verify it with your head of office and call your office. You'll be notified in MarketLens when it's done.
 >
-> *Approved:* You're verified as **LGU Encoder** in MarketLens and now have the matching role here. Welcome! This thread will be archived.
+> *Approved:* You're verified as **LGU Encoder** in MarketLens and now have the matching role here. Welcome! This thread will be closed.
 >
 > *Declined:* We couldn't verify request **LGU-XXXXXX**: *[reason]*. You can send a corrected request from your MarketLens LGU Access page.
 
@@ -190,7 +209,10 @@ Open **Admin › LGU Access** and, for each pending request:
    - Encoders upload; Data Stewards review.
    - Keep them different people. An office needs at least one of each, and the System health card warns when either is missing.
 5. **Tick "I verified the endorsement through an official channel"** and approve. The applicant is notified and e-mailed, and the audit trail records you.
-6. **On Discord:** give the matching role to the username shown on the request, post the *Approved* reply in their thread, then archive the thread.
+6. **On Discord:**
+   - Find the private thread in `#get-roles` named after the code. Check that the Discord username matches the one on the request, if one was given.
+   - Right-click the member › **Roles**: add *LGU Encoder* or *LGU Data Steward* and remove *LGU Applicant*.
+   - Post the *Approved* reply, then close the thread (**⋯ › Close Thread**, and lock it).
 7. **To decline:** give a reason the applicant can act on. They can send a corrected request.
 
 Requests nobody verifies expire after 60 days.

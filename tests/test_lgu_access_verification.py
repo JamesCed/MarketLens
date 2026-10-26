@@ -133,6 +133,8 @@ def test_a_pending_account_sees_only_its_access_page(app):
     page = client.get("/lgu/access").get_data(as_text=True)
     row = LguAccessRequest.query.one()
     assert row.reference_code in page and "What happens next" in page and "MarketLens Admin" in page
+    assert f"Reference code: {row.reference_code}" in page and "#get-roles" in page, "the Discord message to paste"
+    assert "head.bplo@lgu.gov.ph" not in page.split('id="lguDiscordMessage"')[1].split("</pre>")[0]
     assert "LGU Access Request" in page and 'href="/lgu/dashboard"' not in page
     response = client.post("/lgu/government-data-upload", data={"dataset_type": "MARKET_DATA"})
     assert response.headers["Location"].endswith("/lgu/access")
@@ -291,7 +293,7 @@ def test_the_guide_is_public_and_names_the_verifying_office(app):
     SystemSetting.set("lgu_verification_email", "ict@lgu.test")
     db.session.commit()
     page = app.test_client().get("/lgu-access-guide").get_data(as_text=True)
-    for text_ in ("City ICT Office", "ict@lgu.test", "#lgu-verification", "MarketLens Admin", "LGU staff &ndash; applicant",
+    for text_ in ("City ICT Office", "ict@lgu.test", "#get-roles", "Private Thread", "MarketLens Admin", "LGU staff &ndash; applicant",
                   "Endorsement e-mail template", "two different people", "RA 10175"):
         assert text_ in page, text_
     assert 'href="/lgu-access-guide"' in app.test_client().get("/register").get_data(as_text=True)

@@ -2019,7 +2019,8 @@ choosing it grants nothing until the System Admin verifies the person
    and resend the request.
 2. **Endorsement.** The head of office e-mails the System Admin from an
    official address, quoting the code. On Discord the applicant may open
-   a private thread in `#lgu-verification` with only the code and name.
+   a private thread in `#get-roles` with only the code, name, office and role
+   (the LGU Access Request page has a *Copy message* button).
 3. **Verification.** In **Admin › LGU Access** the System Admin approves
    with a role or declines with a reason. Approving requires ticking
    that the endorsement was checked through an official channel

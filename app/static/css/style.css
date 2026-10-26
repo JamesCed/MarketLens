@@ -2523,3 +2523,5 @@ select.form-select[size="1"] { overflow: hidden; text-overflow: ellipsis; }
    carries its own footer underneath instead of beside it. */
 .dss-public-page { flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; }
 .dss-public-page > .container { flex: 1 0 auto; }
+.dss-discord-message { white-space: pre-wrap; background: rgba(15,23,42,.06); border-radius: .4rem; padding: .55rem .7rem;
+  font-size: .8rem; margin: 0; }
