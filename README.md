@@ -2001,3 +2001,54 @@ under the LGU badge) or when creating the account ("LGU Encoder" /
 otherwise uploads wait in review. Local demo accounts: `lgu@dss.local`
 (encoder) and `steward@dss.local` / `steward123` (steward).
 
+---
+
+## 16. V3.5: verified LGU roles, the Discord guide, and who runs the system
+
+**The gap.** "LGU Official" was a choice on the public sign-up form, so
+anyone could create an LGU account and upload "government" data. Now
+choosing it grants nothing until the System Admin verifies the person
+(`app/services/lgu_access_service.py`):
+
+1. **Sign-up.** The applicant adds an LGU step: office, position, the
+   role they need (LGU Encoder / LGU Data Steward), their head of
+   office's name and official e-mail, and optionally their Discord
+   username. The account is created *waiting for verification*, with a
+   reference code (`LGU-XXXXXX`). It sees only **LGU Access Request**
+   (`/lgu/access`): the code, what happens next, and a form to correct
+   and resend the request.
+2. **Endorsement.** The head of office e-mails the System Admin from an
+   official address, quoting the code. On Discord the applicant may open
+   a private thread in `#lgu-verification` with only the code and name.
+3. **Verification.** In **Admin › LGU Access** the System Admin approves
+   with a role or declines with a reason. Approving requires ticking
+   that the endorsement was checked through an official channel
+   (official e-mail plus a call to the office's directory number).
+4. **Upkeep.** Verified accounts show *Review due* after 180 days
+   (*Re-verify* / *Remove access*). Removing access keeps the account but
+   closes every LGU page. Pending requests expire after 60 days.
+
+Discord roles follow MarketLens, never the other way round. The public
+guide is at **`/lgu-access-guide`** (linked from sign-up, the footer and
+the Discord). The admin's guide, with Discord server setup, paste-ready
+channel messages, AutoMod rules and a verification checklist, is
+**`docs/LGU_ACCESS_AND_DISCORD.md`**.
+
+**Who should be System Admin:** the LGU's ICT / MIS office, meaning a
+permanent ICT officer plus one backup. They are not the Encoders or Data
+Stewards, and not the DPO, who oversees them. During the capstone it is
+one designated team member plus a backup, handed over at turnover (see
+the doc's turnover checklist). *System health* on the Admin Dashboard
+warns when there is no backup administrator, when there are more than
+three, or when there is no verified Encoder or Data Steward.
+
+**Settings** (Admin › System Settings › LGU access verification): the
+official e-mail domains (when set, applicants and endorsers must use
+them), the endorsement mailbox, the verifying office, and the
+re-verification period.
+
+**Existing accounts.** LGU accounts that existed before this update, and
+accounts an Admin creates, count as verified. They appear in *Verified
+LGU staff* with "before verification was recorded" and *Review due*, so
+re-check them once.
+

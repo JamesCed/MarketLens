@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}LGU Access Request{% endblock %}
+
+{#
+  lgu/access_status.html
+  ------------------------
+  The one LGU page an unverified LGU account can open: where its request
+  stands, its reference code, and exactly what happens next. A request
+  that was not approved (or access that was removed) can be corrected
+  and sent again here. See app/services/lgu_access_service.py and the
+  public guide at /lgu-access-guide.
+#}
+
+{% set status = current_user.lgu_status_key %}
+{% set f = form or {} %}
+{% set lgu_roles = current_user.LGU_ROLES %}
+
+{% block content %}
+<div class="mb-3">
+  <h4 class="mb-0"><i class="bi bi-person-badge text-primary"></i> LGU Access Request</h4>
+  <p class="text-muted small mb-0">LGU pages open only after the System Admin verifies you with your head of office.
+    <a href="{{ url_for('auth.lgu_access_guide') }}">Read the full guide</a></p>
+</div>
+
+{% if status == 'verified' %}
+  <div class="alert alert-success">
+    <i class="bi bi-patch-check-fill"></i> You are a verified <strong>{{ current_user.lgu_role_label }}</strong>
+    {% if current_user.lgu_office %}in {{ current_user.lgu_office }}{% endif %}.
+    <a href="{{ url_for('lgu.dashboard') }}" class="alert-link">Go to the LGU Dashboard</a>
+  </div>
+{% else %}
+
+<div class="row g-4 mb-4">
+  <div class="col-lg-5">
+    <div class="dss-card h-100">
+      <h6 class="mb-3">Your request</h6>
+      {% if request_row %}
+        <div class="text-center mb-3">
+          <div class="dss-meta">Reference code</div>
+          <div class="dss-ref-code" id="lguRefCode">{{ request_row.reference_code }}</div>
+          <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="copyRefCode">
+            <i class="bi bi-clipboard" aria-hidden="true"></i> Copy code
+          </button>
+        </div>
+        <dl class="row small mb-0">
+          <dt class="col-5">Status</dt>
+          <dd class="col-7">
+            <span class="badge {{ 'text-bg-warning' if status == 'pending' else 'text-bg-danger' }}">{{ current_user.lgu_status_label }}</span>
+          </dd>
+          <dt class="col-5">Role asked for</dt><dd class="col-7">{{ request_row.requested_role_label }}</dd>
+          <dt class="col-5">Office</dt><dd class="col-7">{{ request_row.office }}</dd>
+          <dt class="col-5">Position</dt><dd class="col-7">{{ request_row.position }}</dd>
+          <dt class="col-5">Sent</dt><dd class="col-7">{{ request_row.created_at|pht }}</dd>
+          {% if request_row.decision_note and status != 'pending' %}
+            <dt class="col-5">Reason</dt><dd class="col-7 text-break">{{ request_row.decision_note }}</dd>
+          {% endif %}
+        </dl>
+      {% else %}
+        <p class="small text-muted mb-0">No request is on file for this account. Send one below.</p>
+      {% endif %}
+      {% if status == 'revoked' %}
+        <div class="alert alert-danger small mt-3 mb-0">Your LGU access was removed. If you still need it (for example
+          after moving to another office), send a new request with your current office and head of office.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="dss-card h-100">
+      <h6 class="mb-3">What happens next</h6>
+      <ol class="dss-next-steps small mb-3">
+        <li><strong>Your head of office e-mails the System Admin</strong> from their official address
+          {% if lgu_domains %}({% for d in lgu_domains %}@{{ d }}{{ ', ' if not loop.last }}{% endfor %}){% endif %}
+          to <a href="mailto:{{ verification_email }}?subject=MarketLens%20LGU%20access%20-%20{{ request_row.reference_code if request_row else '' }}">{{ verification_email or 'the System Admin' }}</a>
+          with the subject <code>MarketLens LGU access &ndash; {{ request_row.reference_code if request_row else 'your code' }}</code>,
+          confirming your name, position and the role you need.
+          <a href="{{ url_for('auth.lgu_access_guide') }}#endorsement">Copy the e-mail template</a></li>
+        <li><strong>{{ verification_office }} verifies it</strong>: they check the e-mail came from the official address
+          and call your office on its number in the LGU directory &mdash; never a number sent in chat.</li>
+        <li><strong>You are notified</strong> here and by e-mail. Your LGU pages open with the role you were given.</li>
+      </ol>
+      <div class="dss-discord-box">
+        <div class="fw-semibold mb-1"><i class="bi bi-discord" aria-hidden="true"></i> Using the MarketLens Discord?</div>
+        <p class="small mb-2">Open a private thread in <code>#lgu-verification</code> and post <strong>only</strong> your
+          reference code and name. After you are verified, the admin gives you the matching LGU role there.</p>
+        {% if discord_url %}<a class="btn btn-sm btn-outline-primary" href="{{ discord_url }}" target="_blank" rel="noopener">Open the Discord</a>{% endif %}
+      </div>
+      <p class="small text-danger-emphasis mt-3 mb-0"><i class="bi bi-shield-lock" aria-hidden="true"></i>
+        MarketLens staff never ask for your password, a verification code or a government ID &mdash; not on Discord, not by
+        e-mail. Trust only Discord members with the <strong>MarketLens Admin</strong> role.</p>
+    </div>
+  </div>
+</div>
+
+{% if show_form or status in ('pending',) %}
+<div class="dss-card">
+  {% if status == 'pending' %}
+    <details {{ 'open' if show_form }}>
+      <summary class="fw-semibold">Made a mistake? Send a corrected request</summary>
+      <p class="small text-muted mt-2">This replaces your current request and gives you a new reference code.</p>
+  {% else %}
+      <h6 class="mb-1">Send a new request</h6>
+      <p class="small text-muted">Correct what the reason above points to. You will get a new reference code.</p>
+  {% endif %}
+      <form method="POST" action="{{ url_for('lgu.access_status') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% include "shared/_lgu_request_fields.html" %}
+        <button type="submit" class="btn btn-primary mt-3"><i class="bi bi-send" aria-hidden="true"></i> Send request</button>
+      </form>
+  {% if status == 'pending' %}
+    </details>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  (function () {
+    const copy = document.getElementById('copyRefCode');
+    const code = document.getElementById('lguRefCode');
+    if (copy && code && navigator.clipboard) {
+      copy.addEventListener('click', () => {
+        navigator.clipboard.writeText(code.textContent.trim()).then(() => {
+          copy.innerHTML = '<i class="bi bi-check2"></i> Copied';
+        });
+      });
+    }
+    const office = document.getElementById('ml-lgu-office');
+    const other = document.getElementById('mlLguOtherOffice');
+    if (office && other) {
+      const sync = () => { other.hidden = office.value !== {{ other_office|tojson }}; };
+      office.addEventListener('change', sync);
+      sync();
+    }
+  })();
+</script>
+{% endblock %}

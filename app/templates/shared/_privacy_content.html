@@ -92,6 +92,17 @@
     deleted when the batch is published or rejected; a batch not published within 60 days expires and its totals are
     deleted. Each step is recorded in the audit trail.</p>
 
+  <h3 id="lgu-access">6a. Verifying LGU staff and officials</h3>
+  <p>Before an LGU account gets an LGU role, the System Administrator verifies the person. For this MarketLens asks
+    for the applicant&rsquo;s office, position and the role they need, the name and official e-mail address of their
+    head of office (who must confirm the request from that address), and optionally their Discord username. The head of
+    office&rsquo;s details and the Discord username are stored encrypted and seen only by administrators. The office,
+    position and role stay on the account while it holds LGU access; the verification details are deleted with the
+    audit trail once the request is decided, and a request not verified within 60 days expires and its details are
+    cleared. Verification never asks for a government ID, payslip or password.</p>
+  <p>The MarketLens Discord community is a separate service run by Discord under its own terms and privacy policy.
+    What you post there is not part of MarketLens; do not post personal information there.</p>
+
   <h3>7. Who receives it</h3>
   <ul>
     <li><strong>Within MarketLens:</strong> you see your own plans; LGU officials see city-wide totals; administrators
@@ -109,6 +120,8 @@
     <li>Audit trail entries: {{ kept_audit_days }} days, then deleted automatically.</li>
     <li>LGU uploads: {{ kept_upload_days }} days after upload, then deleted automatically. Staged uploads waiting for
       review or publishing: at most 60 days.</li>
+    <li>LGU access verification details: until the request is decided, then as long as the audit trail; a request not
+      verified within 60 days expires.</li>
     <li>Uploaded files: deleted right after processing.</li>
   </ul>
 

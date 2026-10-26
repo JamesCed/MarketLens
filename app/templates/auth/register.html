@@ -22,7 +22,10 @@
 
   LGU accounts skip step 2 entirely. An LGU official plans for the city
   and has no SmeProfile, so asking them for a capital would be asking
-  for a number that has nowhere to go.
+  for a number that has nowhere to go. They get step 5 ("Your LGU
+  office") instead: choosing "LGU Official" grants nothing by itself --
+  the account waits until the System Admin verifies the person with
+  their head of office (app/services/lgu_access_service.py).
 
   CAPITAL IS REQUIRED for an SME (it is an input to the plan viability
   model -- see app/services/plan_params.py). Like every step-2 field its
@@ -86,6 +89,7 @@
         <ol class="ml-steps-rail" id="mlRail">
           <li data-step="1" class="is-active"><span>1</span> Account type</li>
           <li data-step="2"><span>2</span> Your business</li>
+          <li data-step="5" hidden><span>2</span> Your office</li>
           <li data-step="3"><span>3</span> About you</li>
           <li data-step="4"><span>4</span> Sign-in details</li>
         </ol>
@@ -113,8 +117,8 @@
                      {{ 'checked' if chosen_role == 'lgu' else '' }}>
               <label for="role_lgu">
                 <i class="bi bi-bank"></i>
-                <span class="ml-role-title">LGU Official</span>
-                <span class="ml-role-sub">I am planning for the city</span>
+                <span class="ml-role-title">LGU Staff / Official</span>
+                <span class="ml-role-sub">I work for the city government (verified before access)</span>
               </label>
             </div>
 
@@ -227,6 +231,32 @@
             <div class="mb-3">
               {{ subplan_field('ml', offering_items) }}
             </div>
+
+            <div class="ml-step-actions">
+              <button type="button" class="ml-btn ml-btn-outline-dark" data-go="prev">
+                <i class="bi bi-arrow-left"></i> Back
+              </button>
+              <button type="button" class="ml-btn ml-btn-primary" data-go="next">
+                Continue <i class="bi bi-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+
+          {# ------------------- step 5 (LGU only) --------------------- #}
+          {#
+            Who the LGU applicant is at work, and who will vouch for them.
+            Nothing here grants access: the account is created "waiting for
+            verification" and the System Admin confirms it with the head of
+            office through an official channel. See /lgu-access-guide.
+          #}
+          <div class="ml-step" data-step="5" hidden>
+            <div class="ml-auth-head">
+              <h2>Your LGU office</h2>
+              <p>LGU access opens only after the System Admin verifies you with your head of office.
+                <a href="{{ url_for('auth.lgu_access_guide') }}" target="_blank" rel="noopener">How verification works</a></p>
+            </div>
+
+            {% include "shared/_lgu_request_fields.html" %}
 
             <div class="ml-step-actions">
               <button type="button" class="ml-btn ml-btn-outline-dark" data-go="prev">
@@ -362,6 +392,10 @@
                        value="{{ f.get('email','') }}" autocomplete="email">
               </div>
               <div class="form-text"><i class="bi bi-shield-check"></i> We'll send a 6-digit code here to confirm it's really you.</div>
+              {% if lgu_domains %}
+              <div class="form-text" id="mlLguEmailNote" hidden><i class="bi bi-bank"></i> LGU accounts must use an official
+                address ({% for d in lgu_domains %}@{{ d }}{{ ', ' if not loop.last }}{% endfor %}).</div>
+              {% endif %}
             </div>
 
             <div class="row g-3">
@@ -433,6 +467,8 @@
       <a href="{{ url_for('auth.terms') }}">Terms &amp; Conditions</a>
       <span aria-hidden="true">&middot;</span>
       <a href="{{ url_for('auth.privacy') }}">Privacy Policy</a>
+      <span aria-hidden="true">&middot;</span>
+      <a href="{{ url_for('auth.lgu_access_guide') }}">LGU Access Guide</a>
     </p>
   </footer>
 </div>
@@ -468,13 +504,16 @@
   // put on only the fields that are currently visible and relevant.
   const REQUIRED = {
     2: ["business_name", "industry_type", "location", "capital"],
+    5: ["lgu_office", "lgu_position", "lgu_requested_role", "lgu_endorser_name", "lgu_endorser_email", "lgu_confirm"],
     3: ["first_name", "last_name", "gender", "birthdate", "contact_number", "address_line", "address_barangay"],
     4: ["email", "password", "confirm_password", "accept_terms"],
   };
 
   const isSme = () => form.querySelector('input[name="role"]:checked')?.value === "sme";
-  // LGU accounts have no business plan, so step 2 does not apply to them.
-  const visibleSteps = () => (isSme() ? [1, 2, 3, 4] : [1, 3, 4]);
+  // LGU accounts have no business plan, so step 2 does not apply to them;
+  // they tell us their office and head of office (step 5) instead.
+  const visibleSteps = () => (isSme() ? [1, 2, 3, 4] : [1, 5, 3, 4]);
+  const stepEl = (n) => steps.find(s => Number(s.dataset.step) === n);
 
   let current = 1;
 
@@ -508,9 +547,10 @@
     });
 
     syncRequired();
+    syncOtherOffice();
     // Keep the card in view when the step above was taller than this one.
     form.closest(".ml-auth-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
-    const focusable = steps.find(s => Number(s.dataset.step) === step)
+    const focusable = stepEl(step)
       ?.querySelector("input:not([type=radio]):not([type=hidden]), select");
     if (focusable && step !== 1) focusable.focus({ preventScroll: true });
   }
@@ -525,7 +565,7 @@
     // on the whole form would complain about fields the visitor has not
     // reached yet.
     if (delta > 0) {
-      const fields = [...steps[at].querySelectorAll("input, select, textarea")].filter(el => !el.disabled);
+      const fields = [...stepEl(current).querySelectorAll("input, select, textarea")].filter(el => !el.disabled && !el.closest("[hidden]"));
       for (const el of fields) {
         if (!el.checkValidity()) { el.reportValidity(); return; }
       }
@@ -549,8 +589,22 @@
   function syncRoleNote() {
     roleNote.textContent = isSme()
       ? "Next, tell us about the business you are planning."
-      : "LGU accounts go straight to sign-in details — no business plan needed.";
+      : "LGU accounts are verified before they open: next, tell us your office and who will endorse you.";
+    const lguEmailNote = document.getElementById("mlLguEmailNote");
+    if (lguEmailNote) lguEmailNote.hidden = isSme();
   }
+
+  // "Other office" asks for the office's name.
+  const officeSelect = document.getElementById("ml-lgu-office");
+  const otherOffice = document.getElementById("mlLguOtherOffice");
+  function syncOtherOffice() {
+    if (!officeSelect || !otherOffice) return;
+    const other = officeSelect.value === {{ other_office|tojson }};
+    otherOffice.hidden = !other;
+    const input = otherOffice.querySelector("input");
+    if (input) input.required = other && current === 5;
+  }
+  if (officeSelect) officeSelect.addEventListener("change", syncOtherOffice);
   form.querySelectorAll('input[name="role"]').forEach(r => r.addEventListener("change", () => {
     syncRoleNote();
     // Redraw the rail so step 2 appears or disappears with the choice.

@@ -78,6 +78,11 @@ _USER_COLUMNS = {
     "address_barangay_enc": ("TEXT NULL", "TEXT NULL"),
     "terms_accepted_at": ("DATETIME NULL", "DATETIME NULL"),
     "lgu_role": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
+    "lgu_status": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
+    "lgu_office": ("VARCHAR(120) NULL", "VARCHAR(120) NULL"),
+    "lgu_position": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
+    "lgu_verified_by": ("INTEGER NULL", "INT NULL"),
+    "lgu_verified_at": ("DATETIME NULL", "DATETIME NULL"),
 }
 
 _ADDITIVE_COLUMNS = {

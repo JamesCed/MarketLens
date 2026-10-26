@@ -30,6 +30,24 @@ DEFAULT_SETTINGS = {
         "https://discord.gg/4EBtST2Bk",
         "Invite link to the MarketLens Discord community (opened by the footer's Community Forum link)",
     ),
+    "lgu_email_domains": (
+        "",
+        "Official LGU e-mail domains, comma-separated (e.g. tarlaccity.gov.ph). When set, LGU sign-ups and their "
+        "head-of-office endorsers must use one. Blank = any address (the System Admin checks it by hand).",
+    ),
+    "lgu_verification_email": (
+        "",
+        "Official address where heads of office send LGU access endorsements (the System Admin's office). "
+        "Blank = the support e-mail.",
+    ),
+    "lgu_verification_office": (
+        "City ICT / MIS Office",
+        "The office that verifies LGU staff and runs MarketLens as System Admin (shown in the LGU access guide).",
+    ),
+    "lgu_access_review_days": (
+        "180",
+        "Re-verify every LGU account after this many days (30-730). Admin > LGU Access flags accounts that are due.",
+    ),
     "use_llm_recommendations": (
         "true",
         "true = an LLM writes the recommendation text and explains the forecast (Gemini first for the forecast, "

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
+{% set legal_links_inline = true %}
 {% block title %}Terms and Conditions{% endblock %}
 {% block auth_content %}
+<div class="dss-public-page">
 <div class="container py-5" style="max-width: 860px;">
   <a href="{{ url_for('auth.login') }}" class="d-inline-block mb-4" aria-label="MarketLens home">
     {% with variant='dark', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
@@ -11,6 +13,8 @@
     <a href="{{ url_for('auth.register') }}" class="btn btn-primary">Back to sign-up</a>
     <a href="{{ url_for('auth.privacy') }}" class="btn btn-outline-secondary ms-2">Privacy Policy</a>
   </p>
+</div>
+{% include "shared/_legal_footer.html" %}
 </div>
 {% endblock %}
 {% block content %}

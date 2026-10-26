@@ -173,7 +173,9 @@ def inject_onboarding():
             "userId": current_user.user_id,
             "firstName": (current_user.name or "").split(" ")[0],
             "root": request.script_root or "",
-            "suppressed": False,
+            # An LGU account waiting for verification sees only its access
+            # page, so a tour of pages it cannot open would be no help.
+            "suppressed": current_user.role == "LGU" and not current_user.is_lgu_verified,
             "urls": {
                 "start": url_for("onboarding.start"),
                 "skip": url_for("onboarding.skip"),

@@ -202,7 +202,8 @@ def test_retention_deletes_expired_uploads_and_audit_entries(app, lgu_user):
     with app.app_context():
         counts = apply_retention()
         assert counts == {"lgu_data": 1, "market_data": 1, "subcategory_market_data": 1, "audit_logs": 1,
-                          "upload_batches": 0, "staged_expired": 0}
+                          "upload_batches": 0, "staged_expired": 0,
+                          "lgu_access_requests": 0, "lgu_requests_expired": 0}
         assert MarketData.query.filter_by(source="Google Places API").count() == 1, "only uploaded rows expire"
         assert "removed" in SystemSetting.get("retention_last_run")
         assert AuditLog.query.filter_by(action="retention_purge").count() == 1
@@ -214,7 +215,8 @@ def test_retention_keeps_what_has_not_expired(app, lgu_user):
     _seed_old_upload(app, lgu_user, days_old=100)
     with app.app_context():
         assert apply_retention() == {"lgu_data": 0, "market_data": 0, "subcategory_market_data": 0, "audit_logs": 0,
-                                     "upload_batches": 0, "staged_expired": 0}
+                                     "upload_batches": 0, "staged_expired": 0,
+                                     "lgu_access_requests": 0, "lgu_requests_expired": 0}
 
 
 def test_retention_follows_the_admin_setting(app, lgu_user):

@@ -22,7 +22,7 @@ from app.ml.constants import BUSINESS_TYPES
 from app.ml.seed_data import BARANGAY_NAMES
 from app.models import SystemSetting
 from app.models.user import User
-from tests.account_fixtures import STRONG_PASSWORD, account_fields
+from tests.account_fixtures import LGU_REQUEST, STRONG_PASSWORD, account_fields
 
 GOOD_TOKEN = "XXXX.DUMMY.TOKEN.XXXX"
 
@@ -85,7 +85,7 @@ def test_a_bad_token_is_refused(app):
 
 def test_sign_up_needs_a_token_and_the_terms(app):
     client = app.test_client()
-    data = {"role": "lgu", **account_fields("new@captcha.test")}
+    data = {"role": "lgu", **LGU_REQUEST, **account_fields("new@captcha.test")}
     client.post("/register", data=data)
     assert User.query.filter_by(email="new@captcha.test").first() is None, "no token, no account"
     no_terms = {k: v for k, v in data.items() if k != "accept_terms"}

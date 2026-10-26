@@ -1,0 +1,89 @@
+{#
+  shared/_lgu_request_fields.html
+  ---------------------------------
+  The LGU access request: office, position, the role needed, the head of
+  office who will endorse it, an optional Discord username and the
+  applicant's confirmation. Used by the sign-up form (step 5) and by
+  /lgu/access to send a corrected request. Reads `f` (the submitted
+  form, for redisplay), `offices`, `other_office`, `lgu_roles`,
+  `lgu_domains` and `verification_office`. Validated on the server by
+  lgu_access_service.parse_request_form().
+#}
+<div class="row g-3 mb-3">
+  <div class="col-sm-7">
+    <label class="form-label" for="ml-lgu-office">Office</label>
+    <select id="ml-lgu-office" name="lgu_office" class="form-select">
+      <option value="">Choose your office&hellip;</option>
+      {% for office in offices %}
+        <option value="{{ office }}" {{ 'selected' if f.get('lgu_office') == office else '' }}>{{ office }}</option>
+      {% endfor %}
+      <option value="{{ other_office }}" {{ 'selected' if f.get('lgu_office') == other_office else '' }}>{{ other_office }}</option>
+    </select>
+  </div>
+  <div class="col-sm-5">
+    <label class="form-label" for="ml-lgu-position">Position</label>
+    <input type="text" id="ml-lgu-position" name="lgu_position" class="form-control" maxlength="100"
+           placeholder="e.g. Licensing Officer II" value="{{ f.get('lgu_position','') }}">
+  </div>
+  <div class="col-12" id="mlLguOtherOffice" {{ '' if f.get('lgu_office') == other_office else 'hidden' }}>
+    <label class="form-label" for="ml-lgu-office-other">Name of your office</label>
+    <input type="text" id="ml-lgu-office-other" name="lgu_office_other" class="form-control" maxlength="120"
+           value="{{ f.get('lgu_office_other','') }}">
+  </div>
+</div>
+
+<fieldset class="mb-3">
+  <legend class="form-label fs-6 mb-2">Role you need</legend>
+  {% set chosen_lgu_role = f.get('lgu_requested_role', '') %}
+  <div class="form-check mb-2">
+    <input class="form-check-input" type="radio" name="lgu_requested_role" id="ml-lgu-encoder" value="encoder"
+           {{ 'checked' if chosen_lgu_role == 'encoder' else '' }}>
+    <label class="form-check-label" for="ml-lgu-encoder"><strong>{{ lgu_roles['encoder'] }}</strong>
+      <span class="d-block small text-muted">Uploads zoning figures and permit lists to the staging area.</span></label>
+  </div>
+  <div class="form-check">
+    <input class="form-check-input" type="radio" name="lgu_requested_role" id="ml-lgu-steward" value="steward"
+           {{ 'checked' if chosen_lgu_role == 'steward' else '' }}>
+    <label class="form-check-label" for="ml-lgu-steward"><strong>{{ lgu_roles['steward'] }}</strong>
+      <span class="d-block small text-muted">Reviews and approves what encoders upload (usually a supervisor or the office&rsquo;s data officer).</span></label>
+  </div>
+</fieldset>
+
+<div class="row g-3 mb-3">
+  <div class="col-sm-6">
+    <label class="form-label" for="ml-lgu-endorser">Head of office (who will endorse you)</label>
+    <input type="text" id="ml-lgu-endorser" name="lgu_endorser_name" class="form-control" maxlength="120"
+           value="{{ f.get('lgu_endorser_name','') }}" placeholder="Full name">
+  </div>
+  <div class="col-sm-6">
+    <label class="form-label" for="ml-lgu-endorser-email">Their official e-mail</label>
+    <input type="email" id="ml-lgu-endorser-email" name="lgu_endorser_email" class="form-control" maxlength="150"
+           value="{{ f.get('lgu_endorser_email','') }}"
+           placeholder="{{ 'name@' ~ lgu_domains[0] if lgu_domains else 'name@lgu.gov.ph' }}">
+  </div>
+  <div class="col-12 form-text mt-1">
+    They must e-mail {{ verification_office }} from this address to confirm you.
+    {% if lgu_domains %}Only official addresses ({% for d in lgu_domains %}@{{ d }}{{ ', ' if not loop.last }}{% endfor %}) are accepted.{% endif %}
+  </div>
+</div>
+
+<div class="mb-3">
+  <label class="form-label" for="ml-lgu-discord">Discord username <span class="text-muted fw-normal">(optional)</span></label>
+  <div class="input-group">
+    <span class="input-group-text"><i class="bi bi-discord"></i></span>
+    <input type="text" id="ml-lgu-discord" name="lgu_discord" class="form-control" maxlength="33"
+           autocomplete="off" placeholder="yourname" value="{{ f.get('lgu_discord','') }}">
+  </div>
+  <div class="form-text">So the System Admin can give you the matching role on the MarketLens Discord after you are verified.</div>
+</div>
+
+<div class="form-check mb-2">
+  <input class="form-check-input" type="checkbox" id="ml-lgu-confirm" name="lgu_confirm" value="1"
+         {{ 'checked' if f.get('lgu_confirm') else '' }}>
+  <label class="form-check-label small" for="ml-lgu-confirm">
+    I work in the office named above, and my head of office will endorse this request. I understand that
+    pretending to be LGU staff can be reported under the Cybercrime Prevention Act.
+  </label>
+</div>
+<p class="small text-muted mb-0"><i class="bi bi-shield-lock"></i> Never send your password, a
+  verification code or a government ID on Discord or anywhere else &mdash; MarketLens never asks for them.</p>

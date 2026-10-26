@@ -36,6 +36,7 @@ Three things worth calling out because they shaped this file:
 
 import csv
 import io
+import re
 from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
@@ -284,6 +285,30 @@ def _system_health():
                        f"{used} of {budget or 'unlimited'} lookups used today"))
     except Exception:
         checks.append(("Google Places budget", False, "could not be checked"))
+    try:
+        admins = [u for u in User.query.filter_by(role="Admin", status="active").all()
+                  if not u.is_archived and u.email != SYSTEM_USER_EMAIL]
+        n = len(admins)
+        note = (f"{n} active administrator{'s' if n != 1 else ''}"
+                + (" -- add a backup administrator" if n < 2 else
+                   " -- keep administrator accounts to the few people who run the system" if n > 3 else
+                   " (a primary and a backup)"))
+        checks.append(("Administrators", 2 <= n <= 3, note))
+    except Exception:
+        checks.append(("Administrators", False, "could not be checked"))
+    try:
+        from app.services import lgu_access_service as access
+
+        waiting = access.count_pending()
+        coverage = access.role_coverage()
+        missing = [label for key, label in (("encoder", "an LGU Encoder"), ("steward", "an LGU Data Steward"))
+                   if not coverage[key]]
+        parts = [f"{waiting} request{'s' if waiting != 1 else ''} waiting for verification"]
+        if missing:
+            parts.append("no verified " + " or ".join(missing) + " yet")
+        checks.append(("LGU access", not waiting and not missing, "; ".join(parts)))
+    except Exception:
+        checks.append(("LGU access", False, "could not be checked"))
     return [{"name": n, "ok": ok, "note": note} for n, ok, note in checks]
 
 
@@ -414,6 +439,15 @@ def create_user():
 
     user = User(name=name, email=email, role=role, contact_number=contact_number, lgu_role=lgu_role,
                 first_name=first or None, middle_name=middle or None, last_name=last or None, suffix=suffix or None)
+    if role == "LGU":
+        # An administrator creating the account IS the verification: only
+        # do it for someone already verified through an official channel.
+        user.lgu_status = "verified"
+        user.lgu_role = lgu_role or "encoder"
+        user.lgu_office = " ".join(request.form.get("lgu_office", "").split())[:120] or None
+        user.lgu_position = " ".join(request.form.get("lgu_position", "").split())[:100] or None
+        user.lgu_verified_by = current_user.user_id
+        user.lgu_verified_at = datetime.utcnow()
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
@@ -432,6 +466,9 @@ def set_lgu_role(user_id):
     if user is None or user.role != "LGU" or lgu_role not in User.LGU_ROLES:
         flash("Choose an LGU account and a valid LGU role.", "danger")
         return redirect(url_for("admin.users"))
+    if not user.is_lgu_verified:
+        flash(f"{user.name} is not a verified LGU account yet. Verify the request in LGU Access first.", "warning")
+        return redirect(url_for("admin.lgu_access"))
     before = user.lgu_role_key
     if before != lgu_role:
         user.lgu_role = lgu_role
@@ -440,6 +477,101 @@ def set_lgu_role(user_id):
                    target=user, changes={"lgu_role": [before, lgu_role]})
     flash(f"{user.name} is now an {User.LGU_ROLES[lgu_role]}.", "success")
     return redirect(url_for("admin.users"))
+
+
+@admin_bp.route("/lgu-access")
+@role_required("Admin")
+def lgu_access():
+    """LGU ACCESS: who asked for an LGU role and is waiting to be
+    verified, every verified LGU account (with its periodic re-check),
+    and the latest decisions. See app/services/lgu_access_service.py."""
+    from app.services import lgu_access_service as access
+
+    domains = access.email_domains()
+    pending = []
+    for row in access.pending_requests():
+        pending.append({
+            "row": row,
+            "applicant_domain_ok": access.in_domains(row.user.email, domains) if domains and row.user else None,
+            "endorser_domain_ok": access.in_domains(row.endorser_email, domains) if domains else None,
+        })
+    decisions = access.recent_decisions()
+    staff = access.verified_staff()
+    return render_template(
+        "admin/lgu_access.html",
+        pending=pending,
+        staff=staff,
+        decisions=decisions,
+        deciders=_people_by_id([r.decided_by for r in decisions] + [s["user"].lgu_verified_by for s in staff]),
+        coverage=access.role_coverage(),
+        lgu_roles=User.LGU_ROLES,
+        **access.guide_context(),
+    )
+
+
+@admin_bp.route("/lgu-access/<int:request_id>/approve", methods=["POST"])
+@role_required("Admin")
+def approve_lgu_access(request_id):
+    from app.models import LguAccessRequest
+    from app.services import lgu_access_service as access
+
+    row = db.session.get(LguAccessRequest, request_id)
+    role = request.form.get("granted_role", "")
+    ok, message = access.approve(request_id, current_user, role, request.form.get("note", ""),
+                                 confirmed=bool(request.form.get("verified_offline")))
+    if ok and row is not None:
+        log_action("admin_approve_lgu_access",
+                   details=f"{row.reference_code}: {User.LGU_ROLES.get(role, role)} ({row.office})",
+                   target=row.user, changes={"lgu_role": [None, role], "lgu_status": ["pending", "verified"]})
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin.lgu_access"))
+
+
+@admin_bp.route("/lgu-access/<int:request_id>/reject", methods=["POST"])
+@role_required("Admin")
+def reject_lgu_access(request_id):
+    from app.models import LguAccessRequest
+    from app.services import lgu_access_service as access
+
+    reason = _reason_from_form("decline this request")
+    if reason is None:
+        return redirect(url_for("admin.lgu_access"))
+    row = db.session.get(LguAccessRequest, request_id)
+    ok, message = access.reject(request_id, current_user, reason)
+    if ok and row is not None:
+        log_action("admin_reject_lgu_access", details=row.reference_code, target=row.user, reason=reason)
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin.lgu_access"))
+
+
+@admin_bp.route("/lgu-access/user/<int:user_id>/revoke", methods=["POST"])
+@role_required("Admin")
+def revoke_lgu_access(user_id):
+    from app.services import lgu_access_service as access
+
+    reason = _reason_from_form("remove this LGU access")
+    if reason is None:
+        return redirect(url_for("admin.lgu_access"))
+    user = db.session.get(User, user_id)
+    before = user.lgu_role_key if user else None
+    ok, message = access.revoke(user_id, current_user, reason)
+    if ok:
+        log_action("admin_revoke_lgu_access", details=f"{user.email}: {User.LGU_ROLES.get(before, before)}",
+                   target=user, reason=reason, changes={"lgu_status": ["verified", "revoked"]})
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin.lgu_access"))
+
+
+@admin_bp.route("/lgu-access/user/<int:user_id>/reverify", methods=["POST"])
+@role_required("Admin")
+def reverify_lgu_access(user_id):
+    from app.services import lgu_access_service as access
+
+    ok, message = access.reverify(user_id, current_user)
+    if ok:
+        log_action("admin_reverify_lgu_access", details=message[:500], target=db.session.get(User, user_id))
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin.lgu_access"))
 
 
 @admin_bp.route("/publish-data")
@@ -1116,6 +1248,8 @@ def settings():
 
         from app.controllers.community_controller import SETTING_KEY, is_valid_invite
 
+        rejected += _save_lgu_access_settings(request.form)
+
         invite = (request.form.get("community_invite_url") or "").strip()
         invite_rejected = bool(invite) and not is_valid_invite(invite)
         if invite and not invite_rejected:
@@ -1143,6 +1277,41 @@ def settings():
     SystemSetting.ensure_defaults()
     all_settings = {row.setting_key: row for row in SystemSetting.query.all()}
     return render_template("admin/settings.html", settings=all_settings, cluster_thresholds=CLUSTER_THRESHOLDS)
+
+
+def _save_lgu_access_settings(form):
+    """System Settings > LGU access verification. Returns warnings for
+    values that were refused (the rest is saved)."""
+    from app.services.lgu_access_service import REVIEW_DAYS_RANGE, parse_domains
+
+    warnings = []
+    if "lgu_email_domains" in form:
+        domains, invalid = parse_domains(form.get("lgu_email_domains"))
+        if invalid:
+            warnings.append("Not saved: " + ", ".join(invalid) + " is not a valid e-mail domain (e.g. tarlaccity.gov.ph).")
+        else:
+            SystemSetting.set("lgu_email_domains", ", ".join(domains)[:255])
+    if "lgu_verification_email" in form:
+        address = (form.get("lgu_verification_email") or "").strip().lower()
+        if address and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", address):
+            warnings.append("Not saved: the endorsement e-mail address is not a valid address.")
+        else:
+            SystemSetting.set("lgu_verification_email", address[:255])
+    if "lgu_verification_office" in form:
+        office = " ".join((form.get("lgu_verification_office") or "").split())[:120]
+        if office:
+            SystemSetting.set("lgu_verification_office", office)
+    if form.get("lgu_access_review_days"):
+        try:
+            days = int(form.get("lgu_access_review_days"))
+        except ValueError:
+            days = -1
+        low, high = REVIEW_DAYS_RANGE
+        if low <= days <= high:
+            SystemSetting.set("lgu_access_review_days", str(days))
+        else:
+            warnings.append(f"Not saved: the LGU re-verification period must be {low}-{high} days.")
+    return warnings
 
 
 @admin_bp.route("/llm-status", methods=["GET"])

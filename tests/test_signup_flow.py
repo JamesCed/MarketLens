@@ -16,7 +16,7 @@ and creates it with the account. Three things need pinning down:
 
 import pytest
 
-from tests.account_fixtures import PERSONAL, STRONG_PASSWORD, account_fields
+from tests.account_fixtures import LGU_REQUEST, PERSONAL, STRONG_PASSWORD, account_fields
 
 from app import create_app
 from app.extensions import db
@@ -209,7 +209,7 @@ def test_an_existing_business_gets_a_registration_date(app, client):
 def test_lgu_signup_needs_no_business_fields(app, client):
     response = client.post(
         "/register",
-        data={"role": "lgu", **account_fields("maria@lgu.gov.ph", first_name="Maria", last_name="Santos")},
+        data={"role": "lgu", **LGU_REQUEST, **account_fields("maria@lgu.gov.ph", first_name="Maria", last_name="Santos")},
         follow_redirects=True,
     )
     assert response.status_code == 200
@@ -262,7 +262,7 @@ def test_the_legacy_capital_field_name_still_signs_up(app, client):
 
 def test_an_lgu_signup_needs_no_capital(app, client):
     client.post("/register", data={
-        "role": "lgu", **account_fields("ana@lgu.gov.ph", first_name="Ana", last_name="Reyes"),
+        "role": "lgu", **LGU_REQUEST, **account_fields("ana@lgu.gov.ph", first_name="Ana", last_name="Reyes"),
     }, follow_redirects=True)
     with app.app_context():
         assert User.query.filter_by(email="ana@lgu.gov.ph").count() == 1

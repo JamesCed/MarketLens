@@ -91,7 +91,9 @@
               </td>
               <td>
                 {{ role_badge(u.role) }}
-                {% if u.role == 'LGU' %}
+                {% if u.role == 'LGU' and not u.is_lgu_verified %}
+                  <div class="mt-1"><a class="badge text-bg-warning text-decoration-none" href="{{ url_for('admin.lgu_access') }}">{{ u.lgu_status_label }}</a></div>
+                {% elif u.role == 'LGU' %}
                   {# The LGU sub-role decides who uploads and who reviews (Gov't Data Upload workflow). #}
                   <form method="POST" action="{{ url_for('admin.set_lgu_role', user_id=u.user_id) }}" class="mt-1">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -253,7 +255,15 @@
               <option value="LGU_STEWARD">LGU Data Steward (reviews and approves uploads)</option>
               <option value="Admin">System Administrator (publishes approved data)</option>
             </select>
-            <div class="form-text">A Data Steward never reviews their own upload, and only an administrator publishes.</div>
+            <div class="form-text">A Data Steward never reviews their own upload, and only an administrator publishes.
+              Creating an LGU account here counts as verifying the person: do it only after their head of office has
+              confirmed them through an official channel. Otherwise let them sign up and verify them in LGU Access.</div>
+          </div>
+          <div class="row g-2 mb-1">
+            <div class="col-sm-7"><label class="form-label" for="cu-lgu-office">LGU office <span class="text-muted">(LGU accounts)</span></label>
+              <input id="cu-lgu-office" class="form-control" name="lgu_office" maxlength="120" placeholder="e.g. BPLO"></div>
+            <div class="col-sm-5"><label class="form-label" for="cu-lgu-position">Position</label>
+              <input id="cu-lgu-position" class="form-control" name="lgu_position" maxlength="100"></div>
           </div>
         </div>
         <div class="modal-footer">

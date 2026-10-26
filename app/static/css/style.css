@@ -2506,3 +2506,20 @@ select.form-select[size="1"] { overflow: hidden; text-overflow: ellipsis; }
 .dss-wide-table { min-width: 44rem; }
 .dss-wide-table th, .dss-wide-table td { word-break: normal; overflow-wrap: normal; }
 .dss-wide-table th { white-space: nowrap; }
+
+/* LGU access request (lgu/access_status.html, auth/lgu_access_guide.html) */
+.dss-ref-code { font: 700 1.6rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .08em; }
+.dss-next-steps { padding-left: 1.2rem; }
+.dss-next-steps li { margin-bottom: .55rem; }
+.dss-discord-box { border: 1px solid rgba(88,101,242,.35); background: rgba(88,101,242,.07); border-radius: .6rem; padding: .75rem .9rem; }
+.dss-guide h3 { font-size: 1.05rem; margin-top: 1.5rem; }
+.dss-guide .dss-guide-step { display: flex; gap: .8rem; margin-bottom: 1rem; }
+.dss-guide .dss-guide-num { flex: 0 0 2rem; height: 2rem; border-radius: 50%; background: var(--dss-blue); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
+.dss-guide pre { white-space: pre-wrap; background: rgba(100,116,139,.1); border-radius: .5rem; padding: .75rem; font-size: .85rem; }
+
+/* Public reading pages (Terms, Privacy, LGU Access Guide) when signed
+   out: body.dss-body is a flex row, so the page claims the full row and
+   carries its own footer underneath instead of beside it. */
+.dss-public-page { flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; }
+.dss-public-page > .container { flex: 1 0 auto; }

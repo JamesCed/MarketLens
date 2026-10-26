@@ -70,6 +70,15 @@ class User(ArchivableMixin, UserMixin, db.Model):
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.Enum("Admin", "SME", "LGU", name="user_role"), nullable=False)
     lgu_role = db.Column(db.String(20), nullable=True)
+    # LGU access verification (app/services/lgu_access_service.py). A
+    # self-registered LGU account starts "pending" and has no LGU access
+    # until the System Admin verifies it; blank = verified (accounts made
+    # by an administrator, and every LGU account from before this check).
+    lgu_status = db.Column(db.String(20), nullable=True)
+    lgu_office = db.Column(db.String(120), nullable=True)
+    lgu_position = db.Column(db.String(100), nullable=True)
+    lgu_verified_by = db.Column(db.Integer, nullable=True)
+    lgu_verified_at = db.Column(db.DateTime, nullable=True)
 
     first_name = db.Column(db.String(60), nullable=True)
     middle_name = db.Column(db.String(60), nullable=True)
@@ -237,12 +246,37 @@ class User(ArchivableMixin, UserMixin, db.Model):
         return self.role == "LGU"
 
     LGU_ROLES = {"encoder": "LGU Encoder", "steward": "LGU Data Steward"}
+    LGU_STATUS_LABELS = {
+        "pending": "Waiting for verification",
+        "verified": "Verified",
+        "rejected": "Not approved",
+        "revoked": "Access removed",
+    }
+
+    @property
+    def is_lgu_verified(self):
+        """An LGU account the System Admin has verified (or one created
+        by an administrator / before verification existed). Only these
+        get any LGU page or LGU role."""
+        return self.role == "LGU" and (self.lgu_status or "verified") == "verified"
+
+    @property
+    def lgu_status_key(self):
+        if self.role != "LGU":
+            return None
+        return self.lgu_status or "verified"
+
+    @property
+    def lgu_status_label(self):
+        key = self.lgu_status_key
+        return self.LGU_STATUS_LABELS.get(key, key) if key else None
 
     @property
     def lgu_role_key(self):
-        """'encoder' or 'steward' for an LGU account (a blank value counts
-        as encoder), None for any other role. See staging_service."""
-        if self.role != "LGU":
+        """'encoder' or 'steward' for a VERIFIED LGU account (a blank
+        value counts as encoder), None for anyone else -- an unverified
+        LGU account has no LGU role at all. See staging_service."""
+        if not self.is_lgu_verified:
             return None
         return self.lgu_role if self.lgu_role in self.LGU_ROLES else "encoder"
 

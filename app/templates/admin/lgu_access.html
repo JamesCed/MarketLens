@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}LGU Access{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{#
+  admin/lgu_access.html
+  -----------------------
+  The System Admin verifies LGU staff here before they get an LGU role
+  (app/services/lgu_access_service.py; checklist in
+  docs/LGU_ACCESS_AND_DISCORD.md section 5):
+
+    * pending requests -- approve with a role, after ticking that the
+      endorsement was checked through an official channel, or decline
+      with a reason;
+    * verified LGU staff -- the periodic re-check ("Review due") and
+      removing access when someone moves office or leaves;
+    * the latest decisions.
+#}
+
+{% macro _domain_badge(ok) -%}
+  {% if ok %}<span class="badge text-bg-success ms-1" title="Official LGU domain"><i class="bi bi-check2"></i> official</span>
+  {% else %}<span class="badge text-bg-danger ms-1" title="Not an official LGU domain"><i class="bi bi-x"></i> not official</span>{% endif %}
+{%- endmacro %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-person-badge"></i> LGU Access</h4>
+    <p class="text-muted small mb-0">Verify LGU staff and officials before they get an LGU role.</p>
+  </div>
+  <a class="btn btn-outline-primary btn-sm" href="{{ url_for('auth.lgu_access_guide') }}" target="_blank" rel="noopener">
+    <i class="bi bi-book" aria-hidden="true"></i> Applicant guide
+  </a>
+</div>
+
+<div class="dss-admin-note mb-4">
+  <i class="bi bi-shield-check"></i>
+  Approve only after the applicant&rsquo;s <strong>head of office</strong> has confirmed the request from an official
+  e-mail address <em>and</em> you have called the office on its number in the LGU directory. A Discord role or a message
+  in chat is never proof.
+  <div class="dss-meta mt-1">
+    Official domains: {% if lgu_domains %}{% for d in lgu_domains %}<code>@{{ d }}</code>{{ ', ' if not loop.last }}{% endfor %}{% else %}<strong>not set</strong> (check addresses by hand){% endif %}
+    &middot; Endorsements go to {{ verification_email or 'the support e-mail' }}
+    &middot; Re-verify every {{ review_days }} days &middot; <a href="{{ url_for('admin.settings') }}#lgu-access-settings">Change</a>
+  </div>
+  <div class="dss-meta mt-1">
+    Verified now: {{ coverage.encoder }} LGU Encoder{{ 's' if coverage.encoder != 1 }}, {{ coverage.steward }} LGU Data
+    Steward{{ 's' if coverage.steward != 1 }}.
+    {% if not coverage.encoder or not coverage.steward %}<span class="text-warning-emphasis"><i class="bi bi-exclamation-triangle"></i>
+      The upload workflow needs at least one of each, held by different people.</span>{% endif %}
+  </div>
+</div>
+
+{# ------------------------------------------------------------ pending #}
+<div class="dss-card mb-4">
+  <h6 class="mb-3">
+    Waiting for verification
+    <span class="badge rounded-pill text-bg-{{ 'warning' if pending else 'secondary' }} ms-1">{{ pending|length }}</span>
+  </h6>
+  {% for item in pending %}
+    {% set r = item.row %}
+    <div class="border rounded-3 p-3 mb-3 dss-lgu-request">
+      <div class="row g-3">
+        <div class="col-lg-7">
+          <div class="d-flex flex-wrap align-items-baseline gap-2 mb-1">
+            <code class="fs-6 fw-bold">{{ r.reference_code }}</code>
+            <span class="dss-meta">sent {{ r.created_at|pht }}</span>
+          </div>
+          <div class="fw-semibold">{{ r.user.name if r.user else '—' }}
+            <span class="badge text-bg-light border ms-1">asks for {{ r.requested_role_label }}</span></div>
+          <div class="small">{{ r.position }}, {{ r.office }}</div>
+          <dl class="row small mt-2 mb-0">
+            <dt class="col-sm-4">Applicant e-mail</dt>
+            <dd class="col-sm-8 text-break">{{ r.user.email if r.user else '—' }}
+              {% if item.applicant_domain_ok is not none %}{{ _domain_badge(item.applicant_domain_ok) }}{% endif %}</dd>
+            <dt class="col-sm-4">Head of office</dt>
+            <dd class="col-sm-8 text-break">{{ r.endorser_name or '—' }} &middot; {{ r.endorser_email or '—' }}
+              {% if item.endorser_domain_ok is not none %}{{ _domain_badge(item.endorser_domain_ok) }}{% endif %}</dd>
+            <dt class="col-sm-4">Discord</dt>
+            <dd class="col-sm-8">{{ ('@' ~ r.discord_username) if r.discord_username else 'not given' }}</dd>
+          </dl>
+        </div>
+        <div class="col-lg-5">
+          <form method="POST" action="{{ url_for('admin.approve_lgu_access', request_id=r.id) }}" class="dss-approve-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="form-label small mb-1" for="role-{{ r.id }}">Give the role</label>
+            <select id="role-{{ r.id }}" name="granted_role" class="form-select form-select-sm mb-2">
+              {% for key, label in lgu_roles.items() %}
+                <option value="{{ key }}" {{ 'selected' if key == r.requested_role }}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <input type="text" name="note" class="form-control form-control-sm mb-2" maxlength="255"
+                   placeholder="Note (optional), e.g. confirmed by phone with the BPLO head">
+            <div class="form-check small mb-2">
+              <input class="form-check-input" type="checkbox" name="verified_offline" value="1" id="ok-{{ r.id }}" required>
+              <label class="form-check-label" for="ok-{{ r.id }}">I verified the endorsement through an official channel
+                (official e-mail and a call to the office).</label>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+              <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-patch-check" aria-hidden="true"></i> Approve</button>
+              <button type="button" class="btn btn-sm btn-outline-danger"
+                      data-bs-toggle="modal" data-bs-target="#reasonModal"
+                      data-action="{{ url_for('admin.reject_lgu_access', request_id=r.id) }}"
+                      data-subject="{{ r.reference_code }}: {{ r.user.name if r.user else '' }}"
+                      data-title="Decline LGU access request" data-verb="Decline" data-tone="danger"
+                      data-note="The applicant sees your reason and can send a corrected request.">
+                <i class="bi bi-x-circle" aria-hidden="true"></i> Decline
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  {% else %}
+    <p class="text-center text-muted py-3 mb-0"><i class="bi bi-check2-circle display-6 d-block mb-2" aria-hidden="true"></i>
+      No requests are waiting.</p>
+  {% endfor %}
+</div>
+
+{# ------------------------------------------------------------ verified #}
+<div class="dss-card mb-4">
+  <h6 class="mb-1">Verified LGU staff</h6>
+  <p class="dss-meta mb-3">Ask each head of office to confirm their people every {{ review_days }} days, then press
+    Re-verify. Remove access the day someone moves office or leaves, and remove their Discord role too.</p>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle dss-admin-table dss-wide-table">
+      <thead><tr><th>Account</th><th>Office</th><th>Role</th><th>Last verified</th><th></th></tr></thead>
+      <tbody>
+        {% for s in staff %}
+        {% set u = s.user %}
+        {% set by = deciders.get(u.lgu_verified_by) %}
+        <tr>
+          <td>{{ u.name }}<div class="dss-meta text-break">{{ u.email|mask_email }}</div></td>
+          <td class="small">{{ u.lgu_position or '—' }}<div class="dss-meta">{{ u.lgu_office or 'office not recorded' }}</div></td>
+          <td><span class="badge text-bg-success">{{ u.lgu_role_label }}</span></td>
+          <td class="small text-nowrap">
+            {% if u.lgu_verified_at %}{{ u.lgu_verified_at|pht('%b %d, %Y') }}<div class="dss-meta">{{ ('by ' ~ by.name) if by else '' }}</div>
+            {% else %}<span class="dss-meta">before verification was recorded</span>{% endif %}
+            {% if s.review_due %}<div><span class="badge text-bg-warning">Review due</span></div>{% endif %}
+          </td>
+          <td class="text-end text-nowrap">
+            <form method="POST" action="{{ url_for('admin.reverify_lgu_access', user_id=u.user_id) }}" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-primary" title="Record that the head of office confirmed this person again">
+                <i class="bi bi-arrow-repeat" aria-hidden="true"></i> Re-verify
+              </button>
+            </form>
+            <button type="button" class="btn btn-sm btn-outline-danger"
+                    data-bs-toggle="modal" data-bs-target="#reasonModal"
+                    data-action="{{ url_for('admin.revoke_lgu_access', user_id=u.user_id) }}"
+                    data-subject="{{ u.name }} ({{ u.lgu_role_label }})"
+                    data-title="Remove LGU access" data-verb="Remove access" data-tone="danger"
+                    data-note="They keep their account but lose every LGU page and role. Remove their Discord role too.">
+              <i class="bi bi-person-x" aria-hidden="true"></i> Remove access
+            </button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-3">No verified LGU accounts yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ----------------------------------------------------------- decisions #}
+<div class="dss-card">
+  <h6 class="mb-3">Recent decisions</h6>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle dss-admin-table dss-wide-table">
+      <thead><tr><th>Code</th><th>Applicant</th><th>Decision</th><th>By</th><th>Note</th></tr></thead>
+      <tbody>
+        {% for r in decisions %}
+        {% set by = deciders.get(r.decided_by) %}
+        <tr>
+          <td><code>{{ r.reference_code }}</code></td>
+          <td>{{ r.user.name if r.user else '—' }}<div class="dss-meta">{{ r.office }}</div></td>
+          <td>
+            <span class="badge {{ 'text-bg-success' if r.status == 'approved' else 'text-bg-danger' }}">{{ r.status_label }}</span>
+            {% if r.granted_role %}<div class="dss-meta">{{ lgu_roles.get(r.granted_role, r.granted_role) }}</div>{% endif %}
+          </td>
+          <td>{{ by.name if by else '—' }}<div class="dss-meta text-nowrap">{{ r.decided_at|pht }}</div></td>
+          <td class="small text-break">{{ r.decision_note or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-3">No decisions yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include "admin/_reason_modal.html" %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+{% endblock %}

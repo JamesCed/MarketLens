@@ -127,6 +127,25 @@ def _create_user_from_pending(pending):
     db.session.commit()
     log_action("register", details=f"New {pending['role']} account: {pending['email']}", user_id=user.user_id)
 
+    # LGU sign-ups get NO LGU access yet: the account waits for the System
+    # Admin to verify the person (app/services/lgu_access_service.py).
+    if pending["role"] == "LGU":
+        from app.services import lgu_access_service
+
+        lgu = pending.get("lgu") or {}
+        if lgu.get("endorser_email"):
+            lgu = dict(lgu, endorser_email=decrypt_value(lgu["endorser_email"]),
+                       endorser_name=decrypt_value(lgu["endorser_name"]),
+                       discord_username=decrypt_value(lgu["discord_username"]) if lgu.get("discord_username") else None)
+            row = lgu_access_service.open_request(user, lgu)
+            user.lgu_reference_code = row.reference_code
+            log_action("lgu_access_requested", details=f"{row.reference_code}: {lgu['position']}, {lgu['office']} "
+                                                       f"({row.requested_role_label})", user_id=user.user_id,
+                       target=user)
+        else:
+            user.lgu_status = "pending"
+            db.session.commit()
+
     business = pending.get("business")
     if business and not SmeProfile.query.filter_by(user_id=user.user_id).first():
         from app.services.plan_params import apply_plan_data
@@ -142,6 +161,20 @@ def _create_user_from_pending(pending):
         )
 
     return user
+
+
+def _created_message(pending, user, verified_email):
+    """What the sign-in page says once the account exists."""
+    start = "Email verified -- " if verified_email else ""
+    if pending.get("business"):
+        return (f"{start}your account and your first business plan are ready. Log in to see its forecast."
+                if verified_email else "Account created with your first business plan. Log in to see its forecast.")
+    code = getattr(user, "lgu_reference_code", None)
+    if pending.get("role") == "LGU" and code:
+        return (f"{start}your account was created. Your LGU access request {code} is waiting for verification by "
+                f"the System Admin -- sign in to see what to do next.")
+    return f"{start}your account has been created. You can now log in." if verified_email else \
+        "Account created. You can now log in."
 
 
 def _register_form_context(form=None):
@@ -176,7 +209,22 @@ def _register_form_context(form=None):
         "latest_birthdate": latest_birthdate.isoformat(),
         "password_rules": [label for _key, label, _test in PASSWORD_RULES],
         "password_hint": PASSWORD_HINT,
+        "lgu_roles": User.LGU_ROLES,
+        **_lgu_guide_context(),
     }
+
+
+def _lgu_guide_context():
+    from app.services.lgu_access_service import guide_context
+
+    try:
+        return guide_context()
+    except Exception:
+        from app.services.lgu_access_service import DEFAULT_OFFICE, OFFICES, OTHER_OFFICE
+
+        return {"verification_office": DEFAULT_OFFICE, "verification_email": current_app.config.get("SUPPORT_EMAIL", ""),
+                "lgu_domains": [], "review_days": 180, "discord_url": "", "offices": OFFICES,
+                "other_office": OTHER_OFFICE}
 
 
 def _home_url():
@@ -188,7 +236,7 @@ def _home_url():
     if current_user.is_sme():
         return url_for("sme.home")
     if current_user.is_lgu():
-        return url_for("lgu.dashboard")
+        return url_for("lgu.dashboard") if current_user.is_lgu_verified else url_for("lgu.access_status")
     return url_for("admin.dashboard")
 
 
@@ -246,6 +294,18 @@ def register():
             business, business_errors = _collect_business_params(request.form)
             errors.extend(business_errors)
 
+        lgu = None
+        if role == "LGU":
+            from app.services.lgu_access_service import parse_request_form
+
+            lgu, lgu_errors = parse_request_form(request.form, email)
+            errors.extend(lgu_errors)
+            # The endorser's details wait in the session encrypted, like
+            # the applicant's own personal details.
+            lgu = dict(lgu, endorser_name=encrypt_value(lgu["endorser_name"]),
+                       endorser_email=encrypt_value(lgu["endorser_email"]),
+                       discord_username=encrypt_value(lgu["discord_username"]) if lgu["discord_username"] else None)
+
         if errors:
             for e in errors:
                 flash(e, "danger")
@@ -259,6 +319,7 @@ def register():
             "personal": encrypt_value(json.dumps(personal)),
             "terms_accepted_at": datetime.utcnow().isoformat(),
             "business": business,
+            "lgu": lgu,
         }
 
         if email_service.is_configured():
@@ -292,13 +353,8 @@ def register():
 
             flash("Couldn't send a verification email right now, so your account was created directly.", "warning")
 
-        _create_user_from_pending(pending)
-        flash(
-            "Account created with your first business plan. Log in to see its forecast."
-            if pending.get("business")
-            else "Account created. You can now log in.",
-            "success",
-        )
+        user = _create_user_from_pending(pending)
+        flash(_created_message(pending, user, verified_email=False), "success")
         return redirect(url_for("auth.login"))
 
     return render_template("auth/register.html", **_register_form_context())
@@ -317,6 +373,14 @@ def privacy():
     """The Privacy Policy (Data Privacy Act of 2012, RA 10173) -- public
     for the same reason as the terms."""
     return render_template("auth/privacy.html")
+
+
+@auth_bp.route("/lgu-access-guide")
+def lgu_access_guide():
+    """How LGU staff and officials get an LGU role, safely -- public, so
+    it can be read (and linked from the Discord community) before an
+    account exists. See app/services/lgu_access_service.py."""
+    return render_template("auth/lgu_access_guide.html", lgu_roles=User.LGU_ROLES, **_lgu_guide_context())
 
 
 @auth_bp.route("/register/verify", methods=["GET", "POST"])
@@ -365,14 +429,9 @@ def verify_email():
             flash("An account with that email already exists. Please log in.", "danger")
             return redirect(url_for("auth.login"))
 
-        _create_user_from_pending(pending)
+        user = _create_user_from_pending(pending)
         session.pop(PENDING_SESSION_KEY, None)
-        flash(
-            "Email verified -- your account and your first business plan are ready. Log in to see its forecast."
-            if pending.get("business")
-            else "Email verified -- your account has been created. You can now log in.",
-            "success",
-        )
+        flash(_created_message(pending, user, verified_email=True), "success")
         return redirect(url_for("auth.login"))
 
     return render_template("auth/verify_email.html", email=pending["email"])

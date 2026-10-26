@@ -18,7 +18,7 @@
       paper describes.
     #}
     <a class="dss-sidebar-brand-link"
-       href="{{ url_for('sme.home') if current_user.is_sme() else url_for('lgu.dashboard') if current_user.is_lgu() else url_for('admin.dashboard') }}">
+       href="{{ url_for('sme.home') if current_user.is_sme() else (url_for('lgu.dashboard') if current_user.is_lgu_verified else url_for('lgu.access_status')) if current_user.is_lgu() else url_for('admin.dashboard') }}">
       {% with variant='auto', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
       <span class="dss-sidebar-sub">SME Market Entry<br>Decision Support System</span>
     </a>
@@ -38,7 +38,15 @@
 
     {# LGU only. An Admin account runs the SYSTEM (its own section
        below) -- it does not plan the city or upload the city's records. #}
-    {% if current_user.is_lgu() %}
+    {# An LGU account waiting for verification (or whose access was
+       removed) has one LGU page: its access request. #}
+    {% if current_user.is_lgu() and not current_user.is_lgu_verified %}
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.access_status' }}" href="{{ url_for('lgu.access_status') }}">
+        <i class="bi bi-person-badge"></i> LGU Access Request
+        <span class="badge rounded-pill text-bg-warning dss-nav-count">{{ {'pending': 'Pending', 'rejected': 'Action needed', 'revoked': 'Removed'}.get(current_user.lgu_status_key, '') }}</span>
+      </a>
+    {% endif %}
+    {% if current_user.is_lgu() and current_user.is_lgu_verified %}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.dashboard' }}" href="{{ url_for('lgu.dashboard') }}" data-tour="nav-lgu-dashboard">
         <i class="bi bi-speedometer2"></i> LGU Dashboard
       </a>
@@ -64,7 +72,7 @@
     {# Community is not a page in the menu: it is the project's Discord
        server, opened from the "Community Forum" link in the footer. #}
 
-    {% if current_user.is_lgu() %}
+    {% if current_user.is_lgu() and current_user.is_lgu_verified %}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.government_upload' }}" href="{{ url_for('lgu.government_upload') }}" data-tour="nav-data-upload">
         <i class="bi bi-database-add"></i> Gov't Data Upload
       </a>
@@ -85,6 +93,12 @@
       </a>
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.users' }}" href="{{ url_for('admin.users') }}" data-tour="nav-users">
         <i class="bi bi-people"></i> Manage Users
+      </a>
+      {# Verifying LGU staff before they get an LGU role (lgu_access_service). #}
+      {% set waiting_lgu = lgu_access_waiting() %}
+      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.lgu_access' }}" href="{{ url_for('admin.lgu_access') }}">
+        <i class="bi bi-person-badge"></i> LGU Access
+        {% if waiting_lgu %}<span class="badge rounded-pill text-bg-warning dss-nav-count" title="LGU access requests waiting for verification">{{ waiting_lgu }}</span>{% endif %}
       </a>
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.audit_log' }}" href="{{ url_for('admin.audit_log') }}" data-tour="nav-audit">
         <i class="bi bi-journal-text"></i> Audit Trail

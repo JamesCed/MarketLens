@@ -158,6 +158,12 @@ def decrypt_value(stored):
 ENCRYPTED_USER_COLUMNS = ("contact_number_enc", "gender_enc", "birthdate_enc",
                           "address_line_enc", "address_barangay_enc")
 
+# Every table with EncryptedText columns: (primary key, encrypted columns).
+ENCRYPTED_TABLES = {
+    "user": ("user_id", ENCRYPTED_USER_COLUMNS),
+    "lgu_access_requests": ("id", ("endorser_name", "endorser_email", "discord_username")),
+}
+
 
 def rotate_encrypted_values():
     """Re-encrypt every stored personal detail under the newest key.
@@ -172,22 +178,40 @@ def rotate_encrypted_values():
     result = {"rotated": 0, "unreadable": 0}
     if len(materials) < 2:
         return result
-    from cryptography.fernet import InvalidToken
     from sqlalchemy import inspect as sa_inspect
-    from sqlalchemy import text
 
     from app.extensions import db
 
-    available = {column["name"] for column in sa_inspect(db.engine).get_columns("user")}
-    columns = [column for column in ENCRYPTED_USER_COLUMNS if column in available]
-    if not columns:
-        return result
+    # Inspect every table BEFORE writing anything: on a single-connection
+    # pool (SQLite in memory) an inspection between the UPDATEs would end
+    # the session's open transaction and lose them.
+    inspector = sa_inspect(db.engine)
+    tables = set(inspector.get_table_names())
+    plan = []
+    for table_name, (key, wanted) in ENCRYPTED_TABLES.items():
+        if table_name not in tables:
+            continue
+        available = {column["name"] for column in inspector.get_columns(table_name)}
+        columns = [column for column in wanted if column in available]
+        if columns:
+            plan.append((table_name, key, columns))
     multi = _fernet()
     newest = _single_fernet(materials[0])
-    quoted = ", ".join(db.engine.dialect.identifier_preparer.quote(c) for c in columns)
-    table = db.engine.dialect.identifier_preparer.quote("user")
-    rows = db.session.execute(text(f"SELECT user_id, {quoted} FROM {table}")).all()
-    for user_id, *values in rows:
+    for table_name, key, columns in plan:
+        _rotate_table(db, table_name, key, columns, multi, newest, result)
+    db.session.commit()
+    return result
+
+
+def _rotate_table(db, table_name, key, columns, multi, newest, result):
+    from cryptography.fernet import InvalidToken
+    from sqlalchemy import text
+
+    quote = db.engine.dialect.identifier_preparer.quote
+    quoted = ", ".join(quote(c) for c in columns)
+    table = quote(table_name)
+    rows = db.session.execute(text(f"SELECT {quote(key)}, {quoted} FROM {table}")).all()
+    for row_id, *values in rows:
         changes = {}
         for column, stored in zip(columns, values):
             if not stored or not str(stored).startswith(_PREFIX):
@@ -203,12 +227,10 @@ def rotate_encrypted_values():
             except InvalidToken:
                 result["unreadable"] += 1
         if changes:
-            assignments = ", ".join(f"{db.engine.dialect.identifier_preparer.quote(c)} = :{c}" for c in changes)
-            db.session.execute(text(f"UPDATE {table} SET {assignments} WHERE user_id = :user_id"),
-                               {**changes, "user_id": user_id})
+            assignments = ", ".join(f"{quote(c)} = :{c}" for c in changes)
+            db.session.execute(text(f"UPDATE {table} SET {assignments} WHERE {quote(key)} = :row_id"),
+                               {**changes, "row_id": row_id})
             result["rotated"] += len(changes)
-    db.session.commit()
-    return result
 
 
 class EncryptedText(TypeDecorator):

@@ -45,6 +45,19 @@ from app.services.data_import_service import (
 
 lgu_bp = Blueprint("lgu", __name__)
 
+# An LGU account the System Admin has not verified yet (or whose access
+# was removed) reaches only its access-request page -- no dashboard, no
+# uploads, no review. See app/services/lgu_access_service.py.
+_OPEN_TO_UNVERIFIED = {"lgu.access_status"}
+
+
+@lgu_bp.before_request
+def _verified_lgu_only():
+    if (current_user.is_authenticated and current_user.role == "LGU"
+            and not current_user.is_lgu_verified and request.endpoint not in _OPEN_TO_UNVERIFIED):
+        return redirect(url_for("lgu.access_status"))
+    return None
+
 LGU_SOURCES = ["DTI", "CLUP", "Other"]
 MARKET_SOURCES = ["PSA", "DTI", "Manual"]
 
@@ -464,3 +477,39 @@ def upload_status(job_id):
     if job is None:
         return jsonify({"state": "unknown"}), 404
     return jsonify(job.as_dict())
+
+
+@lgu_bp.route("/lgu/access", methods=["GET", "POST"])
+@role_required("LGU")
+def access_status():
+    """Where an LGU account stands: waiting for verification (with its
+    reference code and what happens next), not approved / removed (with
+    the reason and a form to send a corrected request), or verified."""
+    from app.services import lgu_access_service as access
+    from app.utils.rate_limit import hit, wait_text
+
+    if request.method == "POST":
+        if current_user.is_lgu_verified:
+            flash("Your LGU access is already verified.", "info")
+            return redirect(url_for("lgu.access_status"))
+        allowed, retry_after = hit("lgu_request", str(current_user.user_id))
+        if not allowed:
+            flash(f"Too many requests sent today. Please wait {wait_text(retry_after)}.", "danger")
+            return redirect(url_for("lgu.access_status"))
+        data, errors = access.parse_request_form(request.form, current_user.email)
+        if errors:
+            for error in errors:
+                flash(error, "danger")
+            return render_template("lgu/access_status.html", request_row=access.latest_request(current_user),
+                                   form=request.form, show_form=True, **access.guide_context())
+        row = access.open_request(current_user, data)
+        log_action("lgu_access_requested", details=f"{row.reference_code}: {data['position']}, {data['office']} "
+                                                   f"({row.requested_role_label})", target=current_user)
+        flash(f"Request sent. Your new reference code is {row.reference_code}: ask your head of office to quote "
+              f"it in the endorsement e-mail.", "success")
+        return redirect(url_for("lgu.access_status"))
+
+    return render_template("lgu/access_status.html", request_row=access.latest_request(current_user),
+                           form={}, show_form=current_user.lgu_status_key in ("rejected", "revoked"),
+                           **access.guide_context())
+

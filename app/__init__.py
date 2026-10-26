@@ -136,6 +136,17 @@ def create_app(config_name=None):
 
     app.jinja_env.globals["staging_waiting"] = _staging_waiting
 
+    def _lgu_access_waiting():
+        """LGU access requests waiting for the System Admin (sidebar badge)."""
+        from app.services.lgu_access_service import count_pending
+
+        try:
+            return count_pending()
+        except Exception:
+            return 0
+
+    app.jinja_env.globals["lgu_access_waiting"] = _lgu_access_waiting
+
     from app.services.account_params import PASSWORD_HINT, PASSWORD_MIN_LENGTH, PASSWORD_RULES
 
     app.jinja_env.globals["PASSWORD_RULES"] = [(key, label) for key, label, _test in PASSWORD_RULES]

@@ -134,6 +134,41 @@
     </div>
   </div>
 
+  {# Who may get an LGU role, and how they are checked -- see
+     app/services/lgu_access_service.py and docs/LGU_ACCESS_AND_DISCORD.md. #}
+  <div class="dss-card mb-4" id="lgu-access-settings">
+    <h6 class="mb-1">LGU access verification</h6>
+    <p class="text-muted small">LGU sign-ups get no LGU role until you verify them in
+      <a href="{{ url_for('admin.lgu_access') }}">LGU Access</a>. These values appear in the applicant guide.</p>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label" for="lguDomains">Official LGU e-mail domains</label>
+        <input type="text" id="lguDomains" name="lgu_email_domains" class="form-control" maxlength="255"
+               placeholder="tarlaccity.gov.ph"
+               value="{{ settings['lgu_email_domains'].setting_value if 'lgu_email_domains' in settings else '' }}">
+        <div class="form-text">Comma-separated. When set, LGU applicants and their heads of office must use one. Leave blank
+          during user testing with personal e-mail addresses.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="lguEmail">Endorsement e-mail (where heads of office write)</label>
+        <input type="email" id="lguEmail" name="lgu_verification_email" class="form-control" maxlength="255"
+               placeholder="{{ SUPPORT_EMAIL or 'ict@lgu.gov.ph' }}"
+               value="{{ settings['lgu_verification_email'].setting_value if 'lgu_verification_email' in settings else '' }}">
+        <div class="form-text">The System Admin office&rsquo;s official mailbox. Blank = the support e-mail.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="lguOffice">Verifying office (System Admin)</label>
+        <input type="text" id="lguOffice" name="lgu_verification_office" class="form-control" maxlength="120"
+               value="{{ settings['lgu_verification_office'].setting_value if 'lgu_verification_office' in settings else 'City ICT / MIS Office' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="lguReview">Re-verify LGU accounts every (days)</label>
+        <input type="number" id="lguReview" name="lgu_access_review_days" class="form-control" min="30" max="730" step="1"
+               value="{{ settings['lgu_access_review_days'].setting_value if 'lgu_access_review_days' in settings else 180 }}">
+      </div>
+    </div>
+  </div>
+
   <div class="dss-card mb-4">
     <h6 class="mb-3">Community (Discord)</h6>
     <label class="form-label" for="communityInvite">Discord invite link</label>

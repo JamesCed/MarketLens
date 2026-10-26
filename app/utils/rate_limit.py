@@ -24,6 +24,7 @@ LIMITS = {
     "login_failed": (5, 15 * 60),
     "login_ip": (30, 15 * 60),
     "register": (10, 60 * 60),
+    "lgu_request": (5, 24 * 60 * 60),
     "forgot_password": (5, 60 * 60),
     "send_code": (10, 60 * 60),
     "analysis": (30, 60 * 60),

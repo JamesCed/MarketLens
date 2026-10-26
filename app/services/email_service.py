@@ -167,6 +167,13 @@ def send_verification_code(to_email, to_name, code):
     return _send(to_email, to_name, f"Your {sender_name} verification code: {code}", body)
 
 
+def send_account_notice(to_email, to_name, subject, body):
+    """A message about the account itself (LGU access approved or not).
+    Not a marketing notification, so it has no unsubscribe switch.
+    True if a transport accepted it."""
+    return _send(to_email, to_name, subject, body)
+
+
 def send_password_reset_code(to_email, to_name, code):
     """Sends the 6-digit password-reset code.
 

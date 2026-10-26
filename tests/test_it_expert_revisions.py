@@ -15,7 +15,7 @@ from app import create_app
 from app.extensions import db
 from app.models import LguData, SmeProfile, SystemSetting, User
 from app.models.audit_log import AuditLog
-from tests.account_fixtures import PERSONAL, STRONG_PASSWORD, account_fields
+from tests.account_fixtures import LGU_REQUEST, PERSONAL, STRONG_PASSWORD, account_fields
 
 
 @pytest.fixture
@@ -165,7 +165,8 @@ def test_sign_up_refuses_missing_or_invalid_personal_details(app, field, value, 
 
 
 def test_an_lgu_official_gives_the_same_personal_details(app):
-    app.test_client().post("/register", data={"role": "lgu", **account_fields("lgu@x.test", first_name="Maria")})
+    app.test_client().post("/register", data={"role": "lgu", **LGU_REQUEST,
+                                              **account_fields("lgu@x.test", first_name="Maria")})
     user = User.query.filter_by(email="lgu@x.test").one()
     assert user.role == "LGU" and user.first_name == "Maria" and user.gender == "Male"
     app.test_client().post("/register", data={"role": "lgu", "email": "lgu2@x.test",

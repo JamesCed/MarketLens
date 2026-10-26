@@ -367,6 +367,12 @@ document.addEventListener("click", (event) => {
    -- the sign-up wizard marks fields required step by step. */
 (function () {
   function labelsFor(control) {
+    // A radio group inside a fieldset is marked once, on its legend, not
+    // after whichever option happens to carry the attribute.
+    if (control.type === "radio") {
+      const legend = control.closest("fieldset")?.querySelector("legend");
+      if (legend) return [legend];
+    }
     const found = control.labels ? [...control.labels] : [];
     return found.filter((label) => !label.classList.contains("btn"));
   }

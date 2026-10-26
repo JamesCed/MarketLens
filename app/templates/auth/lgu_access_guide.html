@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% set legal_links_inline = true %}
+{% block title %}LGU Access Guide{% endblock %}
+{# Public: readable before an account exists, and linked from Discord. #}
+{% block auth_content %}
+<div class="dss-public-page">
+<div class="container py-5" style="max-width: 900px;">
+  <a href="{{ url_for('auth.login') }}" class="d-inline-block mb-4" aria-label="MarketLens home">
+    {% with variant='dark', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+  </a>
+  <h1 class="h3 mb-1">Getting your LGU role in MarketLens</h1>
+  <p class="text-muted mb-4">For LGU staff and officials of Tarlac City.</p>
+  {% include "shared/_lgu_access_guide_content.html" %}
+  <p class="mt-4">
+    <a href="{{ url_for('auth.register') }}" class="btn btn-primary">Create your account</a>
+    {% if discord_url %}<a href="{{ discord_url }}" class="btn btn-outline-secondary ms-2" target="_blank" rel="noopener"><i class="bi bi-discord"></i> Join the Discord</a>{% endif %}
+  </p>
+</div>
+{% include "shared/_legal_footer.html" %}
+</div>
+{% endblock %}
+{% block content %}
+<h4 class="mb-3"><i class="bi bi-person-badge"></i> Getting your LGU role in MarketLens</h4>
+<div class="dss-card">{% include "shared/_lgu_access_guide_content.html" %}</div>
+{% endblock %}
