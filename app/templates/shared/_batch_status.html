@@ -5,5 +5,7 @@
   'publishing': 'text-bg-info',
   'published': 'text-bg-success',
   'rejected': 'text-bg-danger',
+  'changes_requested': 'text-bg-warning',
+  'archived': 'text-bg-secondary',
 }.get(b.status, 'text-bg-secondary') %}
 <span class="badge {{ tone }}">{{ b.status_label }}</span>

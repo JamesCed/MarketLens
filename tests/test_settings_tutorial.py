@@ -319,12 +319,6 @@ def test_a_brand_new_account_gets_the_first_time_prompt(app, signup):
 
     client = app.test_client()
     client.post("/login", data={"email": email, "password": STRONG_PASSWORD})
-    if signup["role"] == "lgu":
-        # An LGU account waiting for verification can open none of the
-        # pages the tour shows, so the prompt waits until it is verified.
-        assert _config(client.get("/settings").get_data(as_text=True))["suppressed"] is True
-        user.lgu_status = "verified"
-        db.session.commit()
     for path in ("/trend-reports", "/settings"):
         body = client.get(path).get_data(as_text=True)
         config = _config(body)

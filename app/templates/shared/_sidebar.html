@@ -18,7 +18,7 @@
       paper describes.
     #}
     <a class="dss-sidebar-brand-link"
-       href="{{ url_for('sme.home') if current_user.is_sme() else (url_for('lgu.dashboard') if current_user.is_lgu_verified else url_for('lgu.access_status')) if current_user.is_lgu() else url_for('admin.dashboard') }}">
+       href="{{ url_for('sme.home') if current_user.is_sme() else url_for('lgu.dashboard') if current_user.is_lgu() else url_for('admin.dashboard') }}">
       {% with variant='auto', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
       <span class="dss-sidebar-sub">SME Market Entry<br>Decision Support System</span>
     </a>
@@ -38,15 +38,9 @@
 
     {# LGU only. An Admin account runs the SYSTEM (its own section
        below) -- it does not plan the city or upload the city's records. #}
-    {# An LGU account waiting for verification (or whose access was
-       removed) has one LGU page: its access request. #}
-    {% if current_user.is_lgu() and not current_user.is_lgu_verified %}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.access_status' }}" href="{{ url_for('lgu.access_status') }}">
-        <i class="bi bi-person-badge"></i> LGU Access Request
-        <span class="badge rounded-pill text-bg-warning dss-nav-count">{{ {'pending': 'Pending', 'rejected': 'Action needed', 'revoked': 'Removed'}.get(current_user.lgu_status_key, '') }}</span>
-      </a>
-    {% endif %}
-    {% if current_user.is_lgu() and current_user.is_lgu_verified %}
+    {# Every LGU account -- approved or still pending verification --
+       has the city-wide planning pages. #}
+    {% if current_user.is_lgu() %}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.dashboard' }}" href="{{ url_for('lgu.dashboard') }}" data-tour="nav-lgu-dashboard">
         <i class="bi bi-speedometer2"></i> LGU Dashboard
       </a>
@@ -72,16 +66,32 @@
     {# Community is not a page in the menu: it is the project's Discord
        server, opened from the "Community Forum" link in the footer. #}
 
-    {% if current_user.is_lgu() and current_user.is_lgu_verified %}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.government_upload' }}" href="{{ url_for('lgu.government_upload') }}" data-tour="nav-data-upload">
-        <i class="bi bi-database-add"></i> Gov't Data Upload
-      </a>
-      {# Step 2 of the upload workflow -- LGU Data Stewards only. #}
+    {#
+      The page an LGU ROLE opens: Gov't Data Upload for an LGU Encoder,
+      Gov't Data Review for an LGU Data Steward. Until the System Admin
+      approves the account it shows "Pending Request Access..." instead
+      (the access request page), and neither data page can be opened.
+    #}
+    {% if current_user.is_lgu() %}
       {% if current_user.is_data_steward() %}
-        {% set waiting_review = staging_waiting('pending_review') %}
-        <a class="dss-nav-link {{ 'active' if request.endpoint in ('lgu.data_review', 'lgu.review_batch') }}" href="{{ url_for('lgu.data_review') }}">
-          <i class="bi bi-clipboard-check"></i> Data Review
-          {% if waiting_review %}<span class="badge rounded-pill text-bg-warning dss-nav-count" title="Batches waiting for your review">{{ waiting_review }}</span>{% endif %}
+        {% set waiting_review = review_waiting() %}
+        <a class="dss-nav-link {{ 'active' if request.endpoint in ('lgu.data_review', 'lgu.review_batch') }}" href="{{ url_for('lgu.data_review') }}" data-tour="nav-data-upload">
+          <i class="bi bi-clipboard-check"></i> Gov't Data Review
+          {% if waiting_review %}<span class="badge rounded-pill text-bg-warning dss-nav-count" title="Uploads waiting for your review">{{ waiting_review }}</span>{% endif %}
+        </a>
+      {% elif current_user.is_lgu_encoder() %}
+        <a class="dss-nav-link {{ 'active' if request.endpoint in ('lgu.government_upload', 'lgu.edit_upload') }}" href="{{ url_for('lgu.government_upload') }}" data-tour="nav-data-upload">
+          <i class="bi bi-database-add"></i> Gov't Data Upload
+        </a>
+      {% elif current_user.is_lgu_pending %}
+        <a class="dss-nav-link dss-nav-pending {{ 'active' if request.endpoint == 'lgu.access_status' }}" href="{{ url_for('lgu.access_status') }}"
+           title="Waiting for the System Admin to approve your LGU role">
+          <i class="bi bi-hourglass-split"></i>
+          <span>Pending Request Access<span class="dss-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>
+        </a>
+      {% else %}
+        <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.access_status' }}" href="{{ url_for('lgu.access_status') }}">
+          <i class="bi bi-x-octagon"></i> {{ 'Access request rejected' if current_user.lgu_status_key == 'rejected' else 'LGU access removed' }}
         </a>
       {% endif %}
     {% endif %}
@@ -91,25 +101,20 @@
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.dashboard' }}" href="{{ url_for('admin.dashboard') }}" data-tour="nav-admin-dashboard">
         <i class="bi bi-shield-check"></i> Admin Dashboard
       </a>
+      {# LGU access requests are decided on Manage Users (lgu_access_service). #}
+      {% set waiting_lgu = lgu_access_waiting() %}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.users' }}" href="{{ url_for('admin.users') }}" data-tour="nav-users">
         <i class="bi bi-people"></i> Manage Users
-      </a>
-      {# Verifying LGU staff before they get an LGU role (lgu_access_service). #}
-      {% set waiting_lgu = lgu_access_waiting() %}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.lgu_access' }}" href="{{ url_for('admin.lgu_access') }}">
-        <i class="bi bi-person-badge"></i> LGU Access
-        {% if waiting_lgu %}<span class="badge rounded-pill text-bg-warning dss-nav-count" title="LGU access requests waiting for verification">{{ waiting_lgu }}</span>{% endif %}
+        {% if waiting_lgu %}<span class="badge rounded-pill text-bg-warning dss-nav-count" title="LGU access requests waiting for a decision">{{ waiting_lgu }}</span>{% endif %}
       </a>
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.audit_log' }}" href="{{ url_for('admin.audit_log') }}" data-tour="nav-audit">
         <i class="bi bi-journal-text"></i> Audit Trail
       </a>
+      {# Step 3 of the Gov't Data Upload workflow -- publishing approved
+         batches -- is the first panel on Datasets. #}
+      {% set waiting_publish = staging_waiting('approved') %}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.datasets' }}" href="{{ url_for('admin.datasets') }}" data-tour="nav-datasets">
         <i class="bi bi-hdd-stack"></i> Datasets
-      </a>
-      {# Step 3 of the Gov't Data Upload workflow: approved batches go live here. #}
-      {% set waiting_publish = staging_waiting('approved') %}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.publish_data' }}" href="{{ url_for('admin.publish_data') }}">
-        <i class="bi bi-broadcast"></i> Publish Data
         {% if waiting_publish %}<span class="badge rounded-pill text-bg-warning dss-nav-count" title="Approved batches waiting to be published">{{ waiting_publish }}</span>{% endif %}
       </a>
       {# bi-sliders, not a second bi-gear: personal "Settings" sits just
@@ -207,12 +212,15 @@
           <dd class="col-7">The whole city at a glance: industries, the map and every barangay.</dd>
           <dt class="col-5">Diversification Plan</dt>
           <dd class="col-7">Which industries to encourage or regulate, and which barangays need help first.</dd>
-          <dt class="col-5">Gov't Data Upload</dt>
-          <dd class="col-7">LGU Encoders upload zoning figures and permit lists to the staging area. They go live
-            after a Data Steward approves them and a System Admin publishes them.</dd>
           {% if current_user.is_data_steward() %}
-          <dt class="col-5">Data Review</dt>
-          <dd class="col-7">Check each staged upload against the live figures, then approve it or reject it with a reason.</dd>
+          <dt class="col-5">Gov't Data Review</dt>
+          <dd class="col-7">Check each staged upload against the live figures, then approve it, ask the encoder to fix it,
+            or reject it. Recently published data is listed at the bottom.</dd>
+          {% else %}
+          <dt class="col-5">Gov't Data Upload</dt>
+          <dd class="col-7">LGU Encoders upload zoning figures and permit lists to the staging area, and can edit or
+            archive them until they are approved. They go live after a Data Steward approves them and a System Admin
+            publishes them.</dd>
           {% endif %}
           {% endif %}
           <dt class="col-5">Saturation Map</dt>

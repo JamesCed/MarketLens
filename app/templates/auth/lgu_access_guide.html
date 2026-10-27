@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set legal_links_inline = true %}
 {% block title %}LGU Access Guide{% endblock %}
-{# Public: readable before an account exists, and linked from Discord. #}
+{# Public: readable before an account exists. #}
 {% block auth_content %}
 <div class="dss-public-page">
 <div class="container py-5" style="max-width: 900px;">
@@ -12,8 +12,7 @@
   <p class="text-muted mb-4">For LGU staff and officials of Tarlac City.</p>
   {% include "shared/_lgu_access_guide_content.html" %}
   <p class="mt-4">
-    <a href="{{ url_for('auth.register') }}" class="btn btn-primary">Create your account</a>
-    {% if discord_url %}<a href="{{ discord_url }}" class="btn btn-outline-secondary ms-2" target="_blank" rel="noopener"><i class="bi bi-discord"></i> Join the Discord</a>{% endif %}
+    <a href="{{ url_for('auth.register_lgu') }}" class="btn btn-primary">Register as LGU staff</a>
   </p>
 </div>
 {% include "shared/_legal_footer.html" %}

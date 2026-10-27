@@ -83,6 +83,8 @@ _USER_COLUMNS = {
     "lgu_position": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
     "lgu_verified_by": ("INTEGER NULL", "INT NULL"),
     "lgu_verified_at": ("DATETIME NULL", "DATETIME NULL"),
+    "lgu_scope": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
+    "lgu_barangay": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
 }
 
 _ADDITIVE_COLUMNS = {
@@ -95,6 +97,16 @@ _ADDITIVE_COLUMNS = {
         "innovation_idea": ("TEXT NULL", "TEXT NULL"),
         "offering_details": ("TEXT NULL", "TEXT NULL"),
         **_ARCHIVE_COLUMNS,
+    },
+    "lgu_access_requests": {
+        "jurisdiction_scope": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
+        "target_barangay": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
+        "reason": ("VARCHAR(300) NULL", "VARCHAR(300) NULL"),
+    },
+    "upload_batches": {
+        "messages": ("TEXT NULL", "TEXT NULL"),
+        "scope_barangay": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
+        "updated_at": ("DATETIME NULL", "DATETIME NULL"),
     },
     "audit_logs": {
         "actor_name": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
@@ -249,6 +261,24 @@ def _retire_system_theme():
     return result.rowcount or 0
 
 
+def _rename_pending_lgu_status():
+    """V3.5 stored a waiting LGU request as "pending"; it is now
+    "pending_verification" (on the account and on the request)."""
+    from sqlalchemy import inspect, text
+
+    tables = set(inspect(db.engine).get_table_names())
+    user_table = "`user`" if db.engine.dialect.name == "mysql" else '"user"'
+    changed = 0
+    with db.engine.begin() as conn:
+        if "user" in tables and "lgu_status" in {c["name"] for c in inspect(db.engine).get_columns("user")}:
+            changed += conn.execute(text(f"UPDATE {user_table} SET lgu_status = 'pending_verification' "
+                                         f"WHERE lgu_status = 'pending'")).rowcount or 0
+        if "lgu_access_requests" in tables:
+            changed += conn.execute(text("UPDATE lgu_access_requests SET status = 'pending_verification' "
+                                         "WHERE status = 'pending'")).rowcount or 0
+    return changed
+
+
 _BARANGAY_COLUMNS = (
     ("market_data", "location"),
     ("lgu_data", "barangay"),
@@ -378,6 +408,11 @@ def run_startup_migrations(app):
 
         try:
             _retire_system_theme()
+        except Exception:
+            db.session.rollback()
+
+        try:
+            _rename_pending_lgu_status()
         except Exception:
             db.session.rollback()
 

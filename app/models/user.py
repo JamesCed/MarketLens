@@ -71,12 +71,17 @@ class User(ArchivableMixin, UserMixin, db.Model):
     role = db.Column(db.Enum("Admin", "SME", "LGU", name="user_role"), nullable=False)
     lgu_role = db.Column(db.String(20), nullable=True)
     # LGU access verification (app/services/lgu_access_service.py). A
-    # self-registered LGU account starts "pending" and has no LGU access
-    # until the System Admin verifies it; blank = verified (accounts made
-    # by an administrator, and every LGU account from before this check).
+    # self-registered LGU account starts "pending_verification": it can
+    # open the LGU Dashboard, Diversification Plan, Saturation Map and
+    # Trend Reports, but gets no LGU role (no Gov't Data Upload or
+    # Review) until the System Admin approves it. Blank = verified
+    # (accounts made by an administrator, and every LGU account from
+    # before this check).
     lgu_status = db.Column(db.String(20), nullable=True)
     lgu_office = db.Column(db.String(120), nullable=True)
     lgu_position = db.Column(db.String(100), nullable=True)
+    lgu_scope = db.Column(db.String(20), nullable=True)       # "city" (blank) or "barangay"
+    lgu_barangay = db.Column(db.String(100), nullable=True)   # when the scope is one barangay
     lgu_verified_by = db.Column(db.Integer, nullable=True)
     lgu_verified_at = db.Column(db.DateTime, nullable=True)
 
@@ -247,11 +252,12 @@ class User(ArchivableMixin, UserMixin, db.Model):
 
     LGU_ROLES = {"encoder": "LGU Encoder", "steward": "LGU Data Steward"}
     LGU_STATUS_LABELS = {
-        "pending": "Waiting for verification",
-        "verified": "Verified",
-        "rejected": "Not approved",
+        "pending_verification": "Pending verification",
+        "verified": "Approved",
+        "rejected": "Rejected",
         "revoked": "Access removed",
     }
+    LGU_SCOPES = {"city": "City-wide", "barangay": "Specific barangay"}
 
     @property
     def is_lgu_verified(self):
@@ -264,7 +270,22 @@ class User(ArchivableMixin, UserMixin, db.Model):
     def lgu_status_key(self):
         if self.role != "LGU":
             return None
-        return self.lgu_status or "verified"
+        status = self.lgu_status or "verified"
+        return "pending_verification" if status == "pending" else status
+
+    @property
+    def is_lgu_pending(self):
+        return self.lgu_status_key == "pending_verification"
+
+    @property
+    def lgu_scope_key(self):
+        return "barangay" if self.lgu_scope == "barangay" and self.lgu_barangay else "city"
+
+    @property
+    def lgu_scope_label(self):
+        if self.lgu_scope_key == "barangay":
+            return f"Barangay {self.lgu_barangay}"
+        return "City-wide"
 
     @property
     def lgu_status_label(self):

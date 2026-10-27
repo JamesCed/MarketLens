@@ -1,0 +1,72 @@
+{#
+  admin/_publish_panel.html
+  ---------------------------
+  "Publish approved government data" -- the first panel on Datasets, and
+  step 3 of the Gov't Data Upload workflow: batches an LGU Data Steward
+  approved, waiting for the System Admin to publish them to the live
+  dataset (or reject them with a reason). Publishing writes the rows in
+  one transaction; the city-wide figures then recalculate.
+#}
+<section class="dss-card mb-4" id="publish-data" aria-labelledby="publishTitle">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+    <h6 class="mb-0" id="publishTitle"><i class="bi bi-broadcast"></i> Publish approved government data
+      <span class="badge rounded-pill text-bg-{{ 'warning' if approved else 'secondary' }} ms-1">{{ approved|length }}</span></h6>
+    {% if pending_count %}<span class="dss-meta"><i class="bi bi-hourglass-split"></i> {{ pending_count }} more still with the LGU (review or corrections)</span>{% endif %}
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle dss-admin-table dss-wide-table mb-2">
+      <thead><tr><th>Batch</th><th>File</th><th>Contents</th><th>Uploaded by</th><th>Approved by</th><th></th></tr></thead>
+      <tbody>
+        {% for b in approved %}
+        <tr>
+          <td class="text-nowrap">#{{ b.id }}</td>
+          <td class="text-break"><code>{{ b.filename }}</code><div class="dss-meta">{{ b.dataset_label }} &middot; {{ b.source }}{% if b.scope_barangay %} &middot; {{ b.scope_barangay }}{% endif %}</div></td>
+          <td class="small">{{ b.barangays }} barangay{{ 's' if b.barangays != 1 }}
+            {% if b.market_rows %}<div class="dss-meta">{{ '{:,}'.format(b.market_rows) }} industry counts</div>{% endif %}</td>
+          <td>{% if b.uploader %}{{ b.uploader.name }}{% else %}&mdash;{% endif %}<div class="dss-meta">{{ b.uploaded_at|pht }}</div></td>
+          <td>{{ b.reviewer.name if b.reviewer else '—' }}<div class="dss-meta">{{ b.reviewed_at|pht }}</div>
+            {% if b.review_note %}<div class="small text-break">&ldquo;{{ b.review_note }}&rdquo;</div>{% endif %}</td>
+          <td class="text-end text-nowrap">
+            <form method="POST" action="{{ url_for('admin.publish_batch', batch_id=b.id) }}" class="d-inline dss-publish-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-broadcast" aria-hidden="true"></i> Publish</button>
+            </form>
+            <button type="button" class="btn btn-sm btn-outline-danger"
+                    data-bs-toggle="modal" data-bs-target="#reasonModal"
+                    data-action="{{ url_for('admin.reject_batch', batch_id=b.id) }}"
+                    data-subject="Batch #{{ b.id }}: {{ b.filename }}"
+                    data-title="Reject batch" data-verb="Reject" data-tone="danger"
+                    data-note="It will not be published. The encoder who uploaded it sees your reason.">
+              <i class="bi bi-x-circle" aria-hidden="true"></i> Reject
+            </button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-3">No approved batches are waiting to be published.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <details>
+    <summary class="small fw-semibold">Recently published or rejected</summary>
+    <div class="table-responsive mt-2">
+      <table class="table table-sm align-middle dss-admin-table dss-wide-table mb-0">
+        <thead><tr><th>Batch</th><th>File</th><th>Status</th><th>Reviewed by</th><th>Published by</th><th>Note</th></tr></thead>
+        <tbody>
+          {% for b in history %}
+          <tr>
+            <td>#{{ b.id }}</td>
+            <td class="text-break"><code>{{ b.filename }}</code><div class="dss-meta">{{ b.dataset_label }}</div></td>
+            <td>{% include "shared/_batch_status.html" %}</td>
+            <td>{{ b.reviewer.name if b.reviewer else '—' }}<div class="dss-meta text-nowrap">{{ b.reviewed_at|pht }}</div></td>
+            <td>{% if b.published_at %}{{ b.publisher.name if b.publisher else '—' }}<div class="dss-meta text-nowrap">{{ b.published_at|pht }}</div>{% else %}&mdash;{% endif %}</td>
+            <td class="small text-break">{{ b.review_note or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-3">Nothing published or rejected yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>

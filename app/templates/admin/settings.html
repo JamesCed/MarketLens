@@ -135,26 +135,26 @@
   </div>
 
   {# Who may get an LGU role, and how they are checked -- see
-     app/services/lgu_access_service.py and docs/LGU_ACCESS_AND_DISCORD.md. #}
+     app/services/lgu_access_service.py and docs/LGU_ACCESS.md. #}
   <div class="dss-card mb-4" id="lgu-access-settings">
     <h6 class="mb-1">LGU access verification</h6>
     <p class="text-muted small">LGU sign-ups get no LGU role until you verify them in
-      <a href="{{ url_for('admin.lgu_access') }}">LGU Access</a>. These values appear in the applicant guide.</p>
+      <a href="{{ url_for('admin.users', _anchor='lgu-access') }}">Manage Users &rsaquo; LGU access requests</a>. These values appear in the registration form and the guide.</p>
     <div class="row g-3">
       <div class="col-md-6">
         <label class="form-label" for="lguDomains">Official LGU e-mail domains</label>
         <input type="text" id="lguDomains" name="lgu_email_domains" class="form-control" maxlength="255"
                placeholder="tarlaccity.gov.ph"
                value="{{ settings['lgu_email_domains'].setting_value if 'lgu_email_domains' in settings else '' }}">
-        <div class="form-text">Comma-separated. When set, LGU applicants and their heads of office must use one. Leave blank
-          during user testing with personal e-mail addresses.</div>
+        <div class="form-text">Comma-separated. When set, LGU staff must register with an address on one of these
+          domains. Leave blank during user testing with personal e-mail addresses.</div>
       </div>
       <div class="col-md-6">
-        <label class="form-label" for="lguEmail">Endorsement e-mail (where heads of office write)</label>
+        <label class="form-label" for="lguEmail">LGU access contact e-mail (shown to applicants)</label>
         <input type="email" id="lguEmail" name="lgu_verification_email" class="form-control" maxlength="255"
                placeholder="{{ SUPPORT_EMAIL or 'ict@lgu.gov.ph' }}"
                value="{{ settings['lgu_verification_email'].setting_value if 'lgu_verification_email' in settings else '' }}">
-        <div class="form-text">The System Admin office&rsquo;s official mailbox. Blank = the support e-mail.</div>
+        <div class="form-text">Where LGU staff can ask about their request. Blank = the support e-mail.</div>
       </div>
       <div class="col-md-6">
         <label class="form-label" for="lguOffice">Verifying office (System Admin)</label>

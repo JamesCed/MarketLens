@@ -133,17 +133,14 @@ def _create_user_from_pending(pending):
         from app.services import lgu_access_service
 
         lgu = pending.get("lgu") or {}
-        if lgu.get("endorser_email"):
-            lgu = dict(lgu, endorser_email=decrypt_value(lgu["endorser_email"]),
-                       endorser_name=decrypt_value(lgu["endorser_name"]),
-                       discord_username=decrypt_value(lgu["discord_username"]) if lgu.get("discord_username") else None)
+        if lgu.get("office"):
             row = lgu_access_service.open_request(user, lgu)
             user.lgu_reference_code = row.reference_code
             log_action("lgu_access_requested", details=f"{row.reference_code}: {lgu['position']}, {lgu['office']} "
                                                        f"({row.requested_role_label})", user_id=user.user_id,
                        target=user)
         else:
-            user.lgu_status = "pending"
+            user.lgu_status = lgu_access_service.PENDING
             db.session.commit()
 
     business = pending.get("business")
@@ -169,10 +166,11 @@ def _created_message(pending, user, verified_email):
     if pending.get("business"):
         return (f"{start}your account and your first business plan are ready. Log in to see its forecast."
                 if verified_email else "Account created with your first business plan. Log in to see its forecast.")
-    code = getattr(user, "lgu_reference_code", None)
-    if pending.get("role") == "LGU" and code:
-        return (f"{start}your account was created. Your LGU access request {code} is waiting for verification by "
-                f"the System Admin -- sign in to see what to do next.")
+    if pending.get("role") == "LGU":
+        return (f"{start}your LGU account was created and your access request is pending verification. "
+                f"The System Admin reviews it within 24 hours and e-mails you the decision -- sign in to see its "
+                f"status. You can already open the LGU Dashboard, Diversification Plan, Saturation Map and "
+                f"Trend Reports.")
     return f"{start}your account has been created. You can now log in." if verified_email else \
         "Account created. You can now log in."
 
@@ -209,8 +207,6 @@ def _register_form_context(form=None):
         "latest_birthdate": latest_birthdate.isoformat(),
         "password_rules": [label for _key, label, _test in PASSWORD_RULES],
         "password_hint": PASSWORD_HINT,
-        "lgu_roles": User.LGU_ROLES,
-        **_lgu_guide_context(),
     }
 
 
@@ -220,11 +216,14 @@ def _lgu_guide_context():
     try:
         return guide_context()
     except Exception:
-        from app.services.lgu_access_service import DEFAULT_OFFICE, OFFICES, OTHER_OFFICE
+        from app.ml.seed_data import BARANGAY_NAMES
+        from app.services.lgu_access_service import (DEFAULT_OFFICE, OFFICES, REASON_LENGTH, REVIEW_WINDOW_HOURS,
+                                                     SCOPES)
 
         return {"verification_office": DEFAULT_OFFICE, "verification_email": current_app.config.get("SUPPORT_EMAIL", ""),
-                "lgu_domains": [], "review_days": 180, "discord_url": "", "offices": OFFICES,
-                "other_office": OTHER_OFFICE}
+                "lgu_domains": [], "review_days": 180, "review_hours": REVIEW_WINDOW_HOURS, "offices": OFFICES,
+                "lgu_scopes": SCOPES, "lgu_barangays": sorted(BARANGAY_NAMES), "lgu_roles": User.LGU_ROLES,
+                "reason_length": REASON_LENGTH}
 
 
 def _home_url():
@@ -251,41 +250,28 @@ def register():
         return redirect(_home_url())
 
     if request.method == "POST":
-        from app.services.account_params import parse_personal_info, password_problems
-        from app.utils import captcha
-        from app.utils.privacy import encrypt_value
-        from app.utils.rate_limit import client_ip, hit, wait_text
+        # LGU staff register on their own form (/register/lgu); a post that
+        # still says role=lgu is handled there.
+        if ROLE_MAP.get(request.form.get("role", "sme").strip().lower()) == "LGU":
+            return _register_lgu_post()
 
-        allowed, retry_after = hit("register", client_ip())
-        if not allowed:
-            flash(f"Too many sign-up attempts from this network. Please wait {wait_text(retry_after)} "
-                  f"and try again.", "danger")
-            return render_template("auth/register.html", **_register_form_context(request.form)), 429
-        if not captcha.is_human("register", fresh=True):
-            flash(captcha.REQUIRED_MESSAGE, "danger")
-            return render_template("auth/register.html", **_register_form_context(request.form))
+        from app.services.account_params import parse_personal_info, password_problems
+        from app.utils.privacy import encrypt_value
+
+        refused = _registration_guard("auth/register.html", _register_form_context)
+        if refused is not None:
+            return refused
 
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-        confirm_password = request.form.get("confirm_password", "")
         role = ROLE_MAP.get(request.form.get("role", "sme").strip().lower())
 
         errors = []
         personal, personal_errors = parse_personal_info(request.form)
         errors.extend(personal_errors)
-        if not email or not password:
-            errors.append("Email and password are required.")
-        elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
-            errors.append("Enter a valid email address.")
-        errors.extend(password_problems(password))
-        if password != confirm_password:
-            errors.append("Passwords do not match.")
-        if not request.form.get("accept_terms"):
-            errors.append("Please read and accept the Terms and Conditions and the Privacy Policy.")
+        errors.extend(_credential_errors(email, password, request.form.get("confirm_password", "")))
         if role is None:
             errors.append("Invalid account type.")
-        if User.query.filter_by(email=email).first():
-            errors.append("An account with that email already exists.")
         full_name = compose_full_name(personal["first_name"], personal["middle_name"],
                                       personal["last_name"], personal["suffix"])
 
@@ -293,18 +279,6 @@ def register():
         if role == "SME":
             business, business_errors = _collect_business_params(request.form)
             errors.extend(business_errors)
-
-        lgu = None
-        if role == "LGU":
-            from app.services.lgu_access_service import parse_request_form
-
-            lgu, lgu_errors = parse_request_form(request.form, email)
-            errors.extend(lgu_errors)
-            # The endorser's details wait in the session encrypted, like
-            # the applicant's own personal details.
-            lgu = dict(lgu, endorser_name=encrypt_value(lgu["endorser_name"]),
-                       endorser_email=encrypt_value(lgu["endorser_email"]),
-                       discord_username=encrypt_value(lgu["discord_username"]) if lgu["discord_username"] else None)
 
         if errors:
             for e in errors:
@@ -319,45 +293,136 @@ def register():
             "personal": encrypt_value(json.dumps(personal)),
             "terms_accepted_at": datetime.utcnow().isoformat(),
             "business": business,
-            "lgu": lgu,
+            "lgu": None,
         }
-
-        if email_service.is_configured():
-            code = f"{secrets.randbelow(1_000_000):06d}"
-            ttl = int(current_app.config.get("EMAIL_VERIFICATION_CODE_TTL_MINUTES", 10))
-            sent = email_service.send_verification_code(email, full_name, code)
-            if sent:
-                pending["code"] = code
-                pending["expires_at"] = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat()
-                pending["attempts"] = 0
-                pending["last_sent_at"] = datetime.utcnow().isoformat()
-                session[PENDING_SESSION_KEY] = pending
-                flash(f"We sent a 6-digit verification code to {email}. Enter it below to finish creating your account.", "info")
-                return redirect(url_for("auth.verify_email"))
-
-            failure = email_service.last_failure()
-            current_app.logger.error(
-                "verification email to %s could not be sent: %s%s",
-                email,
-                failure.get("detail", "no detail recorded"),
-                f" -- {failure['hint']}" if failure.get("hint") else "",
-            )
-            if current_app.config.get("REQUIRE_EMAIL_VERIFICATION", False):
-                flash(
-                    "We could not send your verification code right now, so your account "
-                    "was not created. Please try again in a few minutes -- if it keeps "
-                    "failing, contact us and we will sort it out.",
-                    "danger",
-                )
-                return render_template("auth/register.html", **_register_form_context(request.form))
-
-            flash("Couldn't send a verification email right now, so your account was created directly.", "warning")
-
-        user = _create_user_from_pending(pending)
-        flash(_created_message(pending, user, verified_email=False), "success")
-        return redirect(url_for("auth.login"))
+        return _finish_registration(pending, "auth/register.html", _register_form_context)
 
     return render_template("auth/register.html", **_register_form_context())
+
+
+@auth_bp.route("/register/lgu", methods=["GET", "POST"])
+def register_lgu():
+    """LGU staff and officials register here: account details, their
+    Tarlac City LGU context, and the role they need. The account is
+    created "pending_verification" -- no LGU role until the System Admin
+    approves it (app/services/lgu_access_service.py)."""
+    if current_user.is_authenticated:
+        return redirect(_home_url())
+    if request.method == "POST":
+        return _register_lgu_post()
+    return render_template("auth/register_lgu.html", **_lgu_form_context())
+
+
+def _lgu_form_context(form=None):
+    return {"form": form if form is not None else {}, **_lgu_guide_context()}
+
+
+def _register_lgu_post():
+    from app.services.account_params import parse_account_names
+    from app.services.lgu_access_service import parse_request_form
+    from app.utils.privacy import encrypt_value
+
+    refused = _registration_guard("auth/register_lgu.html", _lgu_form_context)
+    if refused is not None:
+        return refused
+
+    email = request.form.get("email", "").strip().lower()
+    password = request.form.get("password", "")
+    names, errors = parse_account_names(request.form)
+    errors.extend(_credential_errors(email, password, request.form.get("confirm_password", "")))
+    lgu, lgu_errors = parse_request_form(request.form, email)
+    errors.extend(lgu_errors)
+    if errors:
+        for e in errors:
+            flash(e, "danger")
+        return render_template("auth/register_lgu.html", **_lgu_form_context(request.form))
+
+    pending = {
+        "full_name": compose_full_name(names["first_name"], names["middle_name"], names["last_name"], None),
+        "email": email,
+        "password_hash": generate_password_hash(password),
+        "role": "LGU",
+        "personal": encrypt_value(json.dumps(names)),
+        "terms_accepted_at": datetime.utcnow().isoformat(),
+        "business": None,
+        "lgu": lgu,
+    }
+    return _finish_registration(pending, "auth/register_lgu.html", _lgu_form_context)
+
+
+def _registration_guard(template, context):
+    """Rate limit and human verification for both sign-up forms. Returns
+    a response when the attempt is refused, else None."""
+    from app.utils import captcha
+    from app.utils.rate_limit import client_ip, hit, wait_text
+
+    allowed, retry_after = hit("register", client_ip())
+    if not allowed:
+        flash(f"Too many sign-up attempts from this network. Please wait {wait_text(retry_after)} "
+              f"and try again.", "danger")
+        return render_template(template, **context(request.form)), 429
+    if not captcha.is_human("register", fresh=True):
+        flash(captcha.REQUIRED_MESSAGE, "danger")
+        return render_template(template, **context(request.form))
+    return None
+
+
+def _credential_errors(email, password, confirm_password):
+    from app.services.account_params import password_problems
+
+    errors = []
+    if not email or not password:
+        errors.append("Email and password are required.")
+    elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        errors.append("Enter a valid email address.")
+    errors.extend(password_problems(password))
+    if password != confirm_password:
+        errors.append("Passwords do not match.")
+    if not request.form.get("accept_terms"):
+        errors.append("Please read and accept the Terms and Conditions and the Privacy Policy.")
+    if email and User.query.filter_by(email=email).first():
+        errors.append("An account with that email already exists.")
+    return errors
+
+
+def _finish_registration(pending, template, context):
+    """E-mail the verification code (or create the account straight away
+    when no mail transport is configured), for both sign-up forms."""
+    email, full_name = pending["email"], pending["full_name"]
+    if email_service.is_configured():
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        ttl = int(current_app.config.get("EMAIL_VERIFICATION_CODE_TTL_MINUTES", 10))
+        sent = email_service.send_verification_code(email, full_name, code)
+        if sent:
+            pending["code"] = code
+            pending["expires_at"] = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat()
+            pending["attempts"] = 0
+            pending["last_sent_at"] = datetime.utcnow().isoformat()
+            session[PENDING_SESSION_KEY] = pending
+            flash(f"We sent a 6-digit verification code to {email}. Enter it below to finish creating your account.", "info")
+            return redirect(url_for("auth.verify_email"))
+
+        failure = email_service.last_failure()
+        current_app.logger.error(
+            "verification email to %s could not be sent: %s%s",
+            email,
+            failure.get("detail", "no detail recorded"),
+            f" -- {failure['hint']}" if failure.get("hint") else "",
+        )
+        if current_app.config.get("REQUIRE_EMAIL_VERIFICATION", False):
+            flash(
+                "We could not send your verification code right now, so your account "
+                "was not created. Please try again in a few minutes -- if it keeps "
+                "failing, contact us and we will sort it out.",
+                "danger",
+            )
+            return render_template(template, **context(request.form))
+
+        flash("Couldn't send a verification email right now, so your account was created directly.", "warning")
+
+    user = _create_user_from_pending(pending)
+    flash(_created_message(pending, user, verified_email=False), "success")
+    return redirect(url_for("auth.login"))
 
 
 @auth_bp.route("/terms")
@@ -380,7 +445,7 @@ def lgu_access_guide():
     """How LGU staff and officials get an LGU role, safely -- public, so
     it can be read (and linked from the Discord community) before an
     account exists. See app/services/lgu_access_service.py."""
-    return render_template("auth/lgu_access_guide.html", lgu_roles=User.LGU_ROLES, **_lgu_guide_context())
+    return render_template("auth/lgu_access_guide.html", **_lgu_guide_context())
 
 
 @auth_bp.route("/register/verify", methods=["GET", "POST"])

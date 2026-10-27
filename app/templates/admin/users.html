@@ -60,6 +60,9 @@
       </div>
     </form>
 
+    {# LGU staff waiting for an LGU role -- between the search bar and the table. #}
+    {% include "admin/_lgu_access_panel.html" %}
+
     <div class="dss-card">
       <div class="dss-meta mb-2">
         {{ pagination.total }} account{{ 's' if pagination.total != 1 }}{{ ' match' if filters else '' }}
@@ -92,7 +95,7 @@
               <td>
                 {{ role_badge(u.role) }}
                 {% if u.role == 'LGU' and not u.is_lgu_verified %}
-                  <div class="mt-1"><a class="badge text-bg-warning text-decoration-none" href="{{ url_for('admin.lgu_access') }}">{{ u.lgu_status_label }}</a></div>
+                  <div class="mt-1"><a class="badge text-bg-warning text-decoration-none" href="#lgu-access">{{ u.lgu_status_label }}</a></div>
                 {% elif u.role == 'LGU' %}
                   {# The LGU sub-role decides who uploads and who reviews (Gov't Data Upload workflow). #}
                   <form method="POST" action="{{ url_for('admin.set_lgu_role', user_id=u.user_id) }}" class="mt-1">
@@ -256,8 +259,8 @@
               <option value="Admin">System Administrator (publishes approved data)</option>
             </select>
             <div class="form-text">A Data Steward never reviews their own upload, and only an administrator publishes.
-              Creating an LGU account here counts as verifying the person: do it only after their head of office has
-              confirmed them through an official channel. Otherwise let them sign up and verify them in LGU Access.</div>
+              Creating an LGU account here counts as approving the person (city-wide scope): do it only after checking
+              with their office. Otherwise let them register as LGU staff and decide in <em>LGU access requests</em>.</div>
           </div>
           <div class="row g-2 mb-1">
             <div class="col-sm-7"><label class="form-label" for="cu-lgu-office">LGU office <span class="text-muted">(LGU accounts)</span></label>

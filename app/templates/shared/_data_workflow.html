@@ -14,8 +14,8 @@
   and the trend reports) until step 3. See app/services/staging_service.py.
 #}
 {% set steps = [
-  ('bi-cloud-upload', 'LGU Encoder', 'Uploads the file to the staging area. It is checked straight away; nothing live changes.'),
-  ('bi-clipboard-check', 'LGU Data Steward', 'Reviews the staged data and approves it, or rejects it with a reason for the encoder.'),
+  ('bi-cloud-upload', 'LGU Encoder', 'Uploads the file to the staging area, and can edit or archive it until it is approved. Nothing live changes.'),
+  ('bi-clipboard-check', 'LGU Data Steward', 'Reviews it in Gov\'t Data Review: approves it, asks the encoder to fix or clean it, or rejects it.'),
   ('bi-broadcast', 'System Admin', 'Publishes approved data to the live dataset. Every city-wide figure then recalculates.'),
 ] %}
 <ol class="dss-workflow list-unstyled mb-0" aria-label="How uploaded data goes live">

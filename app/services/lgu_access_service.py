@@ -4,33 +4,36 @@ app/services/lgu_access_service.py
 How an LGU staff member or official gets an LGU role -- safely.
 
 WHY
-"LGU Official" is a choice on the public sign-up form, so choosing it
-cannot be what grants LGU access: anyone could pick it and upload
-"government" data. Instead:
+Anyone can open the registration form and say they work for the city,
+so registering cannot be what grants an LGU role: an unchecked account
+could upload "government" data. Instead:
 
-  1. SIGN-UP. The person signs up as an LGU Official and says where they
-     work, their position, which role they need (LGU Encoder or LGU Data
-     Steward) and who their head of office is. The account is created
-     PENDING, with no LGU page and no LGU role, and gets a reference code
-     (LGU-XXXXXX). The System Admin is notified.
-  2. ENDORSEMENT. Their head of office e-mails the System Admin from an
-     official LGU address, quoting the code. On the MarketLens Discord
-     the applicant may open a private ticket quoting the same code --
-     never an ID, password or personal number.
-  3. VERIFICATION. The System Admin checks the endorsement came from the
-     official address and confirms by phone through the office's number
-     in the LGU directory, then approves in Admin > LGU Access (choosing
-     the role) or rejects with a reason. Approval must be confirmed with
-     a tick-box saying the endorsement was checked through an official
-     channel. Only then does the account get its role.
-  4. UPKEEP. Every verified LGU account is re-checked after
-     lgu_access_review_days (default 180); access is revoked the day the
-     person moves office or leaves. Discord roles follow MarketLens, never
-     the other way round.
+  1. REGISTRATION (/register/lgu). The person gives their name, official
+     work e-mail and password; their Tarlac City context (city-wide or
+     one barangay, department / office, official job title); and the
+     role they need (LGU Encoder or LGU Data Steward) with a short
+     reason. The account is created "pending_verification" and the
+     System Admins are notified.
+  2. WHILE PENDING. The account can open the LGU Dashboard, the
+     Diversification Plan, the Saturation Map and the Trend Reports, but
+     has no LGU role: Gov't Data Upload / Review show as "Pending Request
+     Access..." and cannot be opened. It stays pending until an admin
+     decides -- requests do not expire on their own.
+  3. DECISION. In Admin > Manage Users > LGU access requests the System
+     Admin approves (choosing the role, after confirming the person with
+     their office) or rejects with a reason. The applicant is notified
+     in MarketLens and by e-mail, with a link straight to the page their
+     role opens (Gov't Data Upload for an Encoder, Gov't Data Review for
+     a Data Steward) or, when rejected, to their request page.
+  4. UPKEEP. Verified LGU accounts are re-checked after
+     lgu_access_review_days (default 180), and access is removed the day
+     the person moves office or leaves.
 
-Every step notifies the person concerned and writes an audit entry.
-Accounts created by an administrator are verified at creation; LGU
-accounts from before this check count as verified until re-checked.
+A barangay-scoped account is limited to its barangay: an Encoder can
+only stage rows for it, a Data Steward only reviews uploads for it
+(staging_service). Accounts created by an administrator are verified at
+creation; LGU accounts from before verification count as verified until
+re-checked.
 """
 
 import re
@@ -47,25 +50,30 @@ from app.models.lgu_access_request import (
     LguAccessRequest,
 )
 
+PENDING = "pending_verification"
+VERIFIED = "verified"
+REJECTED = "rejected"
+REVOKED = "revoked"
+
 OFFICES = (
+    "City Planning and Development Office (CPDO)",
     "Business Permits and Licensing Office (BPLO)",
-    "City Planning and Development Office (CPDO) / Zoning",
-    "City Treasurer's Office",
     "City Assessor's Office",
+    "City Treasurer's Office",
     "Office of the City Mayor",
-    "City Information and Communications Technology Office",
+    "Barangay Executive Office",
 )
-OTHER_OFFICE = "Other office"
+SCOPES = User.LGU_SCOPES
 
 DEFAULT_OFFICE = "City ICT / MIS Office"
 DEFAULT_REVIEW_DAYS = 180
 REVIEW_DAYS_RANGE = (30, 730)
+REVIEW_WINDOW_HOURS = 24
+REASON_LENGTH = (10, 300)
 
 _CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-_NAME = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿÑñ][A-Za-zÀ-ÖØ-öø-ÿÑñ .'\-]{1,119}$")
-_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _DOMAIN = re.compile(r"^(?=.{3,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
-_DISCORD = re.compile(r"^(?!.*\.\.)[a-z0-9_.]{2,32}$")
+_TITLE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿÑñ0-9][A-Za-zÀ-ÖØ-öø-ÿÑñ0-9 .,'&()/\-]{1,99}$")
 
 
 # ------------------------------------------------------------- settings
@@ -97,8 +105,8 @@ def verification_office():
 
 
 def verification_email():
-    """Where heads of office send endorsements: the setting, else the
-    support address."""
+    """Where LGU staff can write about their request: the setting, else
+    the support address."""
     from flask import current_app
 
     value = (SystemSetting.get("lgu_verification_email", "") or "").strip()
@@ -115,78 +123,74 @@ def review_days():
 
 
 def guide_context():
-    """What the guide and status pages show about who verifies people."""
-    from app.controllers.community_controller import community_invite_url
+    """What the registration form, the guide and the request page show."""
+    from app.ml.seed_data import BARANGAY_NAMES
 
     return {
         "verification_office": verification_office(),
         "verification_email": verification_email(),
         "lgu_domains": email_domains(),
         "review_days": review_days(),
-        "discord_url": community_invite_url(),
+        "review_hours": REVIEW_WINDOW_HOURS,
         "offices": OFFICES,
-        "other_office": OTHER_OFFICE,
+        "lgu_scopes": SCOPES,
+        "lgu_barangays": sorted(BARANGAY_NAMES),
+        "lgu_roles": User.LGU_ROLES,
+        "reason_length": REASON_LENGTH,
     }
 
 
 # ----------------------------------------------------------- the request
 
 def parse_request_form(form, applicant_email):
-    """The LGU part of a sign-up (or a re-submitted request). Returns
+    """The "Tarlac City LGU context" and "Role selection & system scope"
+    parts of an LGU registration (or of a re-sent request). Returns
     (data, errors); data is JSON-safe so it can wait in the session while
     the e-mail code is confirmed."""
+    from app.ml.seed_data import BARANGAY_NAMES
+
     errors = []
     domains = email_domains()
+
+    scope = (form.get("lgu_scope") or "").strip()
+    barangay = (form.get("lgu_barangay") or "").strip()
+    if scope not in SCOPES:
+        errors.append("Choose your jurisdiction scope: City-wide or a specific barangay.")
+    if scope == "barangay":
+        if barangay not in BARANGAY_NAMES:
+            errors.append("Choose the barangay you work for (one of Tarlac City's 76 barangays).")
+    else:
+        barangay = ""
+
     office = (form.get("lgu_office") or "").strip()
-    if office == OTHER_OFFICE:
-        office = " ".join((form.get("lgu_office_other") or "").split())[:120]
-        if len(office) < 3:
-            errors.append("Type the name of your LGU office.")
-    elif office not in OFFICES:
-        errors.append("Choose your LGU office.")
+    if office not in OFFICES:
+        errors.append("Choose your LGU department or office.")
 
     position = " ".join((form.get("lgu_position") or "").split())[:100]
-    if len(position) < 2:
-        errors.append("Enter your position or job title in the LGU office.")
+    if not _TITLE.match(position):
+        errors.append("Enter your official job title or designation (e.g. Planning Officer).")
 
     requested_role = (form.get("lgu_requested_role") or "").strip()
     if requested_role not in User.LGU_ROLES:
         errors.append("Choose the LGU role you need: LGU Encoder or LGU Data Steward.")
 
-    endorser_name = " ".join((form.get("lgu_endorser_name") or "").split())
-    if not _NAME.match(endorser_name):
-        errors.append("Enter the full name of your head of office (letters only).")
+    reason = " ".join((form.get("lgu_reason") or "").split())
+    low, high = REASON_LENGTH
+    if len(reason) < low:
+        errors.append(f"Briefly say which datasets your office will manage (at least {low} characters).")
+    reason = reason[:high]
 
-    endorser_email = (form.get("lgu_endorser_email") or "").strip().lower()
-    if not _EMAIL.match(endorser_email):
-        errors.append("Enter your head of office's official e-mail address.")
-    elif endorser_email == (applicant_email or "").strip().lower():
-        errors.append("Your head of office's e-mail must be someone else's: the endorsement has to come from "
-                      "another person.")
-
-    if domains:
+    if domains and applicant_email and not in_domains(applicant_email, domains):
         shown = ", ".join("@" + d for d in domains)
-        if applicant_email and not in_domains(applicant_email, domains):
-            errors.append(f"Sign up for an LGU account with your official LGU e-mail address ({shown}).")
-        if _EMAIL.match(endorser_email) and not in_domains(endorser_email, domains):
-            errors.append(f"Your head of office's e-mail must be an official LGU address ({shown}).")
-
-    discord = (form.get("lgu_discord") or "").strip().lstrip("@").lower()
-    if discord and not _DISCORD.match(discord):
-        errors.append("Enter your Discord username as it appears in your profile (2-32 lower-case letters, "
-                      "numbers, _ or .), or leave it blank.")
-
-    if not form.get("lgu_confirm"):
-        errors.append("Confirm that you work in the LGU office you named and that your head of office will "
-                      "endorse your request.")
+        errors.append(f"Register with your official LGU work e-mail address ({shown}).")
 
     data = {
+        "scope": scope if scope in SCOPES else "city",
+        "barangay": barangay or None,
         "office": office,
         "position": position,
         "requested_role": requested_role,
-        "endorser_name": endorser_name[:120],
-        "endorser_email": endorser_email[:150],
-        "discord_username": discord or None,
+        "reason": reason,
     }
     return data, errors
 
@@ -212,21 +216,42 @@ def _admins():
             if not u.is_archived and u.user_id != system_id]
 
 
+def _link(endpoint):
+    """An absolute link for an e-mail; falls back to the path."""
+    from flask import url_for
+
+    try:
+        return url_for(endpoint, _external=True)
+    except Exception:
+        return ""
+
+
 def _email(user, subject, body):
-    """Best-effort e-mail; the in-app notification is the record."""
+    """Best-effort e-mail; the in-app notification is the record.
+    Returns True when a transport accepted it."""
     try:
         from app.services import email_service
 
         if email_service.is_configured():
-            email_service.send_account_notice(user.email, user.name, subject, body)
+            return bool(email_service.send_account_notice(user.email, user.name, subject, body))
     except Exception:
         pass
+    return False
+
+
+def _apply_context(user, data):
+    user.lgu_office = data["office"]
+    user.lgu_position = data["position"]
+    user.lgu_scope = "barangay" if data.get("scope") == "barangay" and data.get("barangay") else "city"
+    user.lgu_barangay = data.get("barangay") if user.lgu_scope == "barangay" else None
 
 
 def open_request(user, data):
-    """Record a request and put the account in "pending". Any earlier
-    pending request of the same person is replaced. Returns the request."""
-    for old in LguAccessRequest.query.filter_by(user_id=user.user_id, status=REQUEST_PENDING).all():
+    """Record a request and put the account in "pending_verification".
+    Any earlier pending request of the same person is replaced. Returns
+    the request."""
+    for old in LguAccessRequest.query.filter(LguAccessRequest.user_id == user.user_id,
+                                             LguAccessRequest.status.in_((REQUEST_PENDING, "pending"))).all():
         old.status = REQUEST_CANCELLED
         old.decided_at = datetime.utcnow()
     request = LguAccessRequest(
@@ -236,20 +261,20 @@ def open_request(user, data):
         requested_role=data["requested_role"],
         office=data["office"],
         position=data["position"],
-        endorser_name=data["endorser_name"],
-        endorser_email=data["endorser_email"],
-        discord_username=data.get("discord_username"),
+        jurisdiction_scope="barangay" if data.get("scope") == "barangay" else "city",
+        target_barangay=data.get("barangay") if data.get("scope") == "barangay" else None,
+        reason=data.get("reason") or None,
         created_at=datetime.utcnow(),
     )
     db.session.add(request)
-    user.lgu_status = "pending"
+    user.lgu_status = PENDING
     user.lgu_role = None
-    user.lgu_office = data["office"]
-    user.lgu_position = data["position"]
+    _apply_context(user, data)
     user.lgu_verified_by = None
     user.lgu_verified_at = None
-    _notify(_admins(), f"New LGU access request {request.reference_code}: {user.name}, {data['position']}, "
-                       f"{data['office']} ({User.LGU_ROLES[data['requested_role']]}). Verify it in Admin > LGU Access.")
+    _notify(_admins(), f"New LGU access request from {user.name}: {data['position']}, {data['office']} "
+                       f"({request.scope_label}), asking for {User.LGU_ROLES[data['requested_role']]}. "
+                       f"Review it in Admin > Manage Users.")
     db.session.commit()
     return request
 
@@ -263,13 +288,13 @@ def approve(request_id, admin, role, note="", confirmed=False):
     """The System Admin's approval. Returns (ok, message)."""
     request = db.session.get(LguAccessRequest, request_id)
     note = " ".join((note or "").split())[:255]
-    if request is None or request.status != REQUEST_PENDING:
-        return False, "That request is no longer waiting for verification."
+    if request is None or not request.is_pending:
+        return False, "That request is no longer waiting for a decision."
     if role not in User.LGU_ROLES:
         return False, "Choose the role to give: LGU Encoder or LGU Data Steward."
     if not confirmed:
-        return False, ("Tick the box to confirm you checked the endorsement through an official channel "
-                       "(official e-mail and a call to the office) before approving.")
+        return False, ("Tick the box to confirm you checked that this person works in the office they named "
+                       "before approving.")
     user = db.session.get(User, request.user_id)
     if user is None or user.role != "LGU" or user.is_archived:
         return False, "That account is no longer an active LGU account."
@@ -280,28 +305,33 @@ def approve(request_id, admin, role, note="", confirmed=False):
     request.decided_by = admin.user_id
     request.decided_at = now
     request.decision_note = note or None
-    user.lgu_status = "verified"
+    user.lgu_status = VERIFIED
     user.lgu_role = role
-    user.lgu_office = request.office
-    user.lgu_position = request.position
+    _apply_context(user, {"office": request.office, "position": request.position,
+                          "scope": request.jurisdiction_scope, "barangay": request.target_barangay})
     user.lgu_verified_by = admin.user_id
     user.lgu_verified_at = now
     label = User.LGU_ROLES[role]
-    _notify([user], f"Your LGU access request {request.reference_code} was approved. You are now an {label} "
-                    f"in MarketLens.")
+    page, link = (("Gov't Data Review", _link("lgu.data_review")) if role == "steward"
+                  else ("Gov't Data Upload", _link("lgu.government_upload")))
+    _notify([user], f"Your LGU access request was approved. You are now an {label} ({user.lgu_scope_label}); "
+                    f"{page} is open in your menu.")
     db.session.commit()
-    _email(user, f"MarketLens: your LGU access was approved ({request.reference_code})",
-           f"Hi {user.name},\n\nYour LGU access request {request.reference_code} was verified and approved. "
-           f"You are now an {label}. Sign in to MarketLens to open your LGU pages.\n\n"
-           f"MarketLens staff will never ask for your password or verification code.\n\n-- MarketLens")
-    return True, f"{user.name} is now a verified {label}."
+    sent = _email(user, f"MarketLens: your {label} access was approved",
+                  f"Hi {user.name},\n\n"
+                  f"Your request for LGU access in MarketLens was approved. You are now an {label} "
+                  f"({user.lgu_position}, {user.lgu_office}; {user.lgu_scope_label}).\n\n"
+                  f"Open {page}:\n{link}\n\n"
+                  + (f"Note from the administrator: {note}\n\n" if note else "")
+                  + "MarketLens staff will never ask for your password or verification code.\n\n-- MarketLens")
+    return True, f"{user.name} is now a verified {label}." + (" An e-mail was sent." if sent else "")
 
 
 def reject(request_id, admin, reason):
     request = db.session.get(LguAccessRequest, request_id)
     reason = " ".join((reason or "").split())[:255]
-    if request is None or request.status != REQUEST_PENDING:
-        return False, "That request is no longer waiting for verification."
+    if request is None or not request.is_pending:
+        return False, "That request is no longer waiting for a decision."
     if not reason:
         return False, "Give the reason, so the applicant knows what to fix."
     user = db.session.get(User, request.user_id)
@@ -310,15 +340,18 @@ def reject(request_id, admin, reason):
     request.decided_at = datetime.utcnow()
     request.decision_note = reason
     if user is not None and user.role == "LGU":
-        user.lgu_status = "rejected"
+        user.lgu_status = REJECTED
         user.lgu_role = None
-        _notify([user], f"Your LGU access request {request.reference_code} was not approved: {reason}")
+        _notify([user], f"Your LGU access request was rejected: {reason}")
     db.session.commit()
+    sent = False
     if user is not None:
-        _email(user, f"MarketLens: your LGU access request {request.reference_code}",
-               f"Hi {user.name},\n\nYour LGU access request {request.reference_code} was not approved.\n\n"
-               f"Reason: {reason}\n\nSign in to MarketLens to correct and re-send it.\n\n-- MarketLens")
-    return True, f"Request {request.reference_code} was not approved. The applicant has been told why."
+        sent = _email(user, "MarketLens: your LGU access request was not approved",
+                      f"Hi {user.name},\n\nYour request for {request.requested_role_label} access in MarketLens "
+                      f"was not approved.\n\nReason: {reason}\n\n"
+                      f"You can correct and re-send it here:\n{_link('lgu.access_status')}\n\n-- MarketLens")
+    return True, (f"Request from {user.name if user else 'that account'} rejected. The applicant has been told why."
+                  + (" An e-mail was sent." if sent else ""))
 
 
 def revoke(user_id, admin, reason):
@@ -329,7 +362,7 @@ def revoke(user_id, admin, reason):
         return False, "Only a verified LGU account can have its access removed."
     if not reason:
         return False, "Give the reason for removing LGU access."
-    user.lgu_status = "revoked"
+    user.lgu_status = REVOKED
     user.lgu_role = None
     user.lgu_verified_by = admin.user_id
     user.lgu_verified_at = datetime.utcnow()
@@ -351,13 +384,16 @@ def reverify(user_id, admin):
 
 # -------------------------------------------------------------- listings
 
+def _pending_filter():
+    return LguAccessRequest.status.in_((REQUEST_PENDING, "pending"))
+
+
 def pending_requests():
-    return (LguAccessRequest.query.filter_by(status=REQUEST_PENDING)
-            .order_by(LguAccessRequest.created_at.asc()).all())
+    return LguAccessRequest.query.filter(_pending_filter()).order_by(LguAccessRequest.created_at.asc()).all()
 
 
 def count_pending():
-    return LguAccessRequest.query.filter_by(status=REQUEST_PENDING).count()
+    return LguAccessRequest.query.filter(_pending_filter()).count()
 
 
 def recent_decisions(limit=20):
@@ -389,3 +425,28 @@ def role_coverage():
         if key and not user.is_archived:
             counts[key] += 1
     return counts
+
+
+def admin_panel_context():
+    """Everything the LGU access panel on Admin > Manage Users shows."""
+    domains = email_domains()
+    pending = [{
+        "row": row,
+        "applicant_domain_ok": in_domains(row.user.email, domains) if domains and row.user else None,
+    } for row in pending_requests()]
+    staff = verified_staff()
+    decisions = recent_decisions()
+    decider_ids = {r.decided_by for r in decisions} | {s["user"].lgu_verified_by for s in staff}
+    decider_ids.discard(None)
+    deciders = {u.user_id: u for u in User.query.filter(User.user_id.in_(decider_ids)).all()} if decider_ids else {}
+    return {
+        "lgu_pending": pending,
+        "lgu_staff": staff,
+        "lgu_decisions": decisions,
+        "lgu_deciders": deciders,
+        "lgu_coverage": role_coverage(),
+        "lgu_roles": User.LGU_ROLES,
+        "lgu_domains": domains,
+        "review_days": review_days(),
+        "verification_email": verification_email(),
+    }

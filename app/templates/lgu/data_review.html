@@ -1,88 +1,249 @@
 {% extends "base.html" %}
-{% block title %}Data Review{% endblock %}
+{% block title %}Gov't Data Review{% endblock %}
 
 {#
   lgu/data_review.html
   ----------------------
-  Step 2 of the Gov't Data Upload: the LGU Data Steward's queue.
-  Batches an LGU Encoder uploaded wait here until a steward approves or
-  rejects them; approved batches move on to Admin > Publish Data.
+  GOV'T DATA REVIEW -- the LGU Data Steward's one data page (they review;
+  they do not upload). Step 2 of the workflow:
+
+    * the queue of uploads waiting for review (left), and the uploads
+      sent back to their encoders that are waiting for corrections;
+    * the selected upload: its contents next to the live figures, the
+      message thread with the encoder, and the decision -- Approve, Ask
+      for changes (the message tells the encoder what to fix or clean),
+      or Reject;
+    * what the System Admin published recently.
+
+  A barangay-scoped steward only sees uploads for their barangay.
 #}
 
 {% block content %}
-<div class="mb-3">
-  <h4 class="mb-0"><i class="bi bi-clipboard-check text-primary"></i> Data Review</h4>
-  <p class="text-muted small mb-0">Check data uploaded by LGU Encoders before it can go live.</p>
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-clipboard-check text-primary"></i> Gov't Data Review</h4>
+    <p class="text-muted small mb-0">Check what LGU Encoders upload before a System Admin publishes it.
+      You review as <strong>{{ current_user.lgu_role_label }}</strong> &middot; {{ current_user.lgu_scope_label }}.</p>
+  </div>
 </div>
 
-<div class="dss-card mb-4">
-  {% with step=2 %}{% include "shared/_data_workflow.html" %}{% endwith %}
-</div>
+<div class="row g-4 mb-4">
+  {# ------------------------------------------------------------ queue #}
+  <div class="col-lg-4">
+    <div class="dss-card h-100">
+      <h6 class="mb-2">Waiting for your review
+        <span class="badge rounded-pill text-bg-{{ 'warning' if queue else 'secondary' }} ms-1">{{ queue|length }}</span></h6>
+      <div class="list-group list-group-flush dss-review-queue">
+        {% for b in queue %}
+          <a href="{{ url_for('lgu.data_review', batch=b.id) }}"
+             class="list-group-item list-group-item-action px-2 {{ 'active' if selected and selected.id == b.id }}"
+             {{ 'aria-current="true"'|safe if selected and selected.id == b.id }}>
+            <div class="d-flex justify-content-between gap-2">
+              <span class="fw-semibold">#{{ b.id }} &middot; {{ b.dataset_label }}</span>
+              <span class="small">{{ b.uploaded_at|pht('%b %d') }}</span>
+            </div>
+            <div class="small text-truncate">{{ b.filename }}</div>
+            <div class="small opacity-75">{{ b.uploader.name if b.uploader else '—' }} &middot; {{ b.barangays }} barangay{{ 's' if b.barangays != 1 }}
+              {% if b.updated_at %}&middot; corrected{% endif %}</div>
+          </a>
+        {% else %}
+          <p class="small text-muted mb-0 py-2"><i class="bi bi-check2-circle"></i> Nothing is waiting for review.</p>
+        {% endfor %}
+      </div>
 
-<div class="dss-card mb-4">
-  <h6 class="mb-3">
-    Waiting for your review
-    <span class="badge rounded-pill text-bg-{{ 'warning' if pending else 'secondary' }} ms-1">{{ pending|length }}</span>
-  </h6>
-  <div class="table-responsive">
-    <table class="table table-sm align-middle dss-wide-table">
-      <thead>
-        <tr><th>Batch</th><th>File</th><th>Dataset</th><th>Contents</th><th>Uploaded by</th><th>Uploaded</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for b in pending %}
-        {% set own = b.uploaded_by == current_user.user_id %}
-        <tr>
-          <td class="text-nowrap">#{{ b.id }}</td>
-          <td class="text-break"><code>{{ b.filename }}</code></td>
-          <td>{{ b.dataset_label }}<div class="dss-meta">{{ b.source }}</div></td>
-          <td class="small">
-            {{ b.barangays }} barangay{{ 's' if b.barangays != 1 }}
-            {% if b.market_rows %}<div class="dss-meta">{{ '{:,}'.format(b.market_rows) }} industry count{{ 's' if b.market_rows != 1 }}</div>{% endif %}
-            {% if b.permits_in_force is not none %}<div class="dss-meta">{{ '{:,}'.format(b.permits_in_force) }} permits in force</div>{% endif %}
-          </td>
-          <td>{% if b.uploader %}{{ b.uploader.name }}<div class="dss-meta">{{ b.uploader.email|mask_email }}</div>{% else %}&mdash;{% endif %}</td>
-          <td class="dss-meta text-nowrap">{{ b.uploaded_at|pht }}</td>
-          <td class="text-end text-nowrap">
-            {% if own %}
-              <span class="dss-meta" title="Another Data Steward must review a batch you uploaded">Your upload</span>
+      {% if waiting_on_encoder %}
+        <h6 class="mt-4 mb-2">Sent back for changes <span class="badge rounded-pill text-bg-secondary ms-1">{{ waiting_on_encoder|length }}</span></h6>
+        <ul class="list-unstyled small mb-0">
+          {% for b in waiting_on_encoder %}
+            <li class="mb-2">
+              <a href="{{ url_for('lgu.data_review', batch=b.id) }}" class="fw-semibold">#{{ b.id }}</a>
+              {{ b.filename|truncate(28, True, '…') }}
+              <div class="dss-meta">Waiting for {{ b.uploader.name if b.uploader else 'the encoder' }}</div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </div>
+
+  {# --------------------------------------------------------- selected #}
+  <div class="col-lg-8">
+    {% if not selected %}
+      <div class="dss-card h-100 d-flex align-items-center justify-content-center text-center text-muted">
+        <div><i class="bi bi-inbox display-6 d-block mb-2"></i>Choose an upload from the queue to review it.</div>
+      </div>
+    {% else %}
+      {% set own = selected.uploaded_by == current_user.user_id %}
+      <div class="dss-card mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+          <div>
+            <h5 class="mb-0">Batch #{{ selected.id }} <span class="fs-6 align-middle">{% with b=selected %}{% include "shared/_batch_status.html" %}{% endwith %}</span></h5>
+            <div class="small text-muted text-break"><code>{{ selected.filename }}</code> &middot; {{ selected.dataset_label }} &middot; {{ selected.source }}</div>
+          </div>
+          <div class="text-end small">
+            {{ selected.uploader.name if selected.uploader else '—' }}
+            <div class="dss-meta">uploaded {{ selected.uploaded_at|pht }}{% if selected.updated_at %}<br>corrected {{ selected.updated_at|pht }}{% endif %}</div>
+          </div>
+        </div>
+        <div class="row g-3 text-center my-1">
+          <div class="col-4"><div class="fs-5 fw-semibold">{{ selected.barangays }}</div><div class="dss-meta">barangays</div></div>
+          <div class="col-4"><div class="fs-5 fw-semibold">{{ '{:,}'.format(selected.market_rows) }}</div><div class="dss-meta">industry counts</div></div>
+          <div class="col-4"><div class="fs-5 fw-semibold">{{ '{:,}'.format(selected.permits_in_force) if selected.permits_in_force is not none else '—' }}</div><div class="dss-meta">permits in force</div></div>
+        </div>
+
+        {% if selected.status == 'pending_review' and not own %}
+          {# The decision: one message box, three outcomes. #}
+          <form method="POST" action="{{ url_for('lgu.review_batch', batch_id=selected.id) }}" id="reviewForm" class="mt-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label for="reviewNote" class="form-label">Message to the encoder</label>
+            <textarea class="form-control mb-1" id="reviewNote" name="note" rows="3" maxlength="500"
+                      placeholder="e.g. Please remove the duplicate rows for San Roque and fix the misspelled barangay names, then send it again."></textarea>
+            <div class="form-text mb-3" id="reviewNoteHelp">Required to ask for changes or to reject. Optional when approving.</div>
+            <div class="d-flex gap-2 flex-wrap">
+              <button type="submit" name="decision" value="approve" class="btn btn-success">
+                <i class="bi bi-check2-circle" aria-hidden="true"></i> Approve
+              </button>
+              <button type="submit" name="decision" value="changes" class="btn btn-warning dss-needs-note">
+                <i class="bi bi-arrow-return-left" aria-hidden="true"></i> Ask for changes
+              </button>
+              <button type="submit" name="decision" value="reject" class="btn btn-outline-danger dss-needs-note">
+                <i class="bi bi-x-circle" aria-hidden="true"></i> Reject
+              </button>
+            </div>
+            <p class="small text-muted mt-2 mb-0">Approve sends it to the System Admin to publish. <em>Ask for changes</em> sends
+              it back so the encoder can transform or clean the data and resubmit. <em>Reject</em> discards it.</p>
+          </form>
+        {% elif own %}
+          <div class="alert alert-warning small mt-3 mb-0">You uploaded this batch, so another LGU Data Steward must review it.</div>
+        {% elif selected.status == 'changes_requested' %}
+          <div class="alert alert-secondary small mt-3 mb-2">Waiting for the encoder to correct it. It returns to your queue when they save.</div>
+          <form method="POST" action="{{ url_for('lgu.review_batch', batch_id=selected.id) }}" class="d-flex gap-2 flex-wrap align-items-start">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="text" name="note" class="form-control form-control-sm" style="max-width: 24rem;" maxlength="500" required
+                   placeholder="Reason, if it should be rejected instead">
+            <button type="submit" name="decision" value="reject" class="btn btn-sm btn-outline-danger">Reject</button>
+          </form>
+        {% endif %}
+      </div>
+
+      <div class="row g-4">
+        <div class="col-xl-7">
+          <div class="dss-card">
+            <h6 class="mb-1">Barangay rows</h6>
+            <p class="dss-meta mb-2">What this upload would publish, next to what is live now.</p>
+            {% if not preview.available %}
+              <p class="small text-muted mb-0">The staged rows are no longer kept for this batch.</p>
             {% else %}
-              <a class="btn btn-sm btn-primary" href="{{ url_for('lgu.review_batch', batch_id=b.id) }}">
-                <i class="bi bi-search" aria-hidden="true"></i> Review
-              </a>
+            <div class="table-responsive" style="max-height: 26rem;">
+              <table class="table table-sm align-middle small dss-wide-table">
+                <thead class="table-light" style="position: sticky; top: 0;">
+                  <tr><th>Barangay</th><th class="text-end">Permits</th><th class="text-end">Live permits</th>
+                      <th class="text-end">Density</th><th class="text-end">Live density</th><th>Zoning</th></tr>
+                </thead>
+                <tbody>
+                  {% for r in preview.lgu %}
+                  {% set changed = r.live_permit_count is not none and r.permit_count is not none and r.permit_count != r.live_permit_count %}
+                  <tr>
+                    <td>{{ r.barangay }}</td>
+                    <td class="text-end {{ 'fw-semibold' if changed }}">{{ r.permit_count if r.permit_count is not none else '—' }}</td>
+                    <td class="text-end text-muted">{{ r.live_permit_count if r.live_permit_count is not none else '—' }}</td>
+                    <td class="text-end">{{ '%.2f'|format(r.business_density) if r.business_density is not none else '—' }}</td>
+                    <td class="text-end text-muted">{{ '%.2f'|format(r.live_density) if r.live_density is not none else '—' }}</td>
+                    <td class="text-muted">{{ (r.zoning_info or '—')|truncate(32, True, '…') }}</td>
+                  </tr>
+                  {% else %}
+                  <tr><td colspan="6" class="text-center text-muted py-3">No barangay rows.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% if preview.industries %}
+              <details class="mt-2">
+                <summary class="small fw-semibold">Competitors per industry ({{ preview.industries|length }})</summary>
+                <table class="table table-sm small mb-0 mt-2"><tbody>
+                  {% for industry, count in preview.industries %}<tr><td>{{ industry }}</td><td class="text-end">{{ '{:,}'.format(count) }}</td></tr>{% endfor %}
+                </tbody></table>
+              </details>
             {% endif %}
-          </td>
+            {% endif %}
+          </div>
+        </div>
+        <div class="col-xl-5">
+          <div class="dss-card">
+            <h6 class="mb-3"><i class="bi bi-chat-left-text"></i> Messages with the encoder</h6>
+            {% with b=selected %}{% include "shared/_batch_messages.html" %}{% endwith %}
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ----------------------------------------------------- published #}
+<div class="dss-card mb-4">
+  <h6 class="mb-1"><i class="bi bi-broadcast"></i> Recently published by the System Admin</h6>
+  <p class="dss-meta mb-3">These are live: the LGU Dashboard, Saturation Map, recommendations and trend reports use them.</p>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle dss-wide-table mb-0">
+      <thead><tr><th>Batch</th><th>File</th><th>Contents</th><th>Reviewed by</th><th>Published</th></tr></thead>
+      <tbody>
+        {% for b in published %}
+        <tr>
+          <td>#{{ b.id }}</td>
+          <td class="text-break"><code>{{ b.filename }}</code><div class="dss-meta">{{ b.dataset_label }}</div></td>
+          <td class="small">{{ b.barangays }} barangay{{ 's' if b.barangays != 1 }}{% if b.market_rows %}, {{ '{:,}'.format(b.market_rows) }} industry counts{% endif %}</td>
+          <td>{{ b.reviewer.name if b.reviewer else '—' }}</td>
+          <td>{{ b.publisher.name if b.publisher else '—' }}<div class="dss-meta text-nowrap">{{ b.published_at|pht }}</div></td>
         </tr>
         {% else %}
-        <tr><td colspan="7" class="text-center text-muted py-4">
-          <i class="bi bi-check2-circle display-6 d-block mb-2" aria-hidden="true"></i>Nothing is waiting for review.
-        </td></tr>
+        <tr><td colspan="5" class="text-center text-muted py-3">Nothing has been published yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
 
-<div class="dss-card">
-  <h6 class="mb-3">Recent decisions</h6>
-  <div class="table-responsive">
-    <table class="table table-sm align-middle dss-wide-table">
-      <thead><tr><th>Batch</th><th>File</th><th>Status</th><th>Reviewed by</th><th>Note</th><th>Reviewed</th></tr></thead>
+{% if decided %}
+<details class="dss-card">
+  <summary class="fw-semibold">Your recent decisions</summary>
+  <div class="table-responsive mt-2">
+    <table class="table table-sm align-middle dss-wide-table mb-0">
+      <thead><tr><th>Batch</th><th>File</th><th>Status</th><th>Message</th><th>Reviewed</th></tr></thead>
       <tbody>
         {% for b in decided %}
         <tr>
           <td>#{{ b.id }}</td>
-          <td class="text-break"><code>{{ b.filename }}</code><div class="dss-meta">{{ b.dataset_label }}</div></td>
+          <td class="text-break"><code>{{ b.filename }}</code></td>
           <td>{% include "shared/_batch_status.html" %}</td>
-          <td>{{ b.reviewer.name if b.reviewer else '—' }}</td>
           <td class="small text-break">{{ b.review_note or '—' }}</td>
           <td class="dss-meta text-nowrap">{{ b.reviewed_at|pht }}</td>
         </tr>
-        {% else %}
-        <tr><td colspan="6" class="text-center text-muted py-3">No decisions yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-</div>
+</details>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Asking for changes and rejecting need a message (the server checks too).
+  (function () {
+    const note = document.getElementById('reviewNote');
+    if (!note) return;
+    document.querySelectorAll('.dss-needs-note').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        if (note.value.trim()) return;
+        event.preventDefault();
+        note.classList.add('is-invalid');
+        document.getElementById('reviewNoteHelp').textContent = button.value === 'changes'
+          ? 'Write what the encoder should fix or clean.'
+          : 'Write the reason for rejecting the upload.';
+        note.focus();
+      });
+    });
+    note.addEventListener('input', () => note.classList.remove('is-invalid'));
+  })();
+</script>
 {% endblock %}

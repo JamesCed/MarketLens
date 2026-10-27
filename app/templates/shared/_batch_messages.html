@@ -1,0 +1,19 @@
+{# The conversation on one upload batch `b` (Data Steward <-> Encoder). #}
+{% set items = b.message_list %}
+{% if items %}
+<ul class="list-unstyled dss-batch-messages mb-0">
+  {% for m in items|reverse %}
+    <li class="dss-batch-message dss-msg-{{ m.kind }}">
+      <div class="d-flex flex-wrap justify-content-between gap-2">
+        <span class="fw-semibold small">{{ m.by }} <span class="dss-meta fw-normal">{{ m.role }}</span></span>
+        <span class="dss-meta">{{ {'changes_requested': 'Asked for changes', 'edited': 'Corrected', 'approved': 'Approved',
+                                    'rejected': 'Rejected', 'archived': 'Archived'}.get(m.kind, '') }}
+          &middot; {{ m.at.replace('T', ' ')[:16] }} UTC</span>
+      </div>
+      <div class="small text-break">{{ m.text }}</div>
+    </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="small text-muted mb-0">No messages yet.</p>
+{% endif %}

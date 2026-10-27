@@ -388,12 +388,19 @@ def users():
         status=status,
         status_choices=USER_STATUS_CHOICES,
         suspension_choices=SUSPENSION_CHOICES,
-        lgu_roles=User.LGU_ROLES,
+        **_lgu_panel_context(),
         counts={
             "all": User.query.filter(User.archived_at.is_(None)).count(),
             "suspended": User.query.filter(User.archived_at.is_(None), User.status == "inactive").count(),
         },
     )
+
+
+def _lgu_panel_context():
+    """The "LGU access requests" panel on Manage Users."""
+    from app.services import lgu_access_service as access
+
+    return access.admin_panel_context()
 
 
 @admin_bp.route("/users/create", methods=["POST"])
@@ -468,7 +475,7 @@ def set_lgu_role(user_id):
         return redirect(url_for("admin.users"))
     if not user.is_lgu_verified:
         flash(f"{user.name} is not a verified LGU account yet. Verify the request in LGU Access first.", "warning")
-        return redirect(url_for("admin.lgu_access"))
+        return redirect(url_for("admin.users", _anchor="lgu-access"))
     before = user.lgu_role_key
     if before != lgu_role:
         user.lgu_role = lgu_role
@@ -482,31 +489,9 @@ def set_lgu_role(user_id):
 @admin_bp.route("/lgu-access")
 @role_required("Admin")
 def lgu_access():
-    """LGU ACCESS: who asked for an LGU role and is waiting to be
-    verified, every verified LGU account (with its periodic re-check),
-    and the latest decisions. See app/services/lgu_access_service.py."""
-    from app.services import lgu_access_service as access
-
-    domains = access.email_domains()
-    pending = []
-    for row in access.pending_requests():
-        pending.append({
-            "row": row,
-            "applicant_domain_ok": access.in_domains(row.user.email, domains) if domains and row.user else None,
-            "endorser_domain_ok": access.in_domains(row.endorser_email, domains) if domains else None,
-        })
-    decisions = access.recent_decisions()
-    staff = access.verified_staff()
-    return render_template(
-        "admin/lgu_access.html",
-        pending=pending,
-        staff=staff,
-        decisions=decisions,
-        deciders=_people_by_id([r.decided_by for r in decisions] + [s["user"].lgu_verified_by for s in staff]),
-        coverage=access.role_coverage(),
-        lgu_roles=User.LGU_ROLES,
-        **access.guide_context(),
-    )
+    """LGU access requests are decided on Manage Users now (the panel
+    between the search bar and the accounts table)."""
+    return redirect(url_for("admin.users", _anchor="lgu-access"))
 
 
 @admin_bp.route("/lgu-access/<int:request_id>/approve", methods=["POST"])
@@ -524,7 +509,7 @@ def approve_lgu_access(request_id):
                    details=f"{row.reference_code}: {User.LGU_ROLES.get(role, role)} ({row.office})",
                    target=row.user, changes={"lgu_role": [None, role], "lgu_status": ["pending", "verified"]})
     flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.lgu_access"))
+    return redirect(url_for("admin.users", _anchor="lgu-access"))
 
 
 @admin_bp.route("/lgu-access/<int:request_id>/reject", methods=["POST"])
@@ -535,13 +520,13 @@ def reject_lgu_access(request_id):
 
     reason = _reason_from_form("decline this request")
     if reason is None:
-        return redirect(url_for("admin.lgu_access"))
+        return redirect(url_for("admin.users", _anchor="lgu-access"))
     row = db.session.get(LguAccessRequest, request_id)
     ok, message = access.reject(request_id, current_user, reason)
     if ok and row is not None:
         log_action("admin_reject_lgu_access", details=row.reference_code, target=row.user, reason=reason)
     flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.lgu_access"))
+    return redirect(url_for("admin.users", _anchor="lgu-access"))
 
 
 @admin_bp.route("/lgu-access/user/<int:user_id>/revoke", methods=["POST"])
@@ -551,7 +536,7 @@ def revoke_lgu_access(user_id):
 
     reason = _reason_from_form("remove this LGU access")
     if reason is None:
-        return redirect(url_for("admin.lgu_access"))
+        return redirect(url_for("admin.users", _anchor="lgu-access"))
     user = db.session.get(User, user_id)
     before = user.lgu_role_key if user else None
     ok, message = access.revoke(user_id, current_user, reason)
@@ -559,7 +544,7 @@ def revoke_lgu_access(user_id):
         log_action("admin_revoke_lgu_access", details=f"{user.email}: {User.LGU_ROLES.get(before, before)}",
                    target=user, reason=reason, changes={"lgu_status": ["verified", "revoked"]})
     flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.lgu_access"))
+    return redirect(url_for("admin.users", _anchor="lgu-access"))
 
 
 @admin_bp.route("/lgu-access/user/<int:user_id>/reverify", methods=["POST"])
@@ -571,22 +556,14 @@ def reverify_lgu_access(user_id):
     if ok:
         log_action("admin_reverify_lgu_access", details=message[:500], target=db.session.get(User, user_id))
     flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.lgu_access"))
+    return redirect(url_for("admin.users", _anchor="lgu-access"))
 
 
 @admin_bp.route("/publish-data")
 @role_required("Admin")
 def publish_data():
-    """Approved staging batches waiting to go live, and recent history."""
-    from app.models.upload_batch import STATUS_APPROVED, STATUS_PENDING, STATUS_PUBLISHED, STATUS_REJECTED
-    from app.services import staging_service
-
-    return render_template(
-        "admin/publish_data.html",
-        approved=staging_service.batches([STATUS_APPROVED], limit=50),
-        pending_count=staging_service.count_waiting(STATUS_PENDING),
-        history=staging_service.batches([STATUS_PUBLISHED, STATUS_REJECTED], limit=25),
-    )
+    """Publishing approved batches is the first panel on Datasets now."""
+    return redirect(url_for("admin.datasets", _anchor="publish-data"))
 
 
 @admin_bp.route("/publish-data/<int:batch_id>/publish", methods=["POST"])
@@ -603,7 +580,7 @@ def publish_batch(batch_id):
         flash(message, "success")
     else:
         flash(message, "danger")
-    return redirect(url_for("admin.publish_data"))
+    return redirect(url_for("admin.datasets", _anchor="publish-data"))
 
 
 @admin_bp.route("/publish-data/<int:batch_id>/reject", methods=["POST"])
@@ -617,7 +594,7 @@ def reject_batch(batch_id):
         log_action("staging_admin_reject", details=f"batch #{batch_id}", target_type="UploadBatch",
                    target_id=batch_id, reason=note or None)
     flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.publish_data"))
+    return redirect(url_for("admin.datasets", _anchor="publish-data"))
 
 
 @admin_bp.route("/users/<int:user_id>/toggle-active", methods=["POST"])
@@ -1059,7 +1036,21 @@ def datasets():
         archived_records=_archived_records(),
         places_api_key_configured=bool(current_app.config.get("GOOGLE_PLACES_API_KEY")),
         system_email=_system_account_email(),
+        **_publish_panel_context(),
     )
+
+
+def _publish_panel_context():
+    """The "Publish approved government data" panel at the top of
+    Datasets: step 3 of the Gov't Data Upload workflow."""
+    from app.models.upload_batch import STATUS_APPROVED, STATUS_CHANGES, STATUS_PENDING, STATUS_PUBLISHED, STATUS_REJECTED
+    from app.services import staging_service
+
+    return {
+        "approved": staging_service.batches([STATUS_APPROVED], limit=50),
+        "pending_count": staging_service.count_waiting(STATUS_PENDING) + staging_service.count_waiting(STATUS_CHANGES),
+        "history": staging_service.batches([STATUS_PUBLISHED, STATUS_REJECTED], limit=15),
+    }
 
 
 @admin_bp.route("/datasets/export-barangay-seed-csv")
@@ -1294,7 +1285,7 @@ def _save_lgu_access_settings(form):
     if "lgu_verification_email" in form:
         address = (form.get("lgu_verification_email") or "").strip().lower()
         if address and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", address):
-            warnings.append("Not saved: the endorsement e-mail address is not a valid address.")
+            warnings.append("Not saved: the LGU access contact e-mail is not a valid address.")
         else:
             SystemSetting.set("lgu_verification_email", address[:255])
     if "lgu_verification_office" in form:

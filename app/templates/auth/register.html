@@ -22,10 +22,11 @@
 
   LGU accounts skip step 2 entirely. An LGU official plans for the city
   and has no SmeProfile, so asking them for a capital would be asking
-  for a number that has nowhere to go. They get step 5 ("Your LGU
-  office") instead: choosing "LGU Official" grants nothing by itself --
-  the account waits until the System Admin verifies the person with
-  their head of office (app/services/lgu_access_service.py).
+  for a number that has nowhere to go. Choosing "LGU Staff / Official"
+  in step 1 opens the LGU registration form (/register/lgu, account
+  details, Tarlac City LGU context, role), and the account waits as
+  "pending_verification" until the System Admin approves it
+  (app/services/lgu_access_service.py).
 
   CAPITAL IS REQUIRED for an SME (it is an input to the plan viability
   model -- see app/services/plan_params.py). Like every step-2 field its
@@ -89,7 +90,6 @@
         <ol class="ml-steps-rail" id="mlRail">
           <li data-step="1" class="is-active"><span>1</span> Account type</li>
           <li data-step="2"><span>2</span> Your business</li>
-          <li data-step="5" hidden><span>2</span> Your office</li>
           <li data-step="3"><span>3</span> About you</li>
           <li data-step="4"><span>4</span> Sign-in details</li>
         </ol>
@@ -118,7 +118,7 @@
               <label for="role_lgu">
                 <i class="bi bi-bank"></i>
                 <span class="ml-role-title">LGU Staff / Official</span>
-                <span class="ml-role-sub">I work for the city government (verified before access)</span>
+                <span class="ml-role-sub">I work for the city or a barangay (opens the LGU registration form)</span>
               </label>
             </div>
 
@@ -242,38 +242,12 @@
             </div>
           </div>
 
-          {# ------------------- step 5 (LGU only) --------------------- #}
-          {#
-            Who the LGU applicant is at work, and who will vouch for them.
-            Nothing here grants access: the account is created "waiting for
-            verification" and the System Admin confirms it with the head of
-            office through an official channel. See /lgu-access-guide.
-          #}
-          <div class="ml-step" data-step="5" hidden>
-            <div class="ml-auth-head">
-              <h2>Your LGU office</h2>
-              <p>LGU access opens only after the System Admin verifies you with your head of office.
-                <a href="{{ url_for('auth.lgu_access_guide') }}" target="_blank" rel="noopener">How verification works</a></p>
-            </div>
-
-            {% include "shared/_lgu_request_fields.html" %}
-
-            <div class="ml-step-actions">
-              <button type="button" class="ml-btn ml-btn-outline-dark" data-go="prev">
-                <i class="bi bi-arrow-left"></i> Back
-              </button>
-              <button type="button" class="ml-btn ml-btn-primary" data-go="next">
-                Continue <i class="bi bi-arrow-right"></i>
-              </button>
-            </div>
-          </div>
-
           {# --------------------- step 3: about you --------------------- #}
           {#
             The account owner's personal information, in full (IT expert
             review): the name in parts, gender, birthday (the age is worked
             out from it, never typed), contact number and address. Asked of
-            SME and LGU accounts alike. Gender, birthday, contact number and
+            SME accounts (LGU staff register on /register/lgu). Gender, birthday, contact number and
             address are stored ENCRYPTED -- see app/utils/privacy.py.
           #}
           <div class="ml-step" data-step="3" hidden>
@@ -392,10 +366,7 @@
                        value="{{ f.get('email','') }}" autocomplete="email">
               </div>
               <div class="form-text"><i class="bi bi-shield-check"></i> We'll send a 6-digit code here to confirm it's really you.</div>
-              {% if lgu_domains %}
-              <div class="form-text" id="mlLguEmailNote" hidden><i class="bi bi-bank"></i> LGU accounts must use an official
-                address ({% for d in lgu_domains %}@{{ d }}{{ ', ' if not loop.last }}{% endfor %}).</div>
-              {% endif %}
+
             </div>
 
             <div class="row g-3">
@@ -504,15 +475,14 @@
   // put on only the fields that are currently visible and relevant.
   const REQUIRED = {
     2: ["business_name", "industry_type", "location", "capital"],
-    5: ["lgu_office", "lgu_position", "lgu_requested_role", "lgu_endorser_name", "lgu_endorser_email", "lgu_confirm"],
     3: ["first_name", "last_name", "gender", "birthdate", "contact_number", "address_line", "address_barangay"],
     4: ["email", "password", "confirm_password", "accept_terms"],
   };
 
   const isSme = () => form.querySelector('input[name="role"]:checked')?.value === "sme";
-  // LGU accounts have no business plan, so step 2 does not apply to them;
-  // they tell us their office and head of office (step 5) instead.
-  const visibleSteps = () => (isSme() ? [1, 2, 3, 4] : [1, 5, 3, 4]);
+  // LGU staff register on their own form, opened from step 1.
+  const visibleSteps = () => [1, 2, 3, 4];
+  const LGU_FORM_URL = {{ url_for('auth.register_lgu')|tojson }};
   const stepEl = (n) => steps.find(s => Number(s.dataset.step) === n);
 
   let current = 1;
@@ -547,7 +517,6 @@
     });
 
     syncRequired();
-    syncOtherOffice();
     // Keep the card in view when the step above was taller than this one.
     form.closest(".ml-auth-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
     const focusable = stepEl(step)
@@ -556,6 +525,7 @@
   }
 
   function step(delta) {
+    if (current === 1 && delta > 0 && !isSme()) { window.location.href = LGU_FORM_URL; return; }
     const order = visibleSteps();
     const at = order.indexOf(current);
     const next = order[at + delta];
@@ -589,22 +559,8 @@
   function syncRoleNote() {
     roleNote.textContent = isSme()
       ? "Next, tell us about the business you are planning."
-      : "LGU accounts are verified before they open: next, tell us your office and who will endorse you.";
-    const lguEmailNote = document.getElementById("mlLguEmailNote");
-    if (lguEmailNote) lguEmailNote.hidden = isSme();
+      : "LGU staff register on the LGU form: your office, jurisdiction and the role you need. Continue to open it.";
   }
-
-  // "Other office" asks for the office's name.
-  const officeSelect = document.getElementById("ml-lgu-office");
-  const otherOffice = document.getElementById("mlLguOtherOffice");
-  function syncOtherOffice() {
-    if (!officeSelect || !otherOffice) return;
-    const other = officeSelect.value === {{ other_office|tojson }};
-    otherOffice.hidden = !other;
-    const input = otherOffice.querySelector("input");
-    if (input) input.required = other && current === 5;
-  }
-  if (officeSelect) officeSelect.addEventListener("change", syncOtherOffice);
   form.querySelectorAll('input[name="role"]').forEach(r => r.addEventListener("change", () => {
     syncRoleNote();
     // Redraw the rail so step 2 appears or disappears with the choice.

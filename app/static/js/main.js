@@ -376,8 +376,19 @@ document.addEventListener("click", (event) => {
     const found = control.labels ? [...control.labels] : [];
     return found.filter((label) => !label.classList.contains("btn"));
   }
+  // A radio group is required when any of its options carries the
+  // attribute -- usually only the first one does.
+  function isRequired(control) {
+    if (control.type === "radio" && control.name) {
+      const scope = control.form || document;
+      return [...scope.querySelectorAll('input[type="radio"]')]
+        .some((r) => r.name === control.name && r.required);
+    }
+    return control.required;
+  }
   function sync(control) {
-    labelsFor(control).forEach((label) => label.classList.toggle("is-required", control.required));
+    const required = isRequired(control);
+    labelsFor(control).forEach((label) => label.classList.toggle("is-required", required));
   }
   function syncAll(root) {
     root.querySelectorAll("input, select, textarea").forEach(sync);

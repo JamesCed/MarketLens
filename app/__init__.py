@@ -147,6 +147,19 @@ def create_app(config_name=None):
 
     app.jinja_env.globals["lgu_access_waiting"] = _lgu_access_waiting
 
+    def _review_waiting():
+        """Uploads waiting for the signed-in Data Steward (sidebar badge)."""
+        from flask_login import current_user as _user
+
+        from app.services.staging_service import count_waiting_for
+
+        try:
+            return count_waiting_for(_user if _user.is_authenticated else None)
+        except Exception:
+            return 0
+
+    app.jinja_env.globals["review_waiting"] = _review_waiting
+
     from app.services.account_params import PASSWORD_HINT, PASSWORD_MIN_LENGTH, PASSWORD_RULES
 
     app.jinja_env.globals["PASSWORD_RULES"] = [(key, label) for key, label, _test in PASSWORD_RULES]

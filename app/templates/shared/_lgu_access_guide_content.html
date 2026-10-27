@@ -2,161 +2,97 @@
   shared/_lgu_access_guide_content.html
   ---------------------------------------
   How LGU staff and officials get their role -- the public guide at
-  /lgu-access-guide, also linked from the sign-up form, the access
-  request page and the MarketLens Discord. docs/LGU_ACCESS_AND_DISCORD.md
-  is the administrator's side (Discord server setup, verification
-  checklist); keep the two in step.
+  /lgu-access-guide, linked from the registration forms and the access
+  request page. docs/LGU_ACCESS.md is the administrator's side; keep the
+  two in step. (Discord is not part of the access workflow.)
 #}
 <div class="dss-guide">
   <p class="lead fs-6">MarketLens has two LGU roles, held by <strong>two different people</strong>, and a System Admin
-    who verifies everyone before any LGU page opens. Choosing &ldquo;LGU Staff / Official&rdquo; at sign-up grants
-    nothing by itself: anyone can pick it, so your head of office has to vouch for you first.</p>
+    who approves every LGU account before its role opens. Registering as LGU staff gives you the city-wide planning
+    pages straight away; your <strong>LGU role</strong> follows once your request is approved.</p>
 
   <div class="row g-3 mb-2">
     <div class="col-md-6">
       <div class="border rounded-3 p-3 h-100">
         <div class="fw-semibold"><i class="bi bi-cloud-upload" aria-hidden="true"></i> {{ lgu_roles['encoder'] }}</div>
-        <div class="small text-muted">Staff who prepare the data (for example BPLO or zoning staff). Uploads zoning
-          figures and permit lists to the staging area. Nothing goes live from an upload alone.</div>
+        <div class="small text-muted">Staff who prepare the data. Uploads zoning figures and permit lists to the staging
+          area on <strong>Gov&rsquo;t Data Upload</strong>, and can edit or archive an upload until it is approved.</div>
       </div>
     </div>
     <div class="col-md-6">
       <div class="border rounded-3 p-3 h-100">
         <div class="fw-semibold"><i class="bi bi-clipboard-check" aria-hidden="true"></i> {{ lgu_roles['steward'] }}</div>
-        <div class="small text-muted">A supervisor or the office&rsquo;s data officer. Reviews each upload against the
-          live figures and approves it or sends it back with a reason. Never reviews their own upload.</div>
+        <div class="small text-muted">A supervisor or the office&rsquo;s data officer. On <strong>Gov&rsquo;t Data
+          Review</strong> approves uploads, asks the encoder to fix or clean them, or rejects them.</div>
       </div>
     </div>
   </div>
-  <p class="small text-muted">The <strong>System Admin</strong> ({{ verification_office }}) verifies people, then
+  <p class="small text-muted">The <strong>System Admin</strong> ({{ verification_office }}) approves LGU accounts and
     publishes approved data to the live dataset. Separate people for each step means no one can change the city&rsquo;s
-    figures alone, and every change has a second pair of eyes.</p>
-
-  <h3 id="prepare">Before you start</h3>
-  <ul class="small">
-    <li>Your <strong>official LGU e-mail address</strong>{% if lgu_domains %} ({% for d in lgu_domains %}@{{ d }}{{ ', ' if not loop.last }}{% endfor %} &mdash; required){% endif %}.</li>
-    <li>The name and official e-mail address of your <strong>head of office</strong>, who will endorse you.</li>
-    <li>Optional: a <strong>Discord account with two-factor authentication on</strong>, to join the MarketLens community.</li>
-  </ul>
+    figures alone.</p>
 
   <h3 id="steps">Step by step</h3>
 
   <div class="dss-guide-step">
     <span class="dss-guide-num" aria-hidden="true">1</span>
     <div>
-      <div class="fw-semibold">Join the MarketLens Discord (optional, recommended)</div>
-      <div class="small">Open the {% if discord_url %}<a href="{{ discord_url }}" target="_blank" rel="noopener">MarketLens Discord</a>{% else %}MarketLens Discord{% endif %},
-        read <code>#welcome</code> and <code>#rules</code>, and in <strong>Channels &amp; Roles</strong> choose
-        <strong>&ldquo;LGU staff &ndash; applicant&rdquo;</strong>. That role only lets you start a private thread in
-        <code>#get-roles</code>: it is <strong>not</strong> verification and gives no access to MarketLens.</div>
+      <div class="fw-semibold">Register as LGU staff</div>
+      <div class="small">Open the <a href="{{ url_for('auth.register_lgu') }}">LGU registration form</a> and fill in its three parts:
+        <strong>account details</strong> (your name, official work e-mail{% if lgu_domains %} &mdash;
+        {% for d in lgu_domains %}@{{ d }}{{ ', ' if not loop.last }}{% endfor %}{% endif %} &mdash; and a password),
+        your <strong>Tarlac City LGU context</strong> (city-wide or one barangay, your department or office, your job
+        title), and the <strong>role you need</strong> with a short reason. Confirm the 6-digit code sent to your e-mail.</div>
     </div>
   </div>
 
   <div class="dss-guide-step">
     <span class="dss-guide-num" aria-hidden="true">2</span>
     <div>
-      <div class="fw-semibold">Create your MarketLens account</div>
-      <div class="small"><a href="{{ url_for('auth.register') }}">Sign up</a> and choose <strong>LGU Staff /
-        Official</strong>. Under &ldquo;Your LGU office&rdquo; give your office, position, the role you need, and your
-        head of office&rsquo;s name and official e-mail (plus your Discord username if you joined). You get a
-        <strong>reference code</strong> such as <code>LGU-7K3QPM</code>. Your account works, but LGU pages stay closed
-        until you are verified.</div>
+      <div class="fw-semibold">Your request is pending</div>
+      <div class="small">After you sign in your request shows as <strong>Pending&hellip;</strong> and stays pending until
+        the System Admin decides &mdash; please allow up to {{ review_hours }} hours. Meanwhile you can use the LGU
+        Dashboard, the Diversification Plan, the Saturation Map and the Trend Reports. Gov&rsquo;t Data Upload / Review
+        shows as &ldquo;Pending Request Access&hellip;&rdquo; until then.</div>
     </div>
   </div>
 
   <div class="dss-guide-step">
     <span class="dss-guide-num" aria-hidden="true">3</span>
     <div>
-      <div class="fw-semibold">Your head of office endorses you</div>
-      <div class="small">They e-mail <strong>{{ verification_email or 'the System Admin' }}</strong> from their
-        official address, quoting your reference code (template below). On Discord, paste your code in
-        <code>#get-roles</code> as shown below.</div>
+      <div class="fw-semibold">The System Admin decides</div>
+      <div class="small">{{ verification_office }} checks your details with your office and approves your request with
+        the right role, or rejects it with a reason. Either way you are told in MarketLens and by e-mail. An approval
+        e-mail links straight to your page: <strong>Gov&rsquo;t Data Upload</strong> for an Encoder, <strong>Gov&rsquo;t
+        Data Review</strong> for a Data Steward. If it was rejected, fix what the reason says and send a new request from
+        your LGU Access Request page.</div>
     </div>
   </div>
 
   <div class="dss-guide-step">
     <span class="dss-guide-num" aria-hidden="true">4</span>
     <div>
-      <div class="fw-semibold">The System Admin verifies you</div>
-      <div class="small">{{ verification_office }} checks that the endorsement came from the official address and
-        calls your office on its number in the LGU directory (never a number sent in chat). Then they approve your
-        request in MarketLens with the right role, or decline it with a reason you can fix.</div>
-    </div>
-  </div>
-
-  <div class="dss-guide-step">
-    <span class="dss-guide-num" aria-hidden="true">5</span>
-    <div>
-      <div class="fw-semibold">You are in</div>
-      <div class="small">You are notified in MarketLens and by e-mail, and your LGU pages open. On Discord the admin
-        then gives you the <strong>LGU Encoder</strong> or <strong>LGU Data Steward</strong> role, which opens the
-        private LGU channels. Discord roles always follow MarketLens, never the other way round.</div>
-    </div>
-  </div>
-
-  <div class="dss-guide-step">
-    <span class="dss-guide-num" aria-hidden="true">6</span>
-    <div>
       <div class="fw-semibold">Keeping access current</div>
-      <div class="small">Every {{ review_days }} days the System Admin re-checks each LGU account with its office. If you
-        move to another office or leave the LGU, your head of office tells the System Admin and your access is removed
-        the same day, in MarketLens and on Discord.</div>
+      <div class="small">Every {{ review_days }} days the System Admin re-checks each LGU account. If you move to another
+        office or leave the LGU, your access is removed the same day.</div>
     </div>
   </div>
 
-  <h3 id="discord">Pasting your reference code on Discord</h3>
-  <ol class="small">
-    <li>Open <code>#get-roles</code> and click the <strong>Threads</strong> icon at the top (on a phone, tap the channel
-      name, then <strong>Threads</strong>), then <strong>Create</strong>.</li>
-    <li>Choose <strong>Private Thread</strong> and name it with your reference code, for example <code>LGU-7K3QPM</code>.</li>
-    <li>Paste the message from your <strong>LGU Access Request</strong> page in MarketLens (it has a <em>Copy message</em>
-      button). It holds only your code, name, office and the role you asked for.</li>
-    <li>Only you and the <strong>MarketLens Admins</strong> can see a private thread. The admin replies there once you are
-      verified and gives you the <strong>LGU Encoder</strong> or <strong>LGU Data Steward</strong> role.</li>
-  </ol>
-  <pre>Reference code: LGU-XXXXXX
-Name: Juan Dela Cruz
-Office: Business Permits and Licensing Office (BPLO)
-Role requested: LGU Encoder</pre>
-
-  <h3 id="endorsement">Endorsement e-mail template (for the head of office)</h3>
-  <pre>To: {{ verification_email or '(the System Admin office address)' }}
-Subject: MarketLens LGU access – LGU-XXXXXX
-
-I confirm that [full name], [position] of [office], works in our office
-and needs MarketLens access as an [LGU Encoder / LGU Data Steward].
-Reference code: LGU-XXXXXX.
-
-[Name of head of office]
-[Position, office]
-[Official landline of the office]</pre>
+  <h3 id="scope">City-wide or barangay scope</h3>
+  <p class="small">Choose <strong>Specific barangay</strong> if you work for one barangay (for example a Barangay Secretary).
+    A barangay-scoped Encoder can only upload rows for that barangay, and a barangay-scoped Data Steward only reviews
+    uploads for it. City and department staff choose <strong>City-wide</strong>.</p>
 
   <h3 id="safety">Stay safe</h3>
-  <div class="row g-3 small">
-    <div class="col-md-6">
-      <div class="fw-semibold text-success mb-1"><i class="bi bi-check-circle" aria-hidden="true"></i> Do</div>
-      <ul class="mb-0">
-        <li>Turn on two-factor authentication for Discord and use a strong, unique MarketLens password.</li>
-        <li>Talk about your request only in your private thread, and only with members who have the
-          <strong>MarketLens Admin</strong> role.</li>
-        <li>Report anyone asking for passwords, codes or IDs, or pretending to be an admin.</li>
-      </ul>
-    </div>
-    <div class="col-md-6">
-      <div class="fw-semibold text-danger mb-1"><i class="bi bi-x-circle" aria-hidden="true"></i> Never</div>
-      <ul class="mb-0">
-        <li>Post or send your password, a verification code, a government ID, a payslip or your personal number on
-          Discord. MarketLens never asks for them.</li>
-        <li>Share your MarketLens account or sign in for someone else.</li>
-        <li>Ask for a role you are not endorsed for. Pretending to be LGU staff can be reported under the Cybercrime
-          Prevention Act of 2012 (RA 10175).</li>
-      </ul>
-    </div>
-  </div>
+  <ul class="small">
+    <li>Use your official work e-mail and a strong password that you use nowhere else.</li>
+    <li>MarketLens staff never ask for your password, your verification code or a government ID.</li>
+    <li>Do not share your account. Pretending to be LGU staff can be reported under the Cybercrime Prevention Act of
+      2012 (RA 10175).</li>
+  </ul>
 
   <h3 id="privacy">What is kept about your request</h3>
-  <p class="small mb-0">Your office, position and role stay on your account. The verification details (your head of
-    office&rsquo;s name and e-mail, your Discord username) are stored encrypted, seen only by the System Admin, and
-    deleted with the audit trail after the request is decided; a request not verified within 60 days expires. See the
-    <a href="{{ url_for('auth.privacy') }}#lgu-access">Privacy Policy</a>.</p>
+  <p class="small mb-0">Your office, job title, jurisdiction and role stay on your account. The request itself (with your
+    reason) is seen only by the System Admin and deleted with the audit trail after it is decided. See the
+    <a href="{{ url_for('auth.privacy') }}#lgu-access">Privacy Policy</a>.
+    {% if verification_email %}Questions: <a href="mailto:{{ verification_email }}">{{ verification_email }}</a>.{% endif %}</p>
 </div>

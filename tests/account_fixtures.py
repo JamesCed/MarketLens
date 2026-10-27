@@ -30,15 +30,13 @@ def account_fields(email, password=STRONG_PASSWORD, **overrides):
     return data
 
 
-# What an LGU sign-up adds (the LGU access request): office, position, the
-# role asked for and the head of office who will endorse it. See
+# What an LGU registration adds (the LGU access request): jurisdiction,
+# office, job title, the role asked for and why. See
 # app/services/lgu_access_service.py.
 LGU_REQUEST = {
+    "lgu_scope": "city",
     "lgu_office": "Business Permits and Licensing Office (BPLO)",
     "lgu_position": "Licensing Officer II",
     "lgu_requested_role": "encoder",
-    "lgu_endorser_name": "Rosa Garcia",
-    "lgu_endorser_email": "head.bplo@lgu.gov.ph",
-    "lgu_confirm": "1",
+    "lgu_reason": "Our office uploads the quarterly business permit list for the city.",
 }
-

@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% set legal_links_inline = true %}
+{% block title %}LGU registration{% endblock %}
+
+{#
+  auth/register_lgu.html
+  ------------------------
+  Registration for Tarlac City LGU staff and officials, in three parts:
+
+    1. Account details              name, official work e-mail, password
+    2. Tarlac City LGU context      jurisdiction (city-wide or one
+                                    barangay), department / office, job title
+    3. Role selection & scope       LGU Encoder or LGU Data Steward, and why
+
+  The account is created "pending_verification": it can open the LGU
+  Dashboard, Diversification Plan, Saturation Map and Trend Reports, but
+  gets its LGU role only when the System Admin approves the request
+  (app/services/lgu_access_service.py). Nothing else about the person is
+  asked -- no birthday, address or ID.
+#}
+
+{% set f = form or {} %}
+
+{% block auth_content %}
+<div class="ml-landing">
+  <div class="ml-bg" aria-hidden="true">
+    <span class="ml-bg-grid"></span>
+    <span class="ml-orb ml-orb-1"></span>
+    <span class="ml-orb ml-orb-2"></span>
+    <span class="ml-orb ml-orb-3"></span>
+  </div>
+
+  <header class="ml-nav" id="top">
+    <a class="ml-nav-brand" href="{{ url_for('auth.login') }}" aria-label="MarketLens home">
+      {% with variant='light', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+    </a>
+    <a class="ml-btn ml-btn-ghost ml-nav-cta ms-auto" href="{{ url_for('auth.login') }}">Sign in</a>
+  </header>
+
+  <section class="ml-hero ml-hero-compact">
+    <div class="ml-hero-copy">
+      <span class="ml-eyebrow"><i class="bi bi-bank"></i> Tarlac City LGU</span>
+      <h1>LGU staff<br>registration.</h1>
+      <p class="ml-lede">For city and barangay staff who upload or review the government data MarketLens plans with.</p>
+      <ul class="ml-assure">
+        <li><i class="bi bi-hourglass-split"></i>
+          <span><strong>Reviewed within {{ review_hours }} hours.</strong> Your request stays pending until the System
+            Admin approves or rejects it, and you are e-mailed the decision.</span></li>
+        <li><i class="bi bi-speedometer2"></i>
+          <span><strong>Start right away.</strong> While you wait you can already open the LGU Dashboard, the
+            Diversification Plan, the Saturation Map and the Trend Reports.</span></li>
+        <li><i class="bi bi-shield-lock"></i>
+          <span><strong>Only what is needed.</strong> Your name, work e-mail and office details &mdash; no birthday,
+            address or ID. <a class="text-reset" href="{{ url_for('auth.lgu_access_guide') }}">How access works</a></span></li>
+      </ul>
+    </div>
+
+    <div class="ml-hero-form ml-hero-form-wide">
+      <div class="ml-card ml-auth-card">
+        <div class="ml-auth-head">
+          <h2>Register as LGU staff</h2>
+          <p>Business owner? <a href="{{ url_for('auth.register') }}">Use the business sign-up instead</a>.</p>
+        </div>
+
+        <form method="POST" action="{{ url_for('auth.register_lgu') }}" id="mlLguForm" data-captcha="register">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <fieldset class="dss-lgu-section mb-3">
+            <legend class="dss-lgu-legend"><span class="dss-lgu-num">1</span> Account details</legend>
+            <div class="row g-3">
+              <div class="col-sm-4">
+                <label class="form-label" for="lgu-first">First name</label>
+                <input type="text" id="lgu-first" name="first_name" class="form-control" maxlength="60" required
+                       autocomplete="given-name" value="{{ f.get('first_name','') }}">
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label" for="lgu-middle">Middle name <span class="text-muted fw-normal">(optional)</span></label>
+                <input type="text" id="lgu-middle" name="middle_name" class="form-control" maxlength="60"
+                       autocomplete="additional-name" value="{{ f.get('middle_name','') }}">
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label" for="lgu-last">Last name</label>
+                <input type="text" id="lgu-last" name="last_name" class="form-control" maxlength="60" required
+                       autocomplete="family-name" value="{{ f.get('last_name','') }}">
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="lgu-email">Official work e-mail address</label>
+                <input type="email" id="lgu-email" name="email" class="form-control" required autocomplete="email"
+                       placeholder="user@{{ lgu_domains[0] if lgu_domains else 'tarlaccity.gov.ph' }}" value="{{ f.get('email','') }}">
+                <div class="form-text">
+                  {% if lgu_domains %}Must end in {% for d in lgu_domains %}@{{ d }}{{ ', ' if not loop.last }}{% endfor %}.
+                  {% else %}Use your LGU work address.{% endif %} We send a 6-digit code here, and the decision on your request.
+                </div>
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label" for="ml-pw">Account password</label>
+                <div class="input-group">
+                  <input type="password" id="ml-pw" name="password" class="form-control" required
+                         minlength="{{ PASSWORD_MIN_LENGTH }}" autocomplete="new-password">
+                  <button class="btn btn-outline-secondary ml-reveal" type="button" data-target="ml-pw" aria-label="Show password"><i class="bi bi-eye"></i></button>
+                </div>
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label" for="ml-pw2">Confirm password</label>
+                <div class="input-group">
+                  <input type="password" id="ml-pw2" name="confirm_password" class="form-control" required
+                         minlength="{{ PASSWORD_MIN_LENGTH }}" autocomplete="new-password">
+                  <button class="btn btn-outline-secondary ml-reveal" type="button" data-target="ml-pw2" aria-label="Show password"><i class="bi bi-eye"></i></button>
+                </div>
+              </div>
+            </div>
+            {% with target='ml-pw' %}{% include "shared/_password_rules.html" %}{% endwith %}
+          </fieldset>
+
+          {% include "shared/_lgu_request_fields.html" %}
+
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" id="ml-terms" name="accept_terms" value="1" required
+                   {{ 'checked' if f.get('accept_terms') else '' }}>
+            <label class="form-check-label small" for="ml-terms">
+              I agree to the
+              <a href="{{ url_for('auth.terms') }}" data-bs-toggle="modal" data-bs-target="#termsModal">Terms &amp; Conditions</a>
+              and the
+              <a href="{{ url_for('auth.privacy') }}" data-bs-toggle="modal" data-bs-target="#privacyModal">Privacy Policy</a>.
+            </label>
+          </div>
+          <p class="small text-muted mt-2 mb-0"><i class="bi bi-info-circle"></i> Pretending to be LGU staff can be
+            reported under the Cybercrime Prevention Act of 2012 (RA 10175).</p>
+
+          <div class="ml-step-actions">
+            <button type="submit" class="ml-btn ml-btn-primary w-100">Submit registration</button>
+          </div>
+        </form>
+
+        <p class="ml-auth-alt">Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a></p>
+      </div>
+    </div>
+  </section>
+
+  {% include "shared/_terms_modal.html" %}
+  {% include "shared/_privacy_modal.html" %}
+
+  <footer class="ml-footer">
+    <div class="ml-footer-brand">
+      {% with variant='light', size='sm' %}{% include "shared/_brand.html" %}{% endwith %}
+      <p>Decision Support System for SME Business Planning and Market Entry &mdash; Tarlac City.</p>
+    </div>
+    <p class="ml-footer-note ml-footer-legal">
+      <a href="{{ url_for('auth.terms') }}">Terms &amp; Conditions</a>
+      <span aria-hidden="true">&middot;</span>
+      <a href="{{ url_for('auth.privacy') }}">Privacy Policy</a>
+      <span aria-hidden="true">&middot;</span>
+      <a href="{{ url_for('auth.lgu_access_guide') }}">LGU Access Guide</a>
+    </p>
+  </footer>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Target Barangay is active only for "Specific barangay".
+  (function () {
+    const select = document.getElementById('lgu-barangay');
+    const radios = document.querySelectorAll('.dss-lgu-scope');
+    if (!select || !radios.length) return;
+    function sync() {
+      const barangay = document.getElementById('lgu-scope-barangay');
+      const on = !!(barangay && barangay.checked);
+      select.disabled = !on;
+      select.required = on;
+      if (!on) select.value = '';
+    }
+    radios.forEach((r) => r.addEventListener('change', sync));
+    sync();
+  })();
+  (function () {
+    const pw = document.getElementById('ml-pw');
+    const pw2 = document.getElementById('ml-pw2');
+    function syncMatch() {
+      if (pw && pw2) pw2.setCustomValidity(pw2.value && pw2.value !== pw.value ? 'The passwords do not match.' : '');
+    }
+    [pw, pw2].forEach((el) => el && el.addEventListener('input', syncMatch));
+  })();
+</script>
+{% endblock %}

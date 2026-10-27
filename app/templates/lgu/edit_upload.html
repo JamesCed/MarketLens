@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Edit batch #{{ batch.id }}{% endblock %}
+
+{#
+  lgu/edit_upload.html
+  ----------------------
+  The LGU Encoder corrects their own staged upload before it is approved
+  (staging_service.edit_rows / replace_file): change the barangay rows
+  in place, or replace the whole file when the industry counts need
+  fixing. Saving sends the batch back to the Data Steward, with an
+  optional note. The conversation with the Data Steward is on the right.
+#}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <a href="{{ url_for('lgu.government_upload') }}" class="small text-decoration-none"><i class="bi bi-arrow-left"></i> Gov't Data Upload</a>
+    <h4 class="mb-0 mt-1">Batch #{{ batch.id }} <span class="fs-6 align-middle">{% with b=batch %}{% include "shared/_batch_status.html" %}{% endwith %}</span></h4>
+    <p class="text-muted small mb-0 text-break"><code>{{ batch.filename }}</code> &middot; {{ batch.dataset_label }} &middot; {{ batch.source }}</p>
+  </div>
+  {% if batch.is_archivable %}
+    <form method="POST" action="{{ url_for('lgu.archive_upload', batch_id=batch.id) }}" class="dss-archive-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-archive"></i> Archive this upload</button>
+    </form>
+  {% endif %}
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-8">
+    {% if not batch.is_editable %}
+      <div class="alert alert-secondary small">This batch can no longer be edited ({{ batch.status_label|lower }}).
+        {% if batch.status == 'approved' %}It is waiting for the System Admin to publish it; archive it if it should not go live.{% endif %}</div>
+    {% else %}
+      {% if batch.status == 'changes_requested' %}
+        <div class="alert alert-warning small"><i class="bi bi-chat-left-dots"></i> The Data Steward asked for changes. Fix the
+          rows below or replace the file; saving sends it back for review.</div>
+      {% endif %}
+      <form method="POST" action="{{ url_for('lgu.edit_upload', batch_id=batch.id) }}" class="dss-card mb-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="save">
+        <h6 class="mb-1">Edit barangay rows</h6>
+        <p class="dss-meta mb-3">Change only what needs fixing. Numbers cannot be negative; leave a number blank if it is unknown.</p>
+        <div class="table-responsive" style="max-height: 30rem;">
+          <table class="table table-sm align-middle small dss-wide-table dss-edit-table">
+            <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
+              <tr><th>Barangay</th><th>Zoning</th><th class="text-end">Density</th><th class="text-end">Permits</th><th class="text-end">Closures</th></tr>
+            </thead>
+            <tbody>
+              {% for r in rows %}
+              {% set i = loop.index0 %}
+              <tr>
+                <td class="text-nowrap">{{ r.barangay }}<input type="hidden" name="barangay" value="{{ r.barangay }}"></td>
+                <td><input type="text" class="form-control form-control-sm" name="zoning_info-{{ i }}" maxlength="255"
+                           value="{{ r.zoning_info or '' }}" aria-label="Zoning of {{ r.barangay }}"></td>
+                <td><input type="number" class="form-control form-control-sm text-end" name="business_density-{{ i }}" step="0.01" min="0"
+                           value="{{ r.business_density if r.business_density is not none else '' }}" aria-label="Business density of {{ r.barangay }}"></td>
+                <td><input type="number" class="form-control form-control-sm text-end" name="permit_count-{{ i }}" step="1" min="0"
+                           value="{{ r.permit_count if r.permit_count is not none else '' }}" aria-label="Permits in {{ r.barangay }}"></td>
+                <td><input type="number" class="form-control form-control-sm text-end" name="closure_records-{{ i }}" step="1" min="0"
+                           value="{{ r.closure_records if r.closure_records is not none else '' }}" aria-label="Closures in {{ r.barangay }}"></td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-3">This batch has no barangay rows.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <label class="form-label mt-2" for="edit-note">Note to the Data Steward <span class="text-muted fw-normal">(optional)</span></label>
+        <input type="text" id="edit-note" name="note" class="form-control mb-3" maxlength="500" placeholder="e.g. Corrected the permit counts for Aguso and Balete.">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save and send for review</button>
+      </form>
+
+      <form method="POST" action="{{ url_for('lgu.edit_upload', batch_id=batch.id) }}" enctype="multipart/form-data" class="dss-card">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="replace">
+        <h6 class="mb-1">Replace the file</h6>
+        <p class="dss-meta mb-3">For bigger corrections &mdash; industry counts, missing barangays, a cleaned permit list &mdash; upload
+          the corrected file. It is checked like a new upload and replaces this batch&rsquo;s rows.</p>
+        <div class="row g-2 align-items-end">
+          <div class="col-md-6">
+            <label class="form-label" for="replace-file">Corrected file (.xlsx, .xls, .csv)</label>
+            <input type="file" id="replace-file" name="dataset_file" class="form-control" accept=".xlsx,.xls,.csv" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="replace-note">Note <span class="text-muted fw-normal">(optional)</span></label>
+            <input type="text" id="replace-note" name="note" class="form-control" maxlength="500">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-outline-primary mt-3"><i class="bi bi-upload"></i> Replace and send for review</button>
+      </form>
+    {% endif %}
+  </div>
+
+  <div class="col-xl-4">
+    <div class="dss-card">
+      <h6 class="mb-3"><i class="bi bi-chat-left-text"></i> Messages</h6>
+      {% with b=batch %}{% include "shared/_batch_messages.html" %}{% endwith %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.querySelectorAll('.dss-archive-form').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      if (!window.confirm('Archive this upload? It is withdrawn from review and its staged rows are discarded.')) {
+        event.preventDefault();
+      }
+    });
+  });
+</script>
+{% endblock %}

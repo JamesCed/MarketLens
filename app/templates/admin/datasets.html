@@ -28,6 +28,9 @@
   administrator needs to know what the rows ARE and how trustworthy they
   are; how they are fetched belongs in the project documentation.
 #}
+{# Step 3 of the Gov't Data Upload workflow, above the tables. #}
+{% include "admin/_publish_panel.html" %}
+
 <div class="dss-card mb-4">
   <h6 class="mb-1">About the market data</h6>
   <p class="text-muted small mb-0">
@@ -162,4 +165,13 @@
 
 {% block extra_scripts %}
 <script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+<script>
+  // One click publishes once: the button locks while the request runs.
+  document.querySelectorAll('.dss-publish-form').forEach((form) => {
+    form.addEventListener('submit', () => {
+      const button = form.querySelector('button');
+      if (button) { button.disabled = true; button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Publishing…'; }
+    });
+  });
+</script>
 {% endblock %}

@@ -22,10 +22,9 @@ upload period too, and a batch still waiting for review or publishing
 after STAGING_EXPIRY_DAYS expires: it is marked rejected and its staged
 rows are cleared.
 
-LGU access requests (lgu_access_requests: head of office, Discord
-username) are deleted with the audit trail once decided; a request not
-verified within LGU_REQUEST_EXPIRY_DAYS expires and its details are
-cleared.
+LGU access requests (lgu_access_requests: office, job title, scope,
+reason) are deleted with the audit trail once decided. A pending request
+stays "pending_verification" until the System Admin decides.
 
 A row a saved forecast still points to is kept until that forecast is
 gone: forecast_result references its market_data and lgu_data rows, and
@@ -54,7 +53,6 @@ RETENTION_RANGE = (30, 3650)
 UPLOADED_MARKET_SOURCES = ("DTI", "PSA")
 RUN_INTERVAL_SECONDS = 24 * 3600
 STAGING_EXPIRY_DAYS = 60
-LGU_REQUEST_EXPIRY_DAYS = 60
 
 _state = {"next": 0.0}
 _state_lock = threading.Lock()
@@ -84,8 +82,8 @@ def apply_retention(today=None):
 
     from app.extensions import db
     from app.models import AuditLog, ForecastResult, LguData, MarketData, SubcategoryMarketData, SystemSetting
-    from app.models.upload_batch import STATUS_APPROVED, STATUS_PENDING, STATUS_REJECTED, UploadBatch
-    from app.models.lgu_access_request import REQUEST_EXPIRED, REQUEST_PENDING, LguAccessRequest
+    from app.models.upload_batch import STATUS_APPROVED, STATUS_CHANGES, STATUS_PENDING, STATUS_REJECTED, UploadBatch
+    from app.models.lgu_access_request import REQUEST_PENDING, LguAccessRequest
     from app.services.data_import_service import _clear_analytics_caches, _system_user_id_or_none
     from app.services.forecasting_service import PLACEHOLDER_ZONING_NOTE
 
@@ -134,23 +132,23 @@ def apply_retention(today=None):
         # kept "just in case": the batch expires and its rows are cleared.
         "staged_expired": db.session.execute(
             update(UploadBatch).where(
-                UploadBatch.status.in_((STATUS_PENDING, STATUS_APPROVED)),
+                UploadBatch.status.in_((STATUS_PENDING, STATUS_APPROVED, STATUS_CHANGES)),
                 UploadBatch.uploaded_at < datetime.combine(today - timedelta(days=STAGING_EXPIRY_DAYS),
                                                            datetime.min.time()),
             ).values(status=STATUS_REJECTED, payload=None,
                      review_note=f"Expired: not reviewed and published within {STAGING_EXPIRY_DAYS} days."),
             execution_options=no_sync,
         ).rowcount,
-        # LGU access requests: the verification evidence (head of office,
-        # Discord username) is kept as long as the audit trail, then goes.
+        # LGU access requests: a decided request (office, job title,
+        # scope, reason) is kept as long as the audit trail, then goes. A
+        # pending one stays until the System Admin decides.
         "lgu_access_requests": db.session.execute(
             delete(LguAccessRequest).where(
-                LguAccessRequest.status != REQUEST_PENDING,
+                LguAccessRequest.status.not_in((REQUEST_PENDING, "pending")),
                 LguAccessRequest.created_at < audit_cutoff,
             ),
             execution_options=no_sync,
         ).rowcount,
-        "lgu_requests_expired": _expire_lgu_requests(db, LguAccessRequest, REQUEST_PENDING, REQUEST_EXPIRED, today),
     }
     counts = {table: max(0, int(n or 0)) for table, n in counts.items()}
     summary = (f"{today.isoformat()}: removed " + ", ".join(f"{n} {t}" for t, n in counts.items())
@@ -165,24 +163,6 @@ def apply_retention(today=None):
 
         log_action("retention_purge", details=summary[:500], changes=counts)
     return counts
-
-
-def _expire_lgu_requests(db, model, pending, expired, today):
-    """A request nobody verified within LGU_REQUEST_EXPIRY_DAYS expires;
-    the account shows "not approved" and can send a new request."""
-    from app.models import User
-
-    cutoff = datetime.combine(today - timedelta(days=LGU_REQUEST_EXPIRY_DAYS), datetime.min.time())
-    stale = model.query.filter(model.status == pending, model.created_at < cutoff).all()
-    for row in stale:
-        row.status = expired
-        row.decided_at = datetime.utcnow()
-        row.decision_note = f"Expired: not verified within {LGU_REQUEST_EXPIRY_DAYS} days."
-        row.endorser_name = row.endorser_email = row.discord_username = None
-        user = db.session.get(User, row.user_id)
-        if user is not None and user.lgu_status == "pending":
-            user.lgu_status = "rejected"
-    return len(stale)
 
 
 def _run(app):

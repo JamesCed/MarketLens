@@ -26,12 +26,13 @@ after processing.
 
 import os
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
+from flask import Blueprint, abort, render_template, request, redirect, url_for, flash, current_app
 from flask_login import current_user
 
+from app.extensions import db
 from app.models import LguData, MarketData, ForecastResult
 from app.ml.constants import CLUSTER_THRESHOLDS
-from app.models.upload_batch import STATUS_APPROVED, STATUS_PENDING, STATUS_PUBLISHED, STATUS_REJECTED
+from app.models.upload_batch import STATUS_APPROVED, STATUS_CHANGES, STATUS_PENDING, STATUS_PUBLISHED, STATUS_REJECTED
 from app.services import staging_service
 from app.utils.decorators import lgu_role_required, role_required
 from app.utils.helpers import allowed_file, unique_upload_path
@@ -45,16 +46,24 @@ from app.services.data_import_service import (
 
 lgu_bp = Blueprint("lgu", __name__)
 
-# An LGU account the System Admin has not verified yet (or whose access
-# was removed) reaches only its access-request page -- no dashboard, no
-# uploads, no review. See app/services/lgu_access_service.py.
-_OPEN_TO_UNVERIFIED = {"lgu.access_status"}
+# An LGU account the System Admin has not approved yet (or whose access
+# was removed) can use the LGU Dashboard and the Diversification Plan,
+# but not the pages an LGU role opens -- Gov't Data Upload / Review.
+# Those redirect to its access request ("Pending Request Access...").
+# See app/services/lgu_access_service.py.
+_ROLE_PAGES = {
+    "lgu.government_upload", "lgu.upload_status", "lgu.dataset_template", "lgu.data_review",
+    "lgu.review_batch", "lgu.edit_upload", "lgu.archive_upload",
+}
 
 
 @lgu_bp.before_request
 def _verified_lgu_only():
     if (current_user.is_authenticated and current_user.role == "LGU"
-            and not current_user.is_lgu_verified and request.endpoint not in _OPEN_TO_UNVERIFIED):
+            and not current_user.is_lgu_verified and request.endpoint in _ROLE_PAGES):
+        if current_user.is_lgu_pending:
+            flash("Your LGU access request is still pending. Gov't data pages open once the System Admin "
+                  "approves it.", "info")
         return redirect(url_for("lgu.access_status"))
     return None
 
@@ -347,6 +356,10 @@ def government_upload():
     of a page that hangs until the server gives up on it."""
     from app.services import upload_jobs
 
+    # A Data Steward does not upload: their page is Gov't Data Review.
+    if current_user.is_data_steward():
+        return redirect(url_for("lgu.data_review"))
+
     if request.method == "POST":
         if not current_user.is_lgu_encoder():
             flash("Only an LGU Encoder uploads files. As a Data Steward you review them in Data Review.", "warning")
@@ -419,7 +432,6 @@ def government_upload():
         importance=IMPORTANCE,
         upload_job=running.as_dict() if running is not None else None,
         my_batches=staging_service.batches(uploaded_by=current_user.user_id, limit=15),
-        pending_review=staging_service.count_waiting(STATUS_PENDING) if current_user.is_data_steward() else 0,
     )
 
 
@@ -434,35 +446,121 @@ def _flash_job_result(job):
 @lgu_bp.route("/lgu/data-review")
 @lgu_role_required("steward")
 def data_review():
-    """The LGU Data Steward's queue: batches waiting for review, and the
-    latest decisions."""
+    """GOV'T DATA REVIEW -- the LGU Data Steward's workspace (their one
+    data page; they do not upload). The queue of uploads waiting for
+    review, the selected batch with its preview and message thread, the
+    decision controls (approve / ask the encoder for changes / reject),
+    and what the System Admin published recently."""
+    from app.models import UploadBatch
+
+    queue = staging_service.batches_for_steward(current_user, [STATUS_PENDING])
+    waiting_on_encoder = staging_service.batches_for_steward(current_user, [STATUS_CHANGES], limit=20)
+    selected = None
+    wanted = request.args.get("batch", type=int)
+    if wanted:
+        selected = db.session.get(UploadBatch, wanted)
+        if selected is not None and not staging_service.can_review(current_user, selected):
+            selected = None
+    if selected is None and queue:
+        selected = queue[0]
     return render_template(
         "lgu/data_review.html",
-        pending=staging_service.batches([STATUS_PENDING], limit=50),
-        decided=staging_service.batches([STATUS_APPROVED, STATUS_REJECTED, STATUS_PUBLISHED], limit=20),
+        queue=queue,
+        waiting_on_encoder=waiting_on_encoder,
+        selected=selected,
+        preview=staging_service.preview(selected) if selected is not None else None,
+        decided=staging_service.batches_for_steward(current_user, [STATUS_APPROVED, STATUS_REJECTED], limit=10),
+        published=staging_service.recently_published(limit=10),
     )
 
 
 @lgu_bp.route("/lgu/data-review/<int:batch_id>", methods=["GET", "POST"])
 @lgu_role_required("steward")
 def review_batch(batch_id):
-    """One batch: what it would change, and the approve / reject decision."""
+    """The decision on one batch: approve, request changes, or reject."""
+    from app.models import UploadBatch
+
+    if request.method == "GET":
+        return redirect(url_for("lgu.data_review", batch=batch_id))
+    batch = UploadBatch.query.get_or_404(batch_id)
+    decision = request.form.get("decision", "")
+    note = request.form.get("note", "")
+    ok, message = staging_service.review(batch_id, current_user, decision, note)
+    if ok:
+        action = {"approve": "staging_review_approve", "changes": "staging_request_changes",
+                  "reject": "staging_review_reject"}[decision]
+        log_action(action, details=f"batch #{batch_id}: {batch.filename}", target_type="UploadBatch",
+                   target_id=batch_id, target_label=batch.filename, reason=note or None)
+        flash(message, "success")
+        return redirect(url_for("lgu.data_review"))
+    flash(message, "danger")
+    return redirect(url_for("lgu.data_review", batch=batch_id))
+
+
+@lgu_bp.route("/lgu/uploads/<int:batch_id>/edit", methods=["GET", "POST"])
+@lgu_role_required("encoder")
+def edit_upload(batch_id):
+    """The Encoder corrects their own staged batch before it is approved:
+    edit the barangay rows, or replace the file. Either sends it back for
+    review, with an optional note to the Data Steward."""
     from app.models import UploadBatch
 
     batch = UploadBatch.query.get_or_404(batch_id)
+    if batch.uploaded_by != current_user.user_id:
+        abort(403)
     if request.method == "POST":
-        decision = request.form.get("decision")
         note = request.form.get("note", "")
-        ok, message = staging_service.review(batch_id, current_user, decision == "approve", note)
+        if request.form.get("action") == "replace":
+            uploaded = request.files.get("dataset_file")
+            if uploaded is None or uploaded.filename == "":
+                flash("Choose the corrected file to upload.", "danger")
+                return redirect(url_for("lgu.edit_upload", batch_id=batch_id))
+            if not allowed_file(uploaded.filename, current_app.config["ALLOWED_UPLOAD_EXTENSIONS"]):
+                flash("Only Excel (.xlsx, .xls) or CSV (.csv) files are accepted.", "danger")
+                return redirect(url_for("lgu.edit_upload", batch_id=batch_id))
+            folder = current_app.config["UPLOAD_FOLDER"]
+            os.makedirs(folder, exist_ok=True)
+            _safe, path = unique_upload_path(folder, uploaded.filename)
+            uploaded.save(path)
+            try:
+                ok, message = staging_service.replace_file(batch_id, current_user, path, uploaded.filename, note)
+            finally:
+                if os.path.exists(path):
+                    os.remove(path)
+            action = "staging_replace_file"
+        else:
+            changes = {}
+            for index, barangay in enumerate(request.form.getlist("barangay")):
+                changes[barangay] = {field: request.form.get(f"{field}-{index}")
+                                     for field, _kind in staging_service.EDITABLE_FIELDS
+                                     if f"{field}-{index}" in request.form}
+            ok, message = staging_service.edit_rows(batch_id, current_user, changes, note)
+            action = "staging_edit_rows"
         if ok:
-            log_action("staging_review_approve" if decision == "approve" else "staging_review_reject",
-                       details=f"batch #{batch_id}: {batch.filename}", target_type="UploadBatch",
-                       target_id=batch_id, target_label=batch.filename, reason=note or None)
+            log_action(action, details=message[:500], target_type="UploadBatch", target_id=batch_id,
+                       target_label=batch.filename)
             flash(message, "success")
-            return redirect(url_for("lgu.data_review"))
+            return redirect(url_for("lgu.government_upload"))
         flash(message, "danger")
-        return redirect(url_for("lgu.review_batch", batch_id=batch_id))
-    return render_template("lgu/review_batch.html", batch=batch, preview=staging_service.preview(batch))
+        return redirect(url_for("lgu.edit_upload", batch_id=batch_id))
+    return render_template("lgu/edit_upload.html", batch=batch,
+                           rows=staging_service.staged_rows(batch) if batch.payload else [],
+                           fields=staging_service.EDITABLE_FIELDS)
+
+
+@lgu_bp.route("/lgu/uploads/<int:batch_id>/archive", methods=["POST"])
+@lgu_role_required("encoder")
+def archive_upload(batch_id):
+    """The Encoder withdraws their own batch before it goes live."""
+    from app.models import UploadBatch
+
+    batch = UploadBatch.query.get_or_404(batch_id)
+    ok, message = staging_service.archive(batch_id, current_user, request.form.get("note", ""))
+    if ok:
+        log_action("staging_archive", details=f"batch #{batch_id}: {batch.filename}", target_type="UploadBatch",
+                   target_id=batch_id, target_label=batch.filename)
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("lgu.government_upload"))
 
 
 @lgu_bp.route("/lgu/upload-status/<job_id>")
@@ -482,9 +580,10 @@ def upload_status(job_id):
 @lgu_bp.route("/lgu/access", methods=["GET", "POST"])
 @role_required("LGU")
 def access_status():
-    """Where an LGU account stands: waiting for verification (with its
-    reference code and what happens next), not approved / removed (with
-    the reason and a form to send a corrected request), or verified."""
+    """Where an LGU account stands: "Pending..." while the System Admin
+    reviews the request (with what was asked for and the 24-hour
+    window), rejected / removed (with the reason and a form to send a
+    corrected request), or approved."""
     from app.services import lgu_access_service as access
     from app.utils.rate_limit import hit, wait_text
 
@@ -505,8 +604,8 @@ def access_status():
         row = access.open_request(current_user, data)
         log_action("lgu_access_requested", details=f"{row.reference_code}: {data['position']}, {data['office']} "
                                                    f"({row.requested_role_label})", target=current_user)
-        flash(f"Request sent. Your new reference code is {row.reference_code}: ask your head of office to quote "
-              f"it in the endorsement e-mail.", "success")
+        flash("Request sent. It is pending verification: the System Admin reviews it within 24 hours and e-mails "
+              "you the decision.", "success")
         return redirect(url_for("lgu.access_status"))
 
     return render_template("lgu/access_status.html", request_row=access.latest_request(current_user),

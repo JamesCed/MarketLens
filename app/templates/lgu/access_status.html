@@ -4,159 +4,121 @@
 {#
   lgu/access_status.html
   ------------------------
-  The one LGU page an unverified LGU account can open: where its request
-  stands, its reference code, and exactly what happens next. A request
-  that was not approved (or access that was removed) can be corrected
-  and sent again here. See app/services/lgu_access_service.py and the
-  public guide at /lgu-access-guide.
+  Where an LGU account's request for an LGU role stands
+  (app/services/lgu_access_service.py):
+
+    pending_verification  "Pending..." -- the System Admin reviews it
+                          within 24 hours and e-mails the decision.
+                          Meanwhile the LGU Dashboard, Diversification
+                          Plan, Saturation Map and Trend Reports are open.
+    rejected / revoked    the reason, and a form to send a corrected request
+    verified              approved, with a link to the role's page
 #}
 
 {% set status = current_user.lgu_status_key %}
 {% set f = form or {} %}
-{% set lgu_roles = current_user.LGU_ROLES %}
 
 {% block content %}
 <div class="mb-3">
   <h4 class="mb-0"><i class="bi bi-person-badge text-primary"></i> LGU Access Request</h4>
-  <p class="text-muted small mb-0">LGU pages open only after the System Admin verifies you with your head of office.
-    <a href="{{ url_for('auth.lgu_access_guide') }}">Read the full guide</a></p>
+  <p class="text-muted small mb-0">Your LGU role (Encoder or Data Steward) opens once the System Admin approves your request.</p>
 </div>
 
 {% if status == 'verified' %}
-  <div class="alert alert-success">
-    <i class="bi bi-patch-check-fill"></i> You are a verified <strong>{{ current_user.lgu_role_label }}</strong>
-    {% if current_user.lgu_office %}in {{ current_user.lgu_office }}{% endif %}.
-    <a href="{{ url_for('lgu.dashboard') }}" class="alert-link">Go to the LGU Dashboard</a>
+  <div class="dss-card dss-pending-card mb-4">
+    <i class="bi bi-patch-check-fill dss-pending-icon text-success" aria-hidden="true"></i>
+    <div class="dss-pending-title text-success">Approved</div>
+    <p class="mb-3">You are a verified <strong>{{ current_user.lgu_role_label }}</strong>
+      {% if current_user.lgu_office %}&middot; {{ current_user.lgu_office }}{% endif %} &middot; {{ current_user.lgu_scope_label }}.</p>
+    {% if current_user.is_data_steward() %}
+      <a class="btn btn-primary" href="{{ url_for('lgu.data_review') }}"><i class="bi bi-clipboard-check"></i> Open Gov't Data Review</a>
+    {% else %}
+      <a class="btn btn-primary" href="{{ url_for('lgu.government_upload') }}"><i class="bi bi-database-add"></i> Open Gov't Data Upload</a>
+    {% endif %}
   </div>
+
+{% elif status == 'pending_verification' %}
+  <div class="dss-card dss-pending-card mb-4" role="status" aria-live="polite">
+    <i class="bi bi-hourglass-split dss-pending-icon" aria-hidden="true"></i>
+    <div class="dss-pending-title">Pending<span class="dss-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></div>
+    <p class="mb-1">Your request for <strong>{{ request_row.requested_role_label if request_row else 'an LGU role' }}</strong>
+      access is waiting for the System Admin.</p>
+    <p class="text-muted mb-3">Please allow up to <strong>{{ review_hours }} hours</strong> for your request to be reviewed.
+      We will e-mail <strong>{{ current_user.email }}</strong> as soon as it is approved or rejected, with a link to your page.</p>
+    <div class="d-flex flex-wrap justify-content-center gap-2">
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('lgu.dashboard') }}"><i class="bi bi-speedometer2"></i> LGU Dashboard</a>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('lgu.diversification') }}"><i class="bi bi-diagram-3"></i> Diversification Plan</a>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('sme.saturation_map') }}"><i class="bi bi-map"></i> Saturation Map</a>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('sme.trend_reports') }}"><i class="bi bi-graph-up-arrow"></i> Trend Reports</a>
+    </div>
+    <p class="small text-muted mt-3 mb-0">You can use these while you wait. Gov't Data Upload / Review appears in your menu once you are approved.</p>
+  </div>
+
 {% else %}
-
-<div class="row g-4 mb-4">
-  <div class="col-lg-5">
-    <div class="dss-card h-100">
-      <h6 class="mb-3">Your request</h6>
-      {% if request_row %}
-        <div class="text-center mb-3">
-          <div class="dss-meta">Reference code</div>
-          <div class="dss-ref-code" id="lguRefCode">{{ request_row.reference_code }}</div>
-          <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="copyRefCode">
-            <i class="bi bi-clipboard" aria-hidden="true"></i> Copy code
-          </button>
-        </div>
-        <dl class="row small mb-0">
-          <dt class="col-5">Status</dt>
-          <dd class="col-7">
-            <span class="badge {{ 'text-bg-warning' if status == 'pending' else 'text-bg-danger' }}">{{ current_user.lgu_status_label }}</span>
-          </dd>
-          <dt class="col-5">Role asked for</dt><dd class="col-7">{{ request_row.requested_role_label }}</dd>
-          <dt class="col-5">Office</dt><dd class="col-7">{{ request_row.office }}</dd>
-          <dt class="col-5">Position</dt><dd class="col-7">{{ request_row.position }}</dd>
-          <dt class="col-5">Sent</dt><dd class="col-7">{{ request_row.created_at|pht }}</dd>
-          {% if request_row.decision_note and status != 'pending' %}
-            <dt class="col-5">Reason</dt><dd class="col-7 text-break">{{ request_row.decision_note }}</dd>
-          {% endif %}
-        </dl>
-      {% else %}
-        <p class="small text-muted mb-0">No request is on file for this account. Send one below.</p>
-      {% endif %}
-      {% if status == 'revoked' %}
-        <div class="alert alert-danger small mt-3 mb-0">Your LGU access was removed. If you still need it (for example
-          after moving to another office), send a new request with your current office and head of office.</div>
-      {% endif %}
-    </div>
+  <div class="alert alert-danger">
+    <div class="fw-semibold mb-1"><i class="bi bi-x-circle"></i>
+      {{ 'Your LGU access request was rejected.' if status == 'rejected' else 'Your LGU access was removed.' }}</div>
+    {% if request_row and request_row.decision_note and status == 'rejected' %}<div>Reason: {{ request_row.decision_note }}</div>{% endif %}
+    <div class="small mt-1">Correct what the reason points to and send a new request below. The LGU Dashboard, Diversification
+      Plan, Saturation Map and Trend Reports stay open to you.</div>
   </div>
+{% endif %}
 
-  <div class="col-lg-7">
-    <div class="dss-card h-100">
-      <h6 class="mb-3">What happens next</h6>
-      <ol class="dss-next-steps small mb-3">
-        <li><strong>Your head of office e-mails the System Admin</strong> from their official address
-          {% if lgu_domains %}({% for d in lgu_domains %}@{{ d }}{{ ', ' if not loop.last }}{% endfor %}){% endif %}
-          to <a href="mailto:{{ verification_email }}?subject=MarketLens%20LGU%20access%20-%20{{ request_row.reference_code if request_row else '' }}">{{ verification_email or 'the System Admin' }}</a>
-          with the subject <code>MarketLens LGU access &ndash; {{ request_row.reference_code if request_row else 'your code' }}</code>,
-          confirming your name, position and the role you need.
-          <a href="{{ url_for('auth.lgu_access_guide') }}#endorsement">Copy the e-mail template</a></li>
-        <li><strong>{{ verification_office }} verifies it</strong>: they check the e-mail came from the official address
-          and call your office on its number in the LGU directory &mdash; never a number sent in chat.</li>
-        <li><strong>You are notified</strong> here and by e-mail. Your LGU pages open with the role you were given.</li>
-      </ol>
-      {#
-        DISCORD. The applicant pastes this into a PRIVATE thread in
-        #get-roles (only they and the MarketLens Admins can read it), so the
-        admin can match the Discord member to this request. It carries the
-        code, name, office and role -- never an e-mail, number or ID.
-      #}
-      <div class="dss-discord-box">
-        <div class="fw-semibold mb-1"><i class="bi bi-discord" aria-hidden="true"></i> Paste your code in the MarketLens Discord</div>
-        {% if request_row %}
-          <p class="small mb-2">In <code>#get-roles</code>, start a <strong>private thread</strong> named
-            <code>{{ request_row.reference_code }}</code> and paste this message. Only you and the MarketLens Admins can
-            see a private thread. After you are verified, the admin gives you your LGU role there.</p>
-          <pre class="dss-discord-message mb-2" id="lguDiscordMessage">Reference code: {{ request_row.reference_code }}
-Name: {{ current_user.name }}
-Office: {{ request_row.office }}
-Role requested: {{ request_row.requested_role_label }}</pre>
-          <button type="button" class="btn btn-sm btn-primary" id="copyDiscordMessage">
-            <i class="bi bi-clipboard" aria-hidden="true"></i> Copy message
-          </button>
-        {% else %}
-          <p class="small mb-2">Send your request below first; you get a reference code to paste in <code>#get-roles</code>.</p>
-        {% endif %}
-        {% if discord_url %}<a class="btn btn-sm btn-outline-primary" href="{{ discord_url }}" target="_blank" rel="noopener">Open the Discord</a>{% endif %}
-        <a class="small ms-1" href="{{ url_for('auth.lgu_access_guide') }}#discord">How to start a private thread</a>
-      </div>
-      <p class="small text-danger-emphasis mt-3 mb-0"><i class="bi bi-shield-lock" aria-hidden="true"></i>
-        MarketLens staff never ask for your password, a verification code or a government ID &mdash; not on Discord, not by
-        e-mail. Trust only Discord members with the <strong>MarketLens Admin</strong> role.</p>
-    </div>
-  </div>
+{% if request_row and status != 'verified' %}
+<div class="dss-card mb-4">
+  <h6 class="mb-3">Your request</h6>
+  <dl class="row small mb-0">
+    <dt class="col-sm-3">Status</dt>
+    <dd class="col-sm-9"><span class="badge {{ 'text-bg-warning' if status == 'pending_verification' else 'text-bg-danger' }}">{{ current_user.lgu_status_label }}</span></dd>
+    <dt class="col-sm-3">Requested role</dt><dd class="col-sm-9">{{ request_row.requested_role_label }}</dd>
+    <dt class="col-sm-3">Office</dt><dd class="col-sm-9">{{ request_row.office }}</dd>
+    <dt class="col-sm-3">Job title</dt><dd class="col-sm-9">{{ request_row.position }}</dd>
+    <dt class="col-sm-3">Jurisdiction</dt><dd class="col-sm-9">{{ request_row.scope_label }}</dd>
+    {% if request_row.reason %}<dt class="col-sm-3">Reason</dt><dd class="col-sm-9 text-break">{{ request_row.reason }}</dd>{% endif %}
+    <dt class="col-sm-3">Sent</dt><dd class="col-sm-9">{{ request_row.created_at|pht }} &middot; ref. <code>{{ request_row.reference_code }}</code></dd>
+  </dl>
+  {% if verification_email %}<p class="small text-muted mt-3 mb-0">Questions about your request? Write to
+    <a href="mailto:{{ verification_email }}">{{ verification_email }}</a> ({{ verification_office }}).</p>{% endif %}
 </div>
+{% endif %}
 
-{% if show_form or status in ('pending',) %}
+{% if status != 'verified' %}
 <div class="dss-card">
-  {% if status == 'pending' %}
+  {% if status == 'pending_verification' %}
     <details {{ 'open' if show_form }}>
-      <summary class="fw-semibold">Made a mistake? Send a corrected request</summary>
-      <p class="small text-muted mt-2">This replaces your current request and gives you a new reference code.</p>
+      <summary class="fw-semibold">Made a mistake? Update your request</summary>
+      <p class="small text-muted mt-2">This replaces your current request; it stays pending until the System Admin decides.</p>
   {% else %}
       <h6 class="mb-1">Send a new request</h6>
-      <p class="small text-muted">Correct what the reason above points to. You will get a new reference code.</p>
+      <p class="small text-muted">It goes back to the System Admin as pending verification.</p>
   {% endif %}
       <form method="POST" action="{{ url_for('lgu.access_status') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% include "shared/_lgu_request_fields.html" %}
-        <button type="submit" class="btn btn-primary mt-3"><i class="bi bi-send" aria-hidden="true"></i> Send request</button>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-send" aria-hidden="true"></i> Send request</button>
       </form>
-  {% if status == 'pending' %}
+  {% if status == 'pending_verification' %}
     </details>
   {% endif %}
 </div>
-{% endif %}
-
 {% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
   (function () {
-    function copier(buttonId, sourceId) {
-      const button = document.getElementById(buttonId);
-      const source = document.getElementById(sourceId);
-      if (!button || !source || !navigator.clipboard) return;
-      button.addEventListener('click', () => {
-        navigator.clipboard.writeText(source.textContent.trim()).then(() => {
-          button.innerHTML = '<i class="bi bi-check2"></i> Copied';
-        });
-      });
+    const select = document.getElementById('lgu-barangay');
+    const radios = document.querySelectorAll('.dss-lgu-scope');
+    if (!select || !radios.length) return;
+    function sync() {
+      const barangay = document.getElementById('lgu-scope-barangay');
+      const on = !!(barangay && barangay.checked);
+      select.disabled = !on;
+      select.required = on;
+      if (!on) select.value = '';
     }
-    copier('copyRefCode', 'lguRefCode');
-    copier('copyDiscordMessage', 'lguDiscordMessage');
-    const office = document.getElementById('ml-lgu-office');
-    const other = document.getElementById('mlLguOtherOffice');
-    if (office && other) {
-      const sync = () => { other.hidden = office.value !== {{ other_office|tojson }}; };
-      office.addEventListener('change', sync);
-      sync();
-    }
+    radios.forEach((r) => r.addEventListener('change', sync));
+    sync();
   })();
 </script>
 {% endblock %}

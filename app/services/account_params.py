@@ -160,6 +160,27 @@ def parse_personal_info(form, today=None):
     return data, errors
 
 
+def parse_account_names(form):
+    """The name fields alone -- all an LGU registration asks for about the
+    person (first, middle, last). Returns (data, errors) in the same shape
+    as parse_personal_info, with the other details left empty."""
+    errors = []
+    first = _clean(form, "first_name", 60)
+    middle = _clean(form, "middle_name", 60)
+    last = _clean(form, "last_name", 60)
+    if not first:
+        errors.append("First name is required.")
+    if not last:
+        errors.append("Last name is required.")
+    for label, value in (("First name", first), ("Middle name", middle), ("Last name", last)):
+        if value and not _NAME_RE.match(value):
+            errors.append(f"{label} can only contain letters, spaces, hyphens, apostrophes and periods.")
+    data = {"first_name": first, "middle_name": middle or None, "last_name": last, "suffix": None,
+            "gender": None, "birthdate": None, "contact_number": None, "address_line": None,
+            "address_barangay": None}
+    return data, errors
+
+
 def apply_personal_info(user, data):
     """Write parsed personal information onto a User (and its display
     name)."""

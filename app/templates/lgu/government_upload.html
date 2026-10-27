@@ -19,7 +19,7 @@
 #}
 <div class="dss-card mb-4">
   <h6 class="mb-3"><i class="bi bi-diagram-2"></i> How an upload goes live</h6>
-  {% with step=(2 if current_user.is_data_steward() else 1) %}{% include "shared/_data_workflow.html" %}{% endwith %}
+  {% with step=1 %}{% include "shared/_data_workflow.html" %}{% endwith %}
 </div>
 
 {#
@@ -86,15 +86,12 @@
 </div>
 {% endif %}
 
-{% if current_user.is_data_steward() %}
-<div class="alert alert-info d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
-  <div>
-    <i class="bi bi-clipboard-check"></i> <strong>You are an LGU Data Steward.</strong>
-    LGU Encoders upload the files; you review and approve or reject them before a System Admin publishes them.
-  </div>
-  <a class="btn btn-sm btn-primary" href="{{ url_for('lgu.data_review') }}">
-    Open Data Review{% if pending_review %} <span class="badge text-bg-warning ms-1">{{ pending_review }} waiting</span>{% endif %}
-  </a>
+{% set needs_changes = my_batches|selectattr('status', 'equalto', 'changes_requested')|list %}
+{% if needs_changes %}
+<div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div><i class="bi bi-chat-left-dots"></i> <strong>The Data Steward asked for changes</strong> on
+    {{ needs_changes|length }} upload{{ 's' if needs_changes|length != 1 }}. Fix the data, then it goes back for review.</div>
+  <a class="btn btn-sm btn-warning" href="{{ url_for('lgu.edit_upload', batch_id=needs_changes[0].id) }}">Open batch #{{ needs_changes[0].id }}</a>
 </div>
 {% endif %}
 
@@ -245,25 +242,50 @@
 </div>
 
 {% if my_batches %}
+{#
+  YOUR UPLOADS. Until a Data Steward approves a batch the encoder can
+  still correct it (Edit: change the barangay rows or replace the file)
+  or withdraw it (Archive). The latest message from the Data Steward is
+  shown on the row; the full conversation is on the edit page.
+#}
 <div class="dss-card mb-4" id="myUploads">
   <h6 class="mb-3">Your uploads</h6>
   <div class="table-responsive">
     <table class="table table-sm align-middle dss-wide-table">
-      <thead><tr><th>Batch</th><th>File</th><th>Contents</th><th>Status</th><th>Note</th><th>Uploaded</th></tr></thead>
+      <thead><tr><th>Batch</th><th>File</th><th>Contents</th><th>Status</th><th>Latest message</th><th>Uploaded</th><th></th></tr></thead>
       <tbody>
         {% for b in my_batches %}
-        <tr>
+        {% set last = b.last_message %}
+        <tr class="{{ 'table-warning' if b.status == 'changes_requested' else '' }}">
           <td>#{{ b.id }}</td>
-          <td class="text-break"><code>{{ b.filename }}</code><div class="dss-meta">{{ b.dataset_label }}</div></td>
+          <td class="dss-file-cell"><code>{{ b.filename }}</code><div class="dss-meta">{{ b.dataset_label }}</div></td>
           <td class="small">{{ b.barangays }} barangay{{ 's' if b.barangays != 1 }}{% if b.market_rows %}, {{ '{:,}'.format(b.market_rows) }} industry count{{ 's' if b.market_rows != 1 }}{% endif %}</td>
           <td>{% include "shared/_batch_status.html" %}</td>
-          <td class="small text-break">{{ b.review_note or '—' }}</td>
+          <td class="small text-break">
+            {% if last %}<span class="fw-semibold">{{ last.by }}:</span> {{ last.text|truncate(120, True, '…') }}
+            {% else %}{{ b.review_note or '—' }}{% endif %}
+          </td>
           <td class="dss-meta text-nowrap">{{ b.uploaded_at|pht }}</td>
+          <td class="text-end text-nowrap">
+            {% if b.is_editable %}
+              <a class="btn btn-sm {{ 'btn-warning' if b.status == 'changes_requested' else 'btn-outline-primary' }}"
+                 href="{{ url_for('lgu.edit_upload', batch_id=b.id) }}"><i class="bi bi-pencil-square" aria-hidden="true"></i> Edit</a>
+            {% elif b.message_list %}
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('lgu.edit_upload', batch_id=b.id) }}"><i class="bi bi-chat-left-text" aria-hidden="true"></i> View</a>
+            {% endif %}
+            {% if b.is_archivable %}
+              <form method="POST" action="{{ url_for('lgu.archive_upload', batch_id=b.id) }}" class="d-inline dss-archive-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Withdraw this upload"><i class="bi bi-archive" aria-hidden="true"></i> Archive</button>
+              </form>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+  <p class="dss-meta mb-0">Edit and Archive are available until a batch is published. Edited batches go back to the Data Steward for review.</p>
 </div>
 {% endif %}
 
@@ -381,5 +403,14 @@
     }
     setTimeout(poll, 700);
   })();
+
+  // Archiving withdraws the batch and discards its staged rows.
+  document.querySelectorAll('.dss-archive-form').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      if (!window.confirm('Archive this upload? It is withdrawn from review and its staged rows are discarded.')) {
+        event.preventDefault();
+      }
+    });
+  });
 </script>
 {% endblock %}

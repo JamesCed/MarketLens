@@ -135,10 +135,10 @@ def test_a_data_steward_cannot_upload(app):
         page = _upload(_login(app, "steward@flow.test"), path).get_data(as_text=True)
     finally:
         os.unlink(path)
-    assert "Only an LGU Encoder uploads files" in page
+    assert "Gov't Data Review" in page.replace("&#39;", "'"), "a steward's data page is the review page"
     assert UploadBatch.query.count() == 0
-    upload_page = _login(app, "steward@flow.test").get("/lgu/government-data-upload").get_data(as_text=True)
-    assert 'id="uploadForm"' not in upload_page and "Open Data Review" in upload_page
+    response = _login(app, "steward@flow.test").get("/lgu/government-data-upload")
+    assert response.status_code == 302 and response.headers["Location"].endswith("/lgu/data-review")
 
 
 def test_an_lgu_account_without_a_sub_role_is_an_encoder(app):
@@ -161,7 +161,7 @@ def test_only_data_stewards_open_data_review(app):
 def test_a_steward_approves_and_the_admins_are_told(app):
     batch_id = _stage(app)
     client = _login(app, "steward@flow.test")
-    review = client.get(f"/lgu/data-review/{batch_id}").get_data(as_text=True)
+    review = client.get(f"/lgu/data-review/{batch_id}", follow_redirects=True).get_data(as_text=True)
     assert "Barangay rows" in review and BARANGAY_NAMES[0] in review and 'id="reviewForm"' in review
 
     page = client.post(f"/lgu/data-review/{batch_id}", data={"decision": "approve", "note": "Figures match BPLO."},
@@ -228,6 +228,7 @@ def test_only_an_admin_publishes(app):
     for email in ("encoder@flow.test", "steward@flow.test", "sme@flow.test"):
         client = _login(app, email)
         assert client.get("/admin/publish-data").status_code == 403, email
+        assert client.get("/admin/datasets").status_code == 403, email
         assert client.post(f"/admin/publish-data/{batch_id}/publish").status_code == 403, email
     assert db.session.get(UploadBatch, batch_id).status == "approved"
 
@@ -237,8 +238,8 @@ def test_publishing_makes_the_batch_live_once(app):
 
     batch_id = _approved(app)
     client = _login(app, "admin@flow.test")
-    listing = client.get("/admin/publish-data").get_data(as_text=True)
-    assert f"#{batch_id}" in listing and "Publish" in listing
+    listing = client.get("/admin/publish-data", follow_redirects=True).get_data(as_text=True)
+    assert f"#{batch_id}" in listing and "Publish approved government data" in listing, "the panel is on Datasets"
 
     page = client.post(f"/admin/publish-data/{batch_id}/publish", follow_redirects=True).get_data(as_text=True)
     assert f"Batch #{batch_id} published" in page
@@ -309,12 +310,14 @@ def test_an_admin_creates_a_data_steward(app):
 def test_the_sidebar_shows_each_step_to_the_right_people(app):
     _approved(app)
     _stage(app)
-    steward = _login(app, "steward@flow.test").get("/lgu/government-data-upload").get_data(as_text=True)
-    assert "Data Review" in steward and "Batches waiting for your review" in steward
+    steward = _login(app, "steward@flow.test").get("/lgu/data-review").get_data(as_text=True).replace("&#39;", "'")
+    assert "Gov't Data Review" in steward and "Uploads waiting for your review" in steward
+    assert 'href="/lgu/government-data-upload"' not in steward, "one data page for a steward, not two"
     encoder = _login(app, "encoder@flow.test").get("/lgu/government-data-upload").get_data(as_text=True)
-    assert 'href="/lgu/data-review"' not in encoder
-    admin = _login(app, "admin@flow.test").get("/admin/publish-data").get_data(as_text=True)
-    assert "Publish Data" in admin and "Approved batches waiting to be published" in admin
+    assert 'href="/lgu/data-review"' not in encoder and "Gov't Data Upload" in encoder.replace("&#39;", "'")
+    admin = _login(app, "admin@flow.test").get("/admin/datasets").get_data(as_text=True)
+    assert 'href="/admin/publish-data"' not in admin and "Approved batches waiting to be published" in admin
+    assert admin.index('id="publish-data"') < admin.index("LGU Data (permits"), "the publish panel is above the tables"
 
 
 def test_every_workflow_action_has_an_audit_label():
@@ -419,3 +422,147 @@ def test_the_fast_xlsx_reader_matches_openpyxl_on_the_sample():
         workbook.close()
     expected = _openpyxl_rows(SAMPLE, index)
     assert [list(header)] + [list(row) for row in rows] == expected
+
+
+# ------------------------------------------- corrections and archiving
+
+def _request_changes(app, batch_id, note="Please fix the zoning of the first barangay."):
+    _login(app, "steward@flow.test").post(f"/lgu/data-review/{batch_id}", data={"decision": "changes", "note": note})
+    db.session.expire_all()
+    return db.session.get(UploadBatch, batch_id)
+
+
+def test_a_steward_can_send_a_batch_back_with_a_message(app):
+    batch_id = _stage(app)
+    client = _login(app, "steward@flow.test")
+    page = client.post(f"/lgu/data-review/{batch_id}", data={"decision": "changes", "note": ""},
+                       follow_redirects=True).get_data(as_text=True)
+    assert "what the encoder should fix" in page
+    batch = _request_changes(app, batch_id)
+    assert batch.status == "changes_requested" and batch.payload, "the rows are kept for the encoder to fix"
+    assert batch.last_message["kind"] == "changes_requested" and "zoning" in batch.last_message["text"]
+    assert Notification.query.filter_by(user_id=_uid("encoder@flow.test")).filter(
+        Notification.message.contains("needs changes")).count() == 1
+    assert AuditLog.query.filter_by(action="staging_request_changes").count() == 1
+    upload_page = _login(app, "encoder@flow.test").get("/lgu/government-data-upload").get_data(as_text=True)
+    assert "asked for changes" in upload_page and "zoning of the first barangay" in upload_page
+    assert f'href="/lgu/uploads/{batch_id}/edit"' in upload_page
+
+
+def test_the_encoder_edits_the_rows_and_it_goes_back_for_review(app):
+    from app.services.staging_service import staged_rows
+
+    batch_id = _stage(app)
+    _request_changes(app, batch_id)
+    client = _login(app, "encoder@flow.test")
+    edit_page = client.get(f"/lgu/uploads/{batch_id}/edit").get_data(as_text=True)
+    assert "Edit barangay rows" in edit_page and "zoning of the first barangay" in edit_page
+    rows = staged_rows(db.session.get(UploadBatch, batch_id))
+    form = {"barangay": [r["barangay"] for r in rows], "note": "Fixed the zoning."}
+    for i, r in enumerate(rows):
+        form[f"zoning_info-{i}"] = "Commercial" if i == 0 else (r.get("zoning_info") or "Residential")
+        form[f"permit_count-{i}"] = "-3" if i == 1 else str(r.get("permit_count") or "")
+    bad = client.post(f"/lgu/uploads/{batch_id}/edit", data=form, follow_redirects=True).get_data(as_text=True)
+    assert "cannot be negative" in bad
+    form[f"permit_count-1"] = "7"
+    client.post(f"/lgu/uploads/{batch_id}/edit", data=form)
+    db.session.expire_all()
+    batch = db.session.get(UploadBatch, batch_id)
+    rows = staged_rows(batch)
+    assert batch.status == "pending_review" and rows[0]["zoning_info"] == "Commercial" and rows[1]["permit_count"] == 7
+    assert batch.last_message["kind"] == "edited" and batch.last_message["text"] == "Fixed the zoning."
+    assert AuditLog.query.filter_by(action="staging_edit_rows").count() == 1
+    from app.services.staging_service import review
+
+    ok, _ = review(batch_id, User.query.filter_by(email="steward@flow.test").one(), "approve")
+    assert ok, "the corrected batch can be approved"
+
+
+def test_the_encoder_can_replace_the_file(app):
+    batch_id = _stage(app)
+    path = _register_csv(barangays=BARANGAY_NAMES[:2], per_barangay=2)
+    try:
+        with open(path, "rb") as handle:
+            _login(app, "encoder@flow.test").post(f"/lgu/uploads/{batch_id}/edit", data={
+                "action": "replace", "note": "Cleaned list.", "dataset_file": (handle, "cleaned.csv"),
+            }, content_type="multipart/form-data")
+    finally:
+        os.unlink(path)
+    db.session.expire_all()
+    batch = db.session.get(UploadBatch, batch_id)
+    assert batch.filename == "cleaned.csv" and batch.barangays == 2 and batch.status == "pending_review"
+
+
+def test_only_the_uploader_edits_and_only_before_approval(app):
+    batch_id = _stage(app)
+    other = User(name="Encoder Two", email="encoder2@flow.test", role="LGU", lgu_role="encoder")
+    other.set_password("password123")
+    db.session.add(other)
+    db.session.commit()
+    assert _login(app, "encoder2@flow.test").get(f"/lgu/uploads/{batch_id}/edit").status_code == 403
+    from app.services.staging_service import edit_rows, review
+
+    review(batch_id, User.query.filter_by(email="steward@flow.test").one(), "approve")
+    ok, message = edit_rows(batch_id, User.query.filter_by(email="encoder@flow.test").one(), {}, "late fix")
+    assert not ok and "can no longer be changed" in message
+
+
+def test_the_encoder_can_archive_before_publishing(app):
+    batch_id = _approved(app)
+    _login(app, "encoder@flow.test").post(f"/lgu/uploads/{batch_id}/archive")
+    db.session.expire_all()
+    batch = db.session.get(UploadBatch, batch_id)
+    assert batch.status == "archived" and batch.payload is None
+    from app.services.staging_service import publish
+
+    ok, _ = publish(batch_id, User.query.filter_by(email="admin@flow.test").one())
+    assert not ok and MarketData.query.filter_by(source="DTI").count() == 0, "an archived batch never goes live"
+    assert AuditLog.query.filter_by(action="staging_archive").count() == 1
+
+
+def test_the_review_page_lists_recently_published_data(app):
+    batch_id = _approved(app)
+    from app.services.staging_service import publish
+
+    publish(batch_id, User.query.filter_by(email="admin@flow.test").one())
+    page = _login(app, "steward@flow.test").get("/lgu/data-review").get_data(as_text=True)
+    assert "Recently published by the System Admin" in page and f"#{batch_id}" in page and "Admin One" in page
+
+
+# ---------------------------------------------------------------- scope
+
+def test_a_barangay_encoder_stages_only_their_barangay(app):
+    from app.services.staging_service import stage_upload
+
+    user = User(name="Brgy Encoder", email="brgy@flow.test", role="LGU", lgu_role="encoder",
+                lgu_scope="barangay", lgu_barangay=BARANGAY_NAMES[0])
+    user.set_password("password123")
+    db.session.add(user)
+    db.session.commit()
+    path = _register_csv(barangays=BARANGAY_NAMES[:3])
+    try:
+        _count, status, message, batch_id = stage_upload("MARKET_DATA", path, "DTI", user.user_id, "all.csv")
+    finally:
+        os.unlink(path)
+    assert status == "failed" and "covers Barangay" in message and batch_id is None
+    path = _register_csv(barangays=BARANGAY_NAMES[:1])
+    try:
+        _count, status, message, batch_id = stage_upload("MARKET_DATA", path, "DTI", user.user_id, "own.csv")
+    finally:
+        os.unlink(path)
+    assert status == "success" and db.session.get(UploadBatch, batch_id).scope_barangay == BARANGAY_NAMES[0]
+
+
+def test_a_barangay_steward_reviews_only_their_barangay(app):
+    from app.services.staging_service import review
+
+    city_batch = _stage(app)
+    steward = User(name="Brgy Steward", email="brgysteward@flow.test", role="LGU", lgu_role="steward",
+                   lgu_scope="barangay", lgu_barangay=BARANGAY_NAMES[5])
+    steward.set_password("password123")
+    db.session.add(steward)
+    db.session.commit()
+    page = _login(app, "brgysteward@flow.test").get("/lgu/data-review").get_data(as_text=True)
+    assert "Nothing is waiting for review" in page
+    ok, message = review(city_batch, steward, "approve")
+    assert not ok and "outside your scope" in message

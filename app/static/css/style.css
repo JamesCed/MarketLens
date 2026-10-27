@@ -2525,3 +2525,39 @@ select.form-select[size="1"] { overflow: hidden; text-overflow: ellipsis; }
 .dss-public-page > .container { flex: 1 0 auto; }
 .dss-discord-message { white-space: pre-wrap; background: rgba(15,23,42,.06); border-radius: .4rem; padding: .55rem .7rem;
   font-size: .8rem; margin: 0; }
+
+/* LGU registration sections (auth/register_lgu.html, lgu/access_status.html) */
+.dss-lgu-section { border: 1px solid rgba(100,116,139,.25); border-radius: .7rem; padding: .9rem 1rem 1rem; }
+.dss-lgu-legend { float: none; width: auto; font-size: 1rem; font-weight: 700; padding: 0 .4rem; margin-bottom: .4rem; }
+.dss-lgu-num { display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem;
+  border-radius: 50%; background: var(--dss-blue); color: #fff; font-size: .8rem; margin-right: .3rem; }
+.dss-lgu-role-card { display: block; height: 100%; border: 1px solid rgba(100,116,139,.35); border-radius: .6rem;
+  padding: .65rem .8rem; cursor: pointer; }
+.btn-check:checked + .dss-lgu-role-card { border-color: var(--dss-blue); background: var(--dss-blue-light);
+  box-shadow: 0 0 0 .15rem rgba(37,99,235,.15); }
+.btn-check:focus-visible + .dss-lgu-role-card { outline: 2px solid var(--dss-blue); outline-offset: 2px; }
+
+/* "Pending..." -- three dots that light up in turn. */
+.dss-dots { display: inline-flex; gap: .08em; margin-left: .05em; }
+.dss-dots > span { animation: dss-dot 1.4s infinite both; }
+.dss-dots > span:nth-child(2) { animation-delay: .2s; }
+.dss-dots > span:nth-child(3) { animation-delay: .4s; }
+@keyframes dss-dot { 0%, 80%, 100% { opacity: .15; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dss-dots > span { animation: none; opacity: 1; } }
+.dss-nav-pending { opacity: .85; font-style: italic; }
+.dss-pending-card { text-align: center; padding: 2.2rem 1.25rem; }
+.dss-pending-title { font-size: 2rem; font-weight: 800; letter-spacing: .01em; }
+.dss-pending-icon { font-size: 2.6rem; color: var(--dss-blue); }
+
+/* Gov't Data Review queue and batch messages */
+.dss-review-queue .list-group-item { border-radius: .45rem; margin-bottom: .25rem; border: 1px solid rgba(100,116,139,.2); }
+.dss-batch-messages { max-height: 26rem; overflow-y: auto; }
+.dss-batch-message { border-left: 3px solid rgba(100,116,139,.35); padding: .35rem .6rem; margin-bottom: .6rem; }
+.dss-batch-message.dss-msg-changes_requested { border-left-color: #f59e0b; }
+.dss-batch-message.dss-msg-approved { border-left-color: #16a34a; }
+.dss-batch-message.dss-msg-rejected { border-left-color: #dc2626; }
+.dss-batch-message.dss-msg-edited { border-left-color: var(--dss-blue); }
+
+.dss-file-cell { min-width: 13rem; overflow-wrap: anywhere; }
+.dss-edit-table td:nth-child(2) { min-width: 13rem; }
+.dss-edit-table input[type="number"] { width: 6.5rem; min-width: 5.5rem; margin-left: auto; }

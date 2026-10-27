@@ -164,11 +164,15 @@ def test_sign_up_refuses_missing_or_invalid_personal_details(app, field, value, 
     assert message in page
 
 
-def test_an_lgu_official_gives_the_same_personal_details(app):
-    app.test_client().post("/register", data={"role": "lgu", **LGU_REQUEST,
-                                              **account_fields("lgu@x.test", first_name="Maria")})
+def test_an_lgu_registration_asks_only_for_names(app):
+    """LGU staff register on /register/lgu: name, work e-mail and office
+    details -- no gender, birthday, contact number or address (only what
+    the purpose needs)."""
+    app.test_client().post("/register/lgu", data={**LGU_REQUEST,
+                                                  **account_fields("lgu@x.test", first_name="Maria")})
     user = User.query.filter_by(email="lgu@x.test").one()
-    assert user.role == "LGU" and user.first_name == "Maria" and user.gender == "Male"
+    assert user.role == "LGU" and user.first_name == "Maria" and user.last_name == "Dela Cruz"
+    assert user.gender is None and user.contact_number is None and user.address_line is None
     app.test_client().post("/register", data={"role": "lgu", "email": "lgu2@x.test",
                                               "password": STRONG_PASSWORD, "confirm_password": STRONG_PASSWORD,
                                               "accept_terms": "1"})
