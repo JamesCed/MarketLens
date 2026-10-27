@@ -418,7 +418,7 @@ def _record_sweep():
     _stamp(LAST_SWEEP_KEY)
 
 
-def _deliver(user, summary, subject, send_email=None, kind="early_warning"):
+def _deliver(user, summary, subject, send_email=None, kind="early_warning", link=None):
     """One in-app notification, plus an email when a sender is given.
 
     The in-app copy is written either way: it is free, it cannot bounce,
@@ -427,16 +427,38 @@ def _deliver(user, summary, subject, send_email=None, kind="early_warning"):
     switch off -- passing the function rather than a boolean keeps the
     "which switch, which wording, which footer" decision in one place
     at the call site instead of spread across three flags.
+
+    The email goes through send_in_background(), so a sweep over many
+    accounts neither holds its database transaction open nor makes the
+    upload behind it wait on the mail server. `link` is the page the
+    reader should open from the email.
     """
+    from app.services import email_service
+
     db.session.add(Notification(
         user_id=user.user_id,
         type=kind,
         message=summary[:500],
     ))
 
-    if send_email is None:
+    if send_email is None or not user.email:
         return False
-    return bool(send_email(user.email, user.name, subject, summary))
+    return bool(email_service.send_in_background(
+        send_email, user.email, user.name, subject, summary, link=link))
+
+
+def _link_for(user, endpoints, cache):
+    """The page an alert email should open, by the reader's role --
+    the Planning page for an SME, the LGU Dashboard for LGU staff.
+    Resolved once per endpoint per sweep."""
+    from app.services import email_service
+
+    endpoint = endpoints.get(getattr(user, "role", ""))
+    if not endpoint:
+        return None
+    if endpoint not in cache:
+        cache[endpoint] = email_service.app_link(endpoint) or None
+    return cache[endpoint]
 
 
 _PREF_DEFAULTS = {
@@ -457,8 +479,11 @@ def _wants(user, field):
     return bool(getattr(user, field, _PREF_DEFAULTS[field]))
 
 
+_DEFAULT_LINKS = {"SME": "sme.home", "LGU": "lgu.dashboard", "Admin": "admin.dashboard"}
+
+
 def _notify_group(moves, pref_field, sender, subject_sme, subject_lgu, kind,
-                  summary_kind, sme_scope):
+                  summary_kind, sme_scope, links=None):
     """Send one category of alert to both audiences.
 
     Written once and parameterised rather than copied three times: the
@@ -470,6 +495,8 @@ def _notify_group(moves, pref_field, sender, subject_sme, subject_lgu, kind,
     from app.services import email_service
 
     notified = emailed = 0
+    endpoints = links or _DEFAULT_LINKS
+    link_cache = {}
 
     cache = {}
     for user_id, their_moves in sme_scope(moves).items():
@@ -482,7 +509,8 @@ def _notify_group(moves, pref_field, sender, subject_sme, subject_lgu, kind,
             cache[key] = _ai_summary(their_moves, "sme", summary_kind)[0]
 
         if _deliver(user, cache[key], subject_sme,
-                    send_email=getattr(email_service, sender), kind=kind):
+                    send_email=getattr(email_service, sender), kind=kind,
+                    link=_link_for(user, endpoints, link_cache)):
             emailed += 1
         notified += 1
 
@@ -491,7 +519,8 @@ def _notify_group(moves, pref_field, sender, subject_sme, subject_lgu, kind,
         city_summary = _ai_summary(moves, "lgu", summary_kind)[0]
         for user in city_recipients:
             if _deliver(user, city_summary, subject_lgu,
-                        send_email=getattr(email_service, sender), kind=kind):
+                        send_email=getattr(email_service, sender), kind=kind,
+                        link=_link_for(user, endpoints, link_cache)):
                 emailed += 1
             notified += 1
 
@@ -531,11 +560,12 @@ def run_market_alert_sweep(force=False):
             moves,
             pref_field="notify_saturation_change",
             sender="send_market_alert",
-            subject_sme="MarketLens alert: a market you follow has moved",
-            subject_lgu="MarketLens alert: Tarlac City market conditions changed",
+            subject_sme="MarketLens early warning: a market you follow has moved",
+            subject_lgu="MarketLens early warning: Tarlac City market conditions changed",
             kind="early_warning",
             summary_kind="warning",
             sme_scope=_sme_recipients,
+            links={"SME": "sme.planning", "LGU": "lgu.dashboard", "Admin": "admin.dashboard"},
         )
 
         opportunities = _improving_moves(moves)
@@ -549,6 +579,8 @@ def run_market_alert_sweep(force=False):
                 kind="info",
                 summary_kind="opportunity",
                 sme_scope=_sme_recipients_by_industry,
+                links={"SME": "sme.saturation_map", "LGU": "lgu.diversification",
+                       "Admin": "admin.dashboard"},
             )
             notified += extra_notified
             emailed += extra_emailed
@@ -596,6 +628,8 @@ def run_weekly_trend_digest(force=False):
             kind="info",
             summary_kind="digest",
             sme_scope=_sme_recipients,
+            links={"SME": "sme.trend_reports", "LGU": "sme.trend_reports",
+                   "Admin": "admin.dashboard"},
         )
 
         db.session.commit()

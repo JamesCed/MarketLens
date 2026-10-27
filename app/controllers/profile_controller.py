@@ -67,6 +67,7 @@ import base64
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user
 
+from app.services.email_service import EARLY_WARNING_SWITCH
 from app.controllers.onboarding_controller import describe_walkthrough
 from app.extensions import db
 from app.models import SmeProfile, PlanSave, ForecastResult, Notification, SystemSetting
@@ -87,8 +88,9 @@ NOTIFICATION_PREFS = (
      "When a barangay in your industry becomes less saturated and worth a look.", True),
     ("notify_weekly_trends", "Weekly market trend reports",
      "A digest of how saturation moved -- at most weekly, and only when it moved.", True),
-    ("notify_saturation_change", "Alert me when saturation levels change",
-     "When a market you follow moves, or a forecast crosses the saturation threshold.", True),
+    ("notify_saturation_change", EARLY_WARNING_SWITCH,
+     "In the app and by e-mail: when a market you follow moves, or your plan's forecast "
+     "crosses the saturation threshold. The e-mail reaches you even with MarketLens closed.", True),
     ("notify_newsletter", "Monthly newsletter",
      "Product news and what changed in the data.", False),
 )
@@ -199,6 +201,9 @@ def settings():
             log_action("clear_notifications", details=f"removed={removed}")
             flash(f"Cleared {removed} read notification(s)." if removed else "Nothing to clear.", "success")
             return redirect(url_for("profile.settings", section="notifications"))
+
+        if form_type == "test_alert_email":
+            return _send_test_alert_email()
 
         if form_type == "password":
             return _change_password()
@@ -371,6 +376,60 @@ def _update_personal_info():
                changes=changed)
     flash("Personal information saved.", "success")
     return redirect(url_for("profile.settings"))
+
+
+TEST_ALERT_COOLDOWN_SECONDS = 120
+_ROLE_ALERT_PAGES = {"SME": "sme.planning", "LGU": "lgu.dashboard", "Admin": "admin.dashboard"}
+
+
+def _send_test_alert_email():
+    """Send the signed-in account a sample early-warning e-mail.
+
+    So an owner can check, before any market moves, that alerts reach
+    their inbox and not their Spam folder. Sent while the page waits
+    (unlike real alerts) because the whole point is to say whether it
+    worked. Once per TEST_ALERT_COOLDOWN_SECONDS per session, so the
+    button cannot be used to flood an inbox or the daily sending quota.
+    """
+    import time
+
+    from flask import session
+    from app.services import email_service
+
+    back = redirect(url_for("profile.settings", section="notifications"))
+    if not email_service.is_configured():
+        flash("E-mail is not configured on this deployment, so alerts appear only in "
+              "Your notifications.", "warning")
+        return back
+    if not current_user.notify_saturation_change:
+        flash(f"Turn on \u201c{EARLY_WARNING_SWITCH}\u201d and save your preferences first.", "warning")
+        return back
+
+    now = time.time()
+    last = session.get("test_alert_sent_at") or 0
+    if now - last < TEST_ALERT_COOLDOWN_SECONDS:
+        wait = int(TEST_ALERT_COOLDOWN_SECONDS - (now - last)) + 1
+        flash(f"A test e-mail was sent a moment ago. You can send another in {wait} seconds.", "info")
+        return back
+    session["test_alert_sent_at"] = now
+
+    body = (
+        "This is a test of your MarketLens early-warning e-mails -- no market has moved.\n\n"
+        "When a real early warning fires (a market you follow moves, or your plan's forecast "
+        "comes back above the saturation alert threshold) it arrives like this, with a link "
+        "to the page it is about, even when MarketLens is closed."
+    )
+    link = email_service.app_link(_ROLE_ALERT_PAGES.get(current_user.role, "profile.settings"))
+    ok = email_service.send_early_warning(current_user.email, current_user.name,
+                                          "MarketLens early warning: test e-mail", body, link=link)
+    log_action("send_test_alert_email", details=f"delivered={bool(ok)}")
+    if ok:
+        flash(f"Test early-warning e-mail sent to {current_user.email}. If it is not in your "
+              "inbox within a few minutes, check the Spam folder.", "success")
+    else:
+        flash("The test e-mail could not be sent. An administrator can see why under "
+              "E-mail status.", "danger")
+    return back
 
 
 def _alert_sender_context():

@@ -163,9 +163,9 @@ def sent(monkeypatch):
     captured = []
 
     def _capture(kind):
-        def _send(to_email, to_name, subject, body):
+        def _send(to_email, to_name, subject, body, link=None):
             captured.append({"kind": kind, "to": to_email, "name": to_name,
-                             "subject": subject, "body": body})
+                             "subject": subject, "body": body, "link": link})
             return True
         return _send
 
@@ -793,14 +793,14 @@ def test_every_notification_email_says_how_to_stop_it(app, monkeypatch):
         app.config["MAIL_FROM_ADDRESS"] = "smesystem2026@gmail.com"
         bodies = {}
 
-        def _fake_send(to_email, to_name, subject, body):
+        def _fake_send(to_email, to_name, subject, body, html=None):
             bodies[subject] = body
             return True
 
         monkeypatch.setattr(email_service, "_send", _fake_send)
 
         expected = {
-            email_service.send_market_alert: "Alert me when saturation levels change",
+            email_service.send_market_alert: "Early warning alerts",
             email_service.send_recommendation_alert:
                 "Email notifications for new recommendations",
             email_service.send_trend_digest: "Weekly market trend reports",

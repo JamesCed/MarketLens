@@ -2075,3 +2075,55 @@ old Data Review. It has:
   `updated_at`);
 - a V3.5 `pending` status is renamed `pending_verification`.
 
+
+---
+
+## 18. V3.7: early warning alerts by e-mail
+
+An early warning now goes to the user's inbox as well as the bell, so
+SME and LGU users hear about it with MarketLens closed.
+
+**When an e-mail is sent.**
+- **SME plan warning:** a plan's forecast comes back above the
+  saturation alert threshold (System Settings, default 75%). The owner
+  gets *"MarketLens early warning: {industry} in {barangay} is N%
+  saturated"*, with an **Open your plan** button that opens that plan on
+  the Planning page.
+- **Market sweep warning** (after a publish or a Places refresh): a
+  market moved.
+  - SMEs whose plans cover it get a link to Planning.
+  - LGU staff get a link to the LGU Dashboard.
+  - Admins get a link to the Admin Dashboard.
+
+**Who gets it.** Only accounts with **Early warning alerts** switched
+on (Settings → Notifications, on by default). The switch was called
+"Alert me when saturation levels change"; it is the same setting, so
+nobody's choice changed. Archived or deactivated accounts get nothing.
+
+**No flooding.** A plan that stays above the threshold is e-mailed
+about at most once per 24 hours (`EARLY_WARNING_EMAIL_COOLDOWN_HOURS`).
+The in-app alert still appears every time.
+
+**The e-mail.**
+- It has a plain-text copy and a formatted HTML copy.
+- It names the switch that turns it off.
+- Anything a user typed (plan or barangay names) is escaped.
+
+**No waiting.** Mail goes through a background sender
+(`email_service.send_in_background`), so neither the Planning page nor
+an upload waits on Brevo or Gmail. Set `EMAIL_IN_BACKGROUND=false` to
+send inline.
+
+**Links.** Links use `PUBLIC_BASE_URL`. On Render you can leave it
+blank, because `RENDER_EXTERNAL_URL` is used automatically. Set it if
+you add your own domain. With no address known, the e-mail is sent
+without a link rather than with a localhost one.
+
+**Test it.** On Settings → Notifications, the **Send me a test e-mail**
+button sends a sample early warning to your own address, at most once
+every 2 minutes. Use it to check that alerts reach the inbox rather
+than Spam.
+
+**Needs:** e-mail configured as before. On Render's free tier that
+means `BREVO_API_KEY`, with the sending address verified in Brevo.
+Without a mail setup, alerts still appear in the bell.

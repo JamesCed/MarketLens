@@ -181,6 +181,12 @@ class Config:
 
     PASSWORD_RESET_CODE_TTL_MINUTES = int(os.environ.get("PASSWORD_RESET_CODE_TTL_MINUTES", 15))
 
+    PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL")
+                       or os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+    EMAIL_IN_BACKGROUND = _bool(os.environ.get("EMAIL_IN_BACKGROUND"), True)
+    EARLY_WARNING_EMAIL_COOLDOWN_HOURS = float(
+        os.environ.get("EARLY_WARNING_EMAIL_COOLDOWN_HOURS", "24") or 24)
+
     GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "").strip()
     GMAIL_APP_PASSWORD = "".join(os.environ.get("GMAIL_APP_PASSWORD", "").split())
     GMAIL_SENDER_NAME = os.environ.get("GMAIL_SENDER_NAME", "SME Market Saturation DSS")
@@ -259,6 +265,8 @@ class TestingConfig(Config):
     WARM_ON_BOOT = False
     UPLOAD_IN_BACKGROUND = False
     WARM_AFTER_UPLOAD = False
+    EMAIL_IN_BACKGROUND = False
+    PUBLIC_BASE_URL = ""
     CAPTCHA_SITE_KEY = ""
     CAPTCHA_SECRET_KEY = ""
     RATE_LIMIT_ENABLED = False

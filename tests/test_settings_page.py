@@ -331,7 +331,7 @@ def test_the_page_says_which_preferences_nothing_sends_yet(app):
         assert "Notification Preferences" in body
         for label in ["Email notifications for new recommendations",
                       "Weekly market trend reports",
-                      "Alert me when saturation levels change",
+                      "Early warning alerts",
                       "Monthly newsletter"]:
             assert label in body, label
 

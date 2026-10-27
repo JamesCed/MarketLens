@@ -217,13 +217,10 @@ def _admins():
 
 
 def _link(endpoint):
-    """An absolute link for an e-mail; falls back to the path."""
-    from flask import url_for
+    """An absolute link for an e-mail ("" when no address is known)."""
+    from app.services.email_service import app_link
 
-    try:
-        return url_for(endpoint, _external=True)
-    except Exception:
-        return ""
+    return app_link(endpoint)
 
 
 def _email(user, subject, body):

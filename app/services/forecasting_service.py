@@ -1139,3 +1139,76 @@ def _maybe_fire_early_warning(forecast, sme_profile):
     )
     db.session.add(notification)
     db.session.commit()
+
+    if owner is None:
+        owner = db.session.get(User, sme_profile.user_id)
+    _email_early_warning(owner, forecast, sme_profile, message, notification, threshold)
+
+
+def _early_warning_emailed_recently(user_id, sme_id, notification_id, hours):
+    """True when this plan already raised an early warning inside the
+    cooldown window -- it was e-mailed then, so it is not e-mailed again.
+
+    Keyed on the plan, not the wording: a plan edited three times in an
+    afternoon, each forecast still over the threshold, is one thing to
+    tell the owner about, not three.
+    """
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    return db.session.query(Notification.id).join(
+        ForecastResult, Notification.forecast_result_id == ForecastResult.forecast_id
+    ).filter(
+        Notification.user_id == user_id,
+        Notification.type == "early_warning",
+        Notification.id != notification_id,
+        Notification.created_at >= cutoff,
+        ForecastResult.sme_id == sme_id,
+    ).first() is not None
+
+
+def _email_early_warning(owner, forecast, sme_profile, message, notification, threshold):
+    """E-mail the plan's owner the same early warning the bell shows, so
+    it reaches them with MarketLens closed.
+
+    Sent only when the owner's "Early warning alerts" switch is on (the
+    caller has checked), mail is configured, the account is active and
+    this plan has not already been e-mailed about inside the cooldown.
+    Handed to the background sender, so the Planning page does not wait
+    on the mail server. Never raises: the forecast is already saved and
+    the in-app alert written, and those are what matter.
+    """
+    try:
+        from flask import current_app
+        from app.services import email_service
+
+        if owner is None or not owner.email or not owner.is_active:
+            return False
+        if not email_service.is_configured():
+            return False
+
+        hours = float(current_app.config.get("EARLY_WARNING_EMAIL_COOLDOWN_HOURS", 24) or 0)
+        if hours > 0 and _early_warning_emailed_recently(
+                owner.user_id, sme_profile.sme_id, notification.id, hours):
+            return False
+
+        industry, location = forecast.input_industry_type, forecast.input_location
+        subject = (f"MarketLens early warning: {industry} in {location} is "
+                   f"{forecast.saturation_percent}% saturated")
+        body = (
+            f"{message}\n\n"
+            f"Your plan's latest forecast came back above the {threshold:.0f}% saturation "
+            f"alert threshold set for Tarlac City. Open the plan to see the full forecast, "
+            f"the direct competition and the barangays with more room for {industry}."
+        )
+        link = email_service.app_link("sme.planning", plan=sme_profile.sme_id)
+        return email_service.send_in_background(
+            email_service.send_early_warning, owner.email, owner.name, subject, body, link=link)
+    except Exception:
+        try:
+            from flask import current_app
+
+            current_app.logger.warning("could not e-mail an early warning", exc_info=True)
+        except Exception:
+            pass
+        return False

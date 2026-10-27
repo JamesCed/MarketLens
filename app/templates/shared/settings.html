@@ -263,6 +263,25 @@
             <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save preferences</button>
           </div>
         </form>
+
+        {% if email_configured %}
+          {# A real alert waits for a market to move; this shows now
+             whether one would reach the inbox (or land in Spam). #}
+          <form method="POST" action="{{ url_for('profile.settings') }}" class="dss-card mt-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="form_type" value="test_alert_email">
+            <h6 class="mb-1"><i class="bi bi-envelope-exclamation"></i> Early-warning e-mails</h6>
+            <p class="text-muted small mb-2">When an early warning fires, a copy is e-mailed to
+              <strong class="text-break">{{ current_user.email }}</strong> with a link to the page it is about,
+              so you hear about it even with MarketLens closed.</p>
+            <button type="submit" class="btn btn-sm btn-outline-primary"
+                    {{ 'disabled' if not current_user.notify_saturation_change }}>
+              <i class="bi bi-send"></i> Send me a test e-mail</button>
+            {% if not current_user.notify_saturation_change %}
+              <div class="text-muted mt-1" style="font-size:.75rem;">Turn on &ldquo;Early warning alerts&rdquo; and save to use this.</div>
+            {% endif %}
+          </form>
+        {% endif %}
       </div>
 
       <div class="col-lg-7">
@@ -314,8 +333,8 @@
             <p class="text-muted small mt-2 mb-0">Showing the 20 most recent.</p>
           {% else %}
             <p class="text-muted small mb-0">
-              No notifications yet. Early warnings appear here when a forecast comes back
-              above {{ alert_threshold|round(0)|int }}% saturation.
+              No notifications yet. Early warnings appear here{{ ' and in your e-mail' if email_configured }}
+              when a forecast comes back above {{ alert_threshold|round(0)|int }}% saturation or a market you follow moves.
             </p>
           {% endif %}
         </div>

@@ -17,11 +17,27 @@ ANY reason (bad credentials, no internet, Gmail rate limit), the
 functions below return False/None and auth_controller.py falls back to
 registering the account immediately, with no verification step -- a
 broken or missing email setup never blocks anyone from signing up.
+
+ALERTS. The same transports carry the notification e-mails: early
+warnings (send_early_warning for an SME's own plan, send_market_alert
+for the market sweep to SME and LGU accounts), new-location
+recommendations and the weekly digest. Each has a text and an HTML
+copy, a link back to the page it is about (app_link) and a footer
+naming the Settings switch that turns it off. Callers hand them to
+send_in_background() so no page waits on the mail server.
 """
 
+import html as html_lib
+import logging
+import os
+import queue
 import smtplib
+import threading
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
+
+EARLY_WARNING_SWITCH = "Early warning alerts"
 
 
 def is_configured():
@@ -35,8 +51,12 @@ def is_configured():
                 and current_app.config.get("GMAIL_APP_PASSWORD"))
 
 
-def _send(to_email, to_name, subject, body):
-    """Deliver one plain-text message. True if a transport accepted it.
+def _send(to_email, to_name, subject, body, html=None):
+    """Deliver one message. True if a transport accepted it.
+
+    `body` is always sent as plain text. `html`, when given, goes with
+    it as the formatted version; mail apps that cannot show HTML (and
+    spam filters that distrust HTML-only mail) still get the text.
 
     NEVER RAISES, and this outer guard is the one that makes that true.
 
@@ -56,8 +76,8 @@ def _send(to_email, to_name, subject, body):
 
     try:
         if current_app.config.get("BREVO_API_KEY"):
-            return _send_via_brevo(to_email, to_name, subject, body)
-        return _send_via_gmail_smtp(to_email, subject, body)
+            return _send_via_brevo(to_email, to_name, subject, body, html=html)
+        return _send_via_gmail_smtp(to_email, subject, body, html=html)
     except Exception as exc:
         _record_failure(exc, include_traceback=True)
         return False
@@ -72,7 +92,7 @@ def _from_address():
     return sender_name, address
 
 
-def _send_via_gmail_smtp(to_email, subject, body):
+def _send_via_gmail_smtp(to_email, subject, body, html=None):
     """The original path: Gmail over STARTTLS on port 587."""
     sender_name, address = _from_address()
     from flask import current_app
@@ -82,7 +102,12 @@ def _send_via_gmail_smtp(to_email, subject, body):
         _record_failure(RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set"))
         return False
 
-    msg = MIMEText(body, "plain", "utf-8")
+    if html:
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        msg.attach(MIMEText(html, "html", "utf-8"))
+    else:
+        msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = subject
     msg["From"] = formataddr((sender_name, address))
     msg["To"] = to_email
@@ -99,7 +124,7 @@ def _send_via_gmail_smtp(to_email, subject, body):
         return False
 
 
-def _send_via_brevo(to_email, to_name, subject, body):
+def _send_via_brevo(to_email, to_name, subject, body, html=None):
     """HTTPS on port 443, which free hosts do not block.
 
     `requests` is already a dependency (the Places API uses it), so
@@ -120,17 +145,21 @@ def _send_via_brevo(to_email, to_name, subject, body):
         ))
         return False
 
+    payload = {
+        "sender": {"name": sender_name, "email": address},
+        "to": [{"email": to_email, "name": to_name or to_email}],
+        "subject": subject,
+        "textContent": body,
+    }
+    if html:
+        payload["htmlContent"] = html
+
     try:
         response = requests.post(
             "https://api.brevo.com/v3/smtp/email",
             headers={"api-key": api_key, "content-type": "application/json",
                      "accept": "application/json"},
-            json={
-                "sender": {"name": sender_name, "email": address},
-                "to": [{"email": to_email, "name": to_name or to_email}],
-                "subject": subject,
-                "textContent": body,
-            },
+            json=payload,
             timeout=20,
         )
     except Exception as exc:
@@ -219,40 +248,196 @@ def _notification_footer(switch_label):
     return "\n".join(lines)
 
 
-def _send_notification(to_email, to_name, subject, body, switch_label):
+def app_link(endpoint, **values):
+    """An absolute link to a MarketLens page, for an e-mail.
+
+    Alerts are often sent with no web request behind them -- from the
+    background thread that runs after a publish, or after a Places
+    refresh -- and there url_for(_external=True) has no host to use.
+    PUBLIC_BASE_URL (Render fills RENDER_EXTERNAL_URL in for it) gives
+    the address the reader can actually open; inside a request with no
+    PUBLIC_BASE_URL set, the address the request came in on is used.
+    "" when neither is known: a missing link is better than one that
+    points at localhost.
+    """
+    from flask import current_app, has_request_context, request, url_for
+
+    try:
+        base = (current_app.config.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+        if has_request_context():
+            path = url_for(endpoint, **values)
+            base = base or request.host_url.rstrip("/")
+        else:
+            if not base:
+                return ""
+            with current_app.test_request_context("/"):
+                path = url_for(endpoint, **values)
+        return f"{base}{path}" if base else ""
+    except Exception:
+        return ""
+
+
+def _notification_html(heading, body, link, link_label, footer, tone="warning"):
+    """The formatted copy of a notification e-mail.
+
+    Inline styles and one table, because mail apps (Gmail above all)
+    strip <style> blocks and most CSS layout. Every piece of text is
+    escaped: alert wording can contain a barangay or plan name an
+    account typed in.
+    """
+    accent = {"warning": "#c2410c", "info": "#1d4ed8"}.get(tone, "#1d4ed8")
+    paragraphs = "".join(
+        f'<p style="margin:0 0 12px 0;">{html_lib.escape(part).replace(chr(10), "<br>")}</p>'
+        for part in body.strip().split("\n\n") if part.strip()
+    )
+    button = ""
+    if link:
+        button = (
+            f'<p style="margin:20px 0 4px 0;"><a href="{html_lib.escape(link, quote=True)}" '
+            f'style="background:{accent};color:#ffffff;text-decoration:none;padding:10px 18px;'
+            f'border-radius:6px;display:inline-block;font-weight:600;">{html_lib.escape(link_label)}</a></p>'
+            f'<p style="margin:0;font-size:12px;color:#6b7280;word-break:break-all;">'
+            f'{html_lib.escape(link)}</p>'
+        )
+    footer_html = "<br>".join(html_lib.escape(line) for line in footer.strip().splitlines()
+                              if line.strip() and line.strip() != "--")
+    return (
+        '<!doctype html><html><body style="margin:0;padding:0;background:#f3f4f6;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="background:#f3f4f6;padding:24px 12px;"><tr><td align="center">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="max-width:560px;background:#ffffff;border-radius:10px;overflow:hidden;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#111827;">'
+        f'<tr><td style="background:{accent};color:#ffffff;padding:14px 22px;font-size:16px;font-weight:700;">'
+        f'{html_lib.escape(heading)}</td></tr>'
+        f'<tr><td style="padding:22px;">{paragraphs}{button}</td></tr>'
+        f'<tr><td style="padding:14px 22px;background:#f9fafb;font-size:12px;color:#6b7280;">{footer_html}</td></tr>'
+        '</table></td></tr></table></body></html>'
+    )
+
+
+def _send_notification(to_email, to_name, subject, body, switch_label, link=None,
+                       link_label="Open MarketLens", heading=None, tone="info"):
     """One notification email. True if a transport accepted it.
 
     Returns False rather than raising when mail is not configured at
     all, so a caller looping over a hundred recipients on a deployment
     with no BREVO_API_KEY does a hundred cheap no-ops instead of a
     hundred failed connections.
+
+    `link`, when given, is the page the reader should open; it goes in
+    the text as a plain address and in the HTML copy as a button.
     """
     if not is_configured():
         return False
 
     greeting = f"Hi {to_name},\n\n" if to_name else ""
-    return _send(to_email, to_name, subject,
-                 greeting + body + "\n" + _notification_footer(switch_label))
+    main = greeting + body.strip()
+    footer = _notification_footer(switch_label)
+    html = _notification_html(heading or subject, main, link, link_label, footer, tone=tone)
+    text = main + (f"\n\n{link_label}: {link}" if link else "")
+    return _send(to_email, to_name, subject, text + "\n" + footer, html=html)
 
 
-def send_market_alert(to_email, to_name, subject, body):
-    """"Alert me when saturation levels change" -- a barangay/industry
-    the reader follows has actually moved."""
-    return _send_notification(to_email, to_name, subject, body,
-                              "Alert me when saturation levels change")
+def send_market_alert(to_email, to_name, subject, body, link=None):
+    """An early warning from the market sweep -- a barangay/industry the
+    reader follows has actually moved."""
+    return _send_notification(to_email, to_name, subject, body, EARLY_WARNING_SWITCH,
+                              link=link, heading="MarketLens early warning", tone="warning")
 
 
-def send_recommendation_alert(to_email, to_name, subject, body):
+def send_early_warning(to_email, to_name, subject, body, link=None):
+    """An early warning on one of the reader's own plans: its forecast
+    came back above the city's saturation alert threshold."""
+    return _send_notification(to_email, to_name, subject, body, EARLY_WARNING_SWITCH,
+                              link=link, link_label="Open your plan",
+                              heading="MarketLens early warning", tone="warning")
+
+
+def send_recommendation_alert(to_email, to_name, subject, body, link=None):
     """"Email notifications for new recommendations" -- a barangay has
     entered the top opportunities for an industry they care about."""
     return _send_notification(to_email, to_name, subject, body,
-                              "Email notifications for new recommendations")
+                              "Email notifications for new recommendations", link=link)
 
 
-def send_trend_digest(to_email, to_name, subject, body):
+def send_trend_digest(to_email, to_name, subject, body, link=None):
     """"Weekly market trend reports" -- the periodic city digest."""
     return _send_notification(to_email, to_name, subject, body,
-                              "Weekly market trend reports")
+                              "Weekly market trend reports", link=link)
+
+
+_QUEUE_STATE = {"pid": None, "queue": None, "thread": None}
+_QUEUE_LOCK = threading.Lock()
+_log = logging.getLogger(__name__)
+
+
+def _email_queue():
+    """The process's one outgoing-mail queue, started on first use.
+
+    Re-created when the process id changes: a gunicorn worker forked
+    from a parent that already started the thread inherits the queue
+    object but not the thread, and mail put on it would never leave.
+    """
+    with _QUEUE_LOCK:
+        state = _QUEUE_STATE
+        thread = state["thread"]
+        if state["pid"] != os.getpid() or thread is None or not thread.is_alive():
+            state["pid"] = os.getpid()
+            state["queue"] = queue.Queue()
+            state["thread"] = threading.Thread(target=_email_worker, args=(state["queue"],),
+                                               name="email-sender", daemon=True)
+            state["thread"].start()
+        return state["queue"]
+
+
+def _email_worker(mail_queue):
+    while True:
+        app, func, args, kwargs = mail_queue.get()
+        try:
+            with app.app_context():
+                func(*args, **kwargs)
+        except Exception:
+            _log.exception("background e-mail failed")
+        finally:
+            mail_queue.task_done()
+
+
+def send_in_background(func, *args, **kwargs):
+    """Hand one e-mail to the sender thread and return straight away.
+
+    Sending can take seconds (Brevo's HTTPS call, Gmail's TLS handshake)
+    and an alert is usually triggered by something the reader is waiting
+    on -- a forecast on the Planning page, an upload being published --
+    so the page must not wait for the mail. Returns True when the
+    message was queued (or, with EMAIL_IN_BACKGROUND off, sent), False
+    when there is no transport to send it with.
+    """
+    from flask import current_app
+
+    app = current_app._get_current_object()
+    if not app.config.get("EMAIL_IN_BACKGROUND", True):
+        return bool(func(*args, **kwargs))
+    if not is_configured():
+        return False
+    _email_queue().put((app, func, args, kwargs))
+    return True
+
+
+def wait_for_background_emails(timeout=10.0):
+    """Block until the queue is empty or `timeout` passes. For tests and
+    for a clean shutdown; True when everything queued has been tried."""
+    import time
+
+    mail_queue = _QUEUE_STATE["queue"]
+    if mail_queue is None:
+        return True
+    deadline = time.monotonic() + timeout
+    while mail_queue.unfinished_tasks:
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+    return True
 
 
 _LAST_FAILURE = {}
