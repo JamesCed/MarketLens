@@ -9,22 +9,13 @@ The Data Privacy Act of 2012 (RA 10173, Sec. 11(e)) allows personal data
 to be kept only as long as its purpose needs it. The audit trail holds
 personal data -- who did what, from which IP address and browser -- and
 the uploaded LGU rows are official records whose figures go stale. Both
-now have a retention period an Admin sets in System Settings:
+have a fixed retention period:
 
-  upload_retention_days     (default 1095 = 3 years) -- lgu_data rows an
-                            LGU account uploaded, the permit-derived
-                            market_data rows (source DTI / PSA) and their
-                            sub-category counts, counted from the upload.
-  audit_log_retention_days  (default 365 = 1 year) -- audit_logs entries.
-
-The staging area of the Gov't Data Upload (upload_batches) follows the
-upload period too, and a batch still waiting for review or publishing
-after STAGING_EXPIRY_DAYS expires: it is marked rejected and its staged
-rows are cleared.
-
-LGU access requests (lgu_access_requests: office, job title, scope,
-reason) are deleted with the audit trail once decided. A pending request
-stays "pending_verification" until the System Admin decides.
+  UPLOAD_RETENTION_DAYS  1095 (3 years) -- lgu_data rows an LGU account
+                         uploaded, the permit-derived market_data rows
+                         (source DTI / PSA) and their sub-category
+                         counts, counted from the upload.
+  AUDIT_RETENTION_DAYS   365 (1 year) -- audit_logs entries.
 
 A row a saved forecast still points to is kept until that forecast is
 gone: forecast_result references its market_data and lgu_data rows, and
@@ -44,46 +35,30 @@ from datetime import date, datetime, timedelta
 
 log = logging.getLogger(__name__)
 
-UPLOAD_RETENTION_KEY = "upload_retention_days"
-AUDIT_RETENTION_KEY = "audit_log_retention_days"
-LAST_RUN_KEY = "retention_last_run"
-DEFAULT_UPLOAD_DAYS = 1095
-DEFAULT_AUDIT_DAYS = 365
-RETENTION_RANGE = (30, 3650)
+UPLOAD_RETENTION_DAYS = 1095
+AUDIT_RETENTION_DAYS = 365
+# Older names, still imported by app/__init__.py and the tests.
+DEFAULT_UPLOAD_DAYS = UPLOAD_RETENTION_DAYS
+DEFAULT_AUDIT_DAYS = AUDIT_RETENTION_DAYS
 UPLOADED_MARKET_SOURCES = ("DTI", "PSA")
 RUN_INTERVAL_SECONDS = 24 * 3600
-STAGING_EXPIRY_DAYS = 60
 
 _state = {"next": 0.0}
 _state_lock = threading.Lock()
 
 
-def _clamp(value, default):
-    low, high = RETENTION_RANGE
-    try:
-        days = int(float(value))
-    except (TypeError, ValueError):
-        return default
-    return max(low, min(high, days))
-
-
 def retention_days():
-    """(upload_days, audit_days) as configured, clamped to 30..3650."""
-    from app.models import SystemSetting
-
-    return (_clamp(SystemSetting.get(UPLOAD_RETENTION_KEY), DEFAULT_UPLOAD_DAYS),
-            _clamp(SystemSetting.get(AUDIT_RETENTION_KEY), DEFAULT_AUDIT_DAYS))
+    """(upload_days, audit_days) -- the fixed retention periods."""
+    return UPLOAD_RETENTION_DAYS, AUDIT_RETENTION_DAYS
 
 
 def apply_retention(today=None):
     """Delete what has outlived its retention period. Returns the counts
     removed per table."""
-    from sqlalchemy import delete, or_, select, update
+    from sqlalchemy import delete, or_, select
 
     from app.extensions import db
-    from app.models import AuditLog, ForecastResult, LguData, MarketData, SubcategoryMarketData, SystemSetting
-    from app.models.upload_batch import STATUS_APPROVED, STATUS_CHANGES, STATUS_PENDING, STATUS_REJECTED, UploadBatch
-    from app.models.lgu_access_request import REQUEST_PENDING, LguAccessRequest
+    from app.models import AuditLog, ForecastResult, LguData, MarketData, SubcategoryMarketData
     from app.services.data_import_service import _clear_analytics_caches, _system_user_id_or_none
     from app.services.forecasting_service import PLACEHOLDER_ZONING_NOTE
 
@@ -122,39 +97,12 @@ def apply_retention(today=None):
         "audit_logs": db.session.execute(
             delete(AuditLog).where(AuditLog.created_at < audit_cutoff), execution_options=no_sync,
         ).rowcount,
-        # Staging area: a batch record follows the uploaded-data period ...
-        "upload_batches": db.session.execute(
-            delete(UploadBatch).where(
-                UploadBatch.uploaded_at < datetime.combine(upload_cutoff, datetime.min.time())),
-            execution_options=no_sync,
-        ).rowcount,
-        # ... and staged rows nobody approved or published in time are not
-        # kept "just in case": the batch expires and its rows are cleared.
-        "staged_expired": db.session.execute(
-            update(UploadBatch).where(
-                UploadBatch.status.in_((STATUS_PENDING, STATUS_APPROVED, STATUS_CHANGES)),
-                UploadBatch.uploaded_at < datetime.combine(today - timedelta(days=STAGING_EXPIRY_DAYS),
-                                                           datetime.min.time()),
-            ).values(status=STATUS_REJECTED, payload=None,
-                     review_note=f"Expired: not reviewed and published within {STAGING_EXPIRY_DAYS} days."),
-            execution_options=no_sync,
-        ).rowcount,
-        # LGU access requests: a decided request (office, job title,
-        # scope, reason) is kept as long as the audit trail, then goes. A
-        # pending one stays until the System Admin decides.
-        "lgu_access_requests": db.session.execute(
-            delete(LguAccessRequest).where(
-                LguAccessRequest.status.not_in((REQUEST_PENDING, "pending")),
-                LguAccessRequest.created_at < audit_cutoff,
-            ),
-            execution_options=no_sync,
-        ).rowcount,
     }
     counts = {table: max(0, int(n or 0)) for table, n in counts.items()}
     summary = (f"{today.isoformat()}: removed " + ", ".join(f"{n} {t}" for t, n in counts.items())
                + f" (uploads kept {upload_days} days, audit trail {audit_days} days)")
-    SystemSetting.set(LAST_RUN_KEY, summary[:255])
     db.session.commit()
+    log.info("data retention: %s", summary)
 
     if counts["lgu_data"] or counts["market_data"] or counts["subcategory_market_data"]:
         _clear_analytics_caches()

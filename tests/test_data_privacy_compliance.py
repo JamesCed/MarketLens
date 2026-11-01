@@ -72,15 +72,17 @@ def _upload(app, lgu_user, path, target="MARKET_DATA"):
             os.unlink(path)
 
 
-def test_the_upload_page_carries_a_privacy_notice(app, lgu_user):
+def test_the_upload_page_has_no_workflow_or_privacy_cards(app, lgu_user):
+    """V3.8: the Gov't Data Upload page is the upload form, the column
+    guide and the live data -- no "How an upload goes live" steps and no
+    "Privacy notice for uploads" card (the notice is in the Privacy
+    Policy)."""
     client = app.test_client()
     client.post("/login", data={"email": "officer@privacy.test", "password": "password123"})
     page = client.get("/lgu/government-data-upload").get_data(as_text=True)
-    assert 'id="uploadPrivacyNotice"' in page
-    for heading in ("What is collected", "What is kept", "Purpose", "Who can see it", "How long",
-                    "remove personal information"):
-        assert heading in page, heading
-    assert "1095 days after upload" in page and "365 days" in page
+    assert "Upload Dataset" in page and 'id="uploadForm"' in page
+    assert 'id="uploadPrivacyNotice"' not in page and "Privacy notice for uploads" not in page
+    assert "How an upload goes live" not in page and "staging area" not in page
 
 
 def test_the_public_notice_covers_uploads_and_the_dpo(app):
@@ -201,11 +203,9 @@ def test_retention_deletes_expired_uploads_and_audit_entries(app, lgu_user):
     _seed_old_upload(app, lgu_user, days_old=1200)
     with app.app_context():
         counts = apply_retention()
-        assert counts == {"lgu_data": 1, "market_data": 1, "subcategory_market_data": 1, "audit_logs": 1,
-                          "upload_batches": 0, "staged_expired": 0,
-                          "lgu_access_requests": 0}
+        assert counts == {"lgu_data": 1, "market_data": 1, "subcategory_market_data": 1, "audit_logs": 1}
         assert MarketData.query.filter_by(source="Google Places API").count() == 1, "only uploaded rows expire"
-        assert "removed" in SystemSetting.get("retention_last_run")
+        assert SystemSetting.get("retention_last_run") is None, "no settings row is kept for it any more"
         assert AuditLog.query.filter_by(action="retention_purge").count() == 1
 
 
@@ -214,20 +214,21 @@ def test_retention_keeps_what_has_not_expired(app, lgu_user):
 
     _seed_old_upload(app, lgu_user, days_old=100)
     with app.app_context():
-        assert apply_retention() == {"lgu_data": 0, "market_data": 0, "subcategory_market_data": 0, "audit_logs": 0,
-                                     "upload_batches": 0, "staged_expired": 0,
-                                     "lgu_access_requests": 0}
+        assert apply_retention() == {"lgu_data": 0, "market_data": 0, "subcategory_market_data": 0, "audit_logs": 0}
 
 
-def test_retention_follows_the_admin_setting(app, lgu_user):
-    from app.services.retention_service import apply_retention
+def test_retention_periods_are_fixed(app, lgu_user):
+    """The periods are no longer an Admin setting: a leftover settings
+    row is ignored."""
+    from app.services.retention_service import apply_retention, retention_days
 
     _seed_old_upload(app, lgu_user, days_old=100)
     with app.app_context():
         SystemSetting.set("upload_retention_days", "60")
         SystemSetting.set("audit_log_retention_days", "90")
+        assert retention_days() == (1095, 365)
         counts = apply_retention()
-    assert counts["lgu_data"] == 1 and counts["audit_logs"] == 1
+    assert counts["lgu_data"] == 0 and counts["audit_logs"] == 0
 
 
 def test_retention_never_deletes_a_saved_forecast(app, lgu_user):
@@ -252,7 +253,7 @@ def test_retention_never_deletes_a_saved_forecast(app, lgu_user):
         assert ForecastResult.query.count() == 1
 
 
-def test_admin_can_set_the_retention_periods(app):
+def test_system_settings_has_no_retention_card(app):
     with app.app_context():
         admin = User(name="Admin", email="admin@privacy.test", role="Admin")
         admin.set_password("password123")
@@ -260,11 +261,10 @@ def test_admin_can_set_the_retention_periods(app):
         db.session.commit()
     client = app.test_client()
     client.post("/login", data={"email": "admin@privacy.test", "password": "password123"})
-    assert "Data retention" in client.get("/admin/settings").get_data(as_text=True)
+    assert "Data retention" not in client.get("/admin/settings").get_data(as_text=True)
     client.post("/admin/settings", data={"upload_retention_days": "730", "audit_log_retention_days": "5"})
     with app.app_context():
-        assert SystemSetting.get("upload_retention_days") == "730"
-        assert SystemSetting.get("audit_log_retention_days") == "365", "5 days is below the 30-day floor"
+        assert SystemSetting.get("upload_retention_days") is None, "the field is gone, nothing is saved"
 
 
 def test_the_pii_key_can_be_rotated_without_losing_details(app):

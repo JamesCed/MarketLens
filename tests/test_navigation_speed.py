@@ -61,9 +61,9 @@ def test_the_root_still_sends_everyone_to_the_right_place(app):
 
 
 def test_settings_are_read_once_and_a_saved_setting_is_seen_at_once(app):
-    assert SystemSetting.get("kmeans_n_clusters") is not None
+    assert SystemSetting.get("msi_weight_demand_trend") is not None
     seen = _count_queries(app)
-    SystemSetting.get("kmeans_n_clusters")
+    SystemSetting.get("msi_weight_demand_trend")
     assert not [s for s in seen if "system_settings" in s], "the settings table is kept between reads"
 
     SystemSetting.set("saturation_alert_threshold", "61")

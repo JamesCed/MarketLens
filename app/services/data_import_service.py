@@ -1066,11 +1066,9 @@ def process_upload(dataset_type, file_path, source, uploaded_by_user_id, progres
     """Read, validate and write a file straight to the live tables.
     Returns (records_saved, status, message).
 
-    The Gov't Data Upload page no longer calls this: an LGU Encoder's
-    upload goes to the staging area (staging_service.stage_upload) and
-    reaches these tables only when a Data Steward has approved it and a
-    System Admin publishes it. This remains the single-step import for
-    scripts and tests.
+    The Gov't Data Upload page runs this through a background job
+    (upload_jobs.run_job), so an LGU officer's valid file goes live
+    straight away.
 
     ONE TRANSACTION, ALL OR NOTHING. `progress` receives the result as
     soon as the data is committed; with run_followups the alert sweep

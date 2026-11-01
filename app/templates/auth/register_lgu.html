@@ -5,18 +5,17 @@
 {#
   auth/register_lgu.html
   ------------------------
-  Registration for Tarlac City LGU staff and officials, in three parts:
+  Registration for Tarlac City LGU staff and officials, in two parts:
 
     1. Account details              name, official work e-mail, password
     2. Tarlac City LGU context      jurisdiction (city-wide or one
                                     barangay), department / office, job title
-    3. Role selection & scope       LGU Encoder or LGU Data Steward, and why
 
-  The account is created "pending_verification": it can open the LGU
-  Dashboard, Diversification Plan, Saturation Map and Trend Reports, but
-  gets its LGU role only when the System Admin approves the request
-  (app/services/lgu_access_service.py). Nothing else about the person is
-  asked -- no birthday, address or ID.
+  The LGU context is saved on the account (app/services/lgu_profile.py).
+  The account is ready as soon as it is created: LGU Dashboard,
+  Diversification Plan, Saturation Map, Trend Reports and Gov't Data
+  Upload. Nothing else about the person is asked -- no birthday, address
+  or ID.
 #}
 
 {% set f = form or {} %}
@@ -41,17 +40,14 @@
     <div class="ml-hero-copy">
       <span class="ml-eyebrow"><i class="bi bi-bank"></i> Tarlac City LGU</span>
       <h1>LGU staff<br>registration.</h1>
-      <p class="ml-lede">For city and barangay staff who upload or review the government data MarketLens plans with.</p>
+      <p class="ml-lede">For city and barangay staff who plan for the city and upload the government data MarketLens uses.</p>
       <ul class="ml-assure">
-        <li><i class="bi bi-hourglass-split"></i>
-          <span><strong>Reviewed within {{ review_hours }} hours.</strong> Your request stays pending until the System
-            Admin approves or rejects it, and you are e-mailed the decision.</span></li>
         <li><i class="bi bi-speedometer2"></i>
-          <span><strong>Start right away.</strong> While you wait you can already open the LGU Dashboard, the
-            Diversification Plan, the Saturation Map and the Trend Reports.</span></li>
+          <span><strong>Start right away.</strong> Once your e-mail is confirmed you can open the LGU Dashboard, the
+            Diversification Plan, the Saturation Map, the Trend Reports and Gov't Data Upload.</span></li>
         <li><i class="bi bi-shield-lock"></i>
           <span><strong>Only what is needed.</strong> Your name, work e-mail and office details &mdash; no birthday,
-            address or ID. <a class="text-reset" href="{{ url_for('auth.lgu_access_guide') }}">How access works</a></span></li>
+            address or ID.</span></li>
       </ul>
     </div>
 
@@ -86,11 +82,8 @@
               <div class="col-12">
                 <label class="form-label" for="lgu-email">Official work e-mail address</label>
                 <input type="email" id="lgu-email" name="email" class="form-control" required autocomplete="email"
-                       placeholder="user@{{ lgu_domains[0] if lgu_domains else 'tarlaccity.gov.ph' }}" value="{{ f.get('email','') }}">
-                <div class="form-text">
-                  {% if lgu_domains %}Must end in {% for d in lgu_domains %}@{{ d }}{{ ', ' if not loop.last }}{% endfor %}.
-                  {% else %}Use your LGU work address.{% endif %} We send a 6-digit code here, and the decision on your request.
-                </div>
+                       placeholder="user@tarlaccity.gov.ph" value="{{ f.get('email','') }}">
+                <div class="form-text">Use your LGU work address. We send a 6-digit code here to confirm it.</div>
               </div>
               <div class="col-sm-6">
                 <label class="form-label" for="ml-pw">Account password</label>
@@ -112,7 +105,49 @@
             {% with target='ml-pw' %}{% include "shared/_password_rules.html" %}{% endwith %}
           </fieldset>
 
-          {% include "shared/_lgu_request_fields.html" %}
+          {% set chosen_scope = f.get('lgu_scope', '') %}
+          <fieldset class="dss-lgu-section mb-3">
+            <legend class="dss-lgu-legend"><span class="dss-lgu-num">2</span> Tarlac City LGU context</legend>
+            <div class="row g-3">
+              <fieldset class="col-12">
+                <legend class="form-label fs-6 mb-1">Jurisdiction scope</legend>
+                <div class="d-flex flex-wrap gap-3">
+                  {% for key, label in lgu_scopes.items() %}
+                    <div class="form-check">
+                      <input class="form-check-input dss-lgu-scope" type="radio" name="lgu_scope" id="lgu-scope-{{ key }}"
+                             value="{{ key }}" {{ 'checked' if chosen_scope == key else '' }} required>
+                      <label class="form-check-label" for="lgu-scope-{{ key }}">{{ label }}</label>
+                    </div>
+                  {% endfor %}
+                </div>
+              </fieldset>
+              <div class="col-sm-6">
+                <label class="form-label" for="lgu-barangay">Target barangay</label>
+                <select id="lgu-barangay" name="lgu_barangay" class="form-select" {{ '' if chosen_scope == 'barangay' else 'disabled' }}>
+                  <option value="">Choose one of the 76 barangays&hellip;</option>
+                  {% for b in lgu_barangays %}
+                    <option value="{{ b }}" {{ 'selected' if f.get('lgu_barangay') == b else '' }}>{{ b }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">Only for &ldquo;Specific barangay&rdquo;.</div>
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label" for="lgu-office">LGU department / office</label>
+                <select id="lgu-office" name="lgu_office" class="form-select" required>
+                  <option value="">Choose your office&hellip;</option>
+                  {% for office in offices %}
+                    <option value="{{ office }}" {{ 'selected' if f.get('lgu_office') == office else '' }}>{{ office }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="lgu-position">Official job title / designation</label>
+                <input type="text" id="lgu-position" name="lgu_position" class="form-control" maxlength="100" required
+                       placeholder="e.g. Planning Officer, Licensing Inspector, Barangay Secretary"
+                       value="{{ f.get('lgu_position', '') }}">
+              </div>
+            </div>
+          </fieldset>
 
           <div class="form-check mt-2">
             <input class="form-check-input" type="checkbox" id="ml-terms" name="accept_terms" value="1" required
@@ -149,8 +184,6 @@
       <a href="{{ url_for('auth.terms') }}">Terms &amp; Conditions</a>
       <span aria-hidden="true">&middot;</span>
       <a href="{{ url_for('auth.privacy') }}">Privacy Policy</a>
-      <span aria-hidden="true">&middot;</span>
-      <a href="{{ url_for('auth.lgu_access_guide') }}">LGU Access Guide</a>
     </p>
   </footer>
 </div>

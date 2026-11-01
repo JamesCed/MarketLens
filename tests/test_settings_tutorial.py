@@ -31,7 +31,7 @@ import re
 
 import pytest
 
-from tests.account_fixtures import LGU_REQUEST, STRONG_PASSWORD, account_fields
+from tests.account_fixtures import LGU_CONTEXT, STRONG_PASSWORD, account_fields
 
 from app import create_app
 from app.controllers.onboarding_controller import describe_walkthrough
@@ -302,7 +302,7 @@ def test_a_new_account_is_never_asked_yet():
 
 
 @pytest.mark.parametrize("signup", [
-    {"role": "lgu", **LGU_REQUEST},
+    {"role": "lgu", **LGU_CONTEXT},
     {"role": "sme", "business_name": "Kape Tarlac", "industry_type": "Food and Beverage",
      "location": "Poblacion", "business_stage": "startup", "capital": "250000"},
 ])

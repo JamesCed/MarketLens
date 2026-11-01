@@ -196,13 +196,6 @@ def send_verification_code(to_email, to_name, code):
     return _send(to_email, to_name, f"Your {sender_name} verification code: {code}", body)
 
 
-def send_account_notice(to_email, to_name, subject, body):
-    """A message about the account itself (LGU access approved or not).
-    Not a marketing notification, so it has no unsubscribe switch.
-    True if a transport accepted it."""
-    return _send(to_email, to_name, subject, body)
-
-
 def send_password_reset_code(to_email, to_name, code):
     """Sends the 6-digit password-reset code.
 
@@ -252,7 +245,7 @@ def app_link(endpoint, **values):
     """An absolute link to a MarketLens page, for an e-mail.
 
     Alerts are often sent with no web request behind them -- from the
-    background thread that runs after a publish, or after a Places
+    background thread that runs after an LGU upload, or after a Places
     refresh -- and there url_for(_external=True) has no host to use.
     PUBLIC_BASE_URL (Render fills RENDER_EXTERNAL_URL in for it) gives
     the address the reader can actually open; inside a request with no
@@ -408,7 +401,7 @@ def send_in_background(func, *args, **kwargs):
 
     Sending can take seconds (Brevo's HTTPS call, Gmail's TLS handshake)
     and an alert is usually triggered by something the reader is waiting
-    on -- a forecast on the Planning page, an upload being published --
+    on -- a forecast on the Planning page, an LGU upload --
     so the page must not wait for the mail. Returns True when the
     message was queued (or, with EMAIL_IN_BACKGROUND off, sent), False
     when there is no transport to send it with.

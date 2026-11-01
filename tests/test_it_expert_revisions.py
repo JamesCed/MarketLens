@@ -15,7 +15,7 @@ from app import create_app
 from app.extensions import db
 from app.models import LguData, SmeProfile, SystemSetting, User
 from app.models.audit_log import AuditLog
-from tests.account_fixtures import LGU_REQUEST, PERSONAL, STRONG_PASSWORD, account_fields
+from tests.account_fixtures import LGU_CONTEXT, PERSONAL, STRONG_PASSWORD, account_fields
 
 
 @pytest.fixture
@@ -168,7 +168,7 @@ def test_an_lgu_registration_asks_only_for_names(app):
     """LGU staff register on /register/lgu: name, work e-mail and office
     details -- no gender, birthday, contact number or address (only what
     the purpose needs)."""
-    app.test_client().post("/register/lgu", data={**LGU_REQUEST,
+    app.test_client().post("/register/lgu", data={**LGU_CONTEXT,
                                                   **account_fields("lgu@x.test", first_name="Maria")})
     user = User.query.filter_by(email="lgu@x.test").one()
     assert user.role == "LGU" and user.first_name == "Maria" and user.last_name == "Dela Cruz"

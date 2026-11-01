@@ -3,7 +3,7 @@ app/models/system_setting.py
 ------------------------------
 SYSTEM_SETTINGS table -- Admin Module "system configuration and
 settings management". A simple key/value store so an Admin can tune
-the AI engine (clustering K, MSI weights, early-warning threshold,
+the AI engine (MSI weights, early-warning threshold,
 the plan forecast's wage and gross-margin assumptions, whether to use
 the optional LLM for recommendation text) without touching code or
 redeploying.
@@ -13,7 +13,6 @@ from datetime import datetime
 from app.extensions import db
 
 DEFAULT_SETTINGS = {
-    "kmeans_n_clusters": ("4", "Number of K-Means clusters (saturation zones: Low/Moderate/High/Saturated)"),
     "msi_weight_competitor_density": ("0.45", "MSI weight w1 for Competitor Density Score"),
     "msi_weight_demand_trend": ("0.35", "MSI weight w2 for Demand Trend Score"),
     "msi_weight_sociodemographic": ("0.20", "MSI weight w3 for Socio-Demographic Score"),
@@ -30,41 +29,12 @@ DEFAULT_SETTINGS = {
         "https://discord.gg/4EBtST2Bk",
         "Invite link to the MarketLens Discord community (opened by the footer's Community Forum link)",
     ),
-    "lgu_email_domains": (
-        "",
-        "Official LGU e-mail domains, comma-separated (e.g. tarlaccity.gov.ph). When set, LGU sign-ups and their "
-        "head-of-office endorsers must use one. Blank = any address (the System Admin checks it by hand).",
-    ),
-    "lgu_verification_email": (
-        "",
-        "Official address where heads of office send LGU access endorsements (the System Admin's office). "
-        "Blank = the support e-mail.",
-    ),
-    "lgu_verification_office": (
-        "City ICT / MIS Office",
-        "The office that verifies LGU staff and runs MarketLens as System Admin (shown in the LGU access guide).",
-    ),
-    "lgu_access_review_days": (
-        "180",
-        "Re-verify every LGU account after this many days (30-730). Admin > LGU Access flags accounts that are due.",
-    ),
     "use_llm_recommendations": (
         "true",
         "true = an LLM writes the recommendation text and explains the forecast (Gemini first for the forecast, "
         "then LLM_PROVIDER, then the other; keys in .env), false = the built-in rule-based generator. "
         "Figures always come from the trained models.",
     ),
-    "upload_retention_days": (
-        "1095",
-        "Days uploaded LGU data (zoning rows and permit counts) is kept after its upload before it is deleted "
-        "automatically (30-3650). Data Privacy Act: keep data only as long as its purpose needs it.",
-    ),
-    "audit_log_retention_days": (
-        "365",
-        "Days audit trail entries (who did what, IP address, browser) are kept before they are deleted "
-        "automatically (30-3650).",
-    ),
-    "retention_last_run": ("", "When the retention policy last ran and what it removed (maintained by the app)"),
     "plan_daily_wage_php": (
         "590",
         "Daily wage per employee (PHP) used for plan payroll = employees x wage x 26 days. Default: DOLE "

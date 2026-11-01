@@ -2479,85 +2479,18 @@ select.form-select[size="1"] { overflow: hidden; text-overflow: ellipsis; }
 }
 .dss-captcha-holder:empty { display: none; }
 
-/* ---------------------------------------------------------------
-   GOV'T DATA WORKFLOW (shared/_data_workflow.html): Encoder ->
-   Data Steward -> System Admin, the current step highlighted.
-   --------------------------------------------------------------- */
-.dss-workflow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
-.dss-workflow-step {
-  display: flex; gap: .65rem; align-items: flex-start;
-  padding: .75rem .85rem; border: 1px solid rgba(100,116,139,.25); border-radius: .6rem;
-}
-.dss-workflow-step.is-current { border-color: var(--dss-blue); background: var(--dss-blue-light); }
-.dss-workflow-num {
-  flex: 0 0 1.75rem; height: 1.75rem; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-weight: 700; font-size: .85rem; background: rgba(100,116,139,.15);
-}
-.dss-workflow-step.is-current .dss-workflow-num { background: var(--dss-blue); color: #fff; }
-@media (max-width: 767.98px) { .dss-workflow { grid-template-columns: 1fr; } }
-.dss-nav-count { margin-left: auto; font-size: .7rem; }
-/* Small secondary line under a value (also in admin.css); the LGU upload
-   and Data Review pages use it too. */
+/* Small secondary line under a value (also in admin.css). */
 .dss-meta { font-size: .78rem; line-height: 1.35; color: var(--bs-secondary-color); }
 .dss-meta code { font-size: inherit; color: inherit; }
-/* A data table that scrolls sideways on a phone instead of breaking its
-   words letter by letter (Data Review's barangay rows). */
-.dss-wide-table { min-width: 44rem; }
-.dss-wide-table th, .dss-wide-table td { word-break: normal; overflow-wrap: normal; }
-.dss-wide-table th { white-space: nowrap; }
 
-/* LGU access request (lgu/access_status.html, auth/lgu_access_guide.html) */
-.dss-ref-code { font: 700 1.6rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .08em; }
-.dss-next-steps { padding-left: 1.2rem; }
-.dss-next-steps li { margin-bottom: .55rem; }
-.dss-discord-box { border: 1px solid rgba(88,101,242,.35); background: rgba(88,101,242,.07); border-radius: .6rem; padding: .75rem .9rem; }
-.dss-guide h3 { font-size: 1.05rem; margin-top: 1.5rem; }
-.dss-guide .dss-guide-step { display: flex; gap: .8rem; margin-bottom: 1rem; }
-.dss-guide .dss-guide-num { flex: 0 0 2rem; height: 2rem; border-radius: 50%; background: var(--dss-blue); color: #fff;
-  display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
-.dss-guide pre { white-space: pre-wrap; background: rgba(100,116,139,.1); border-radius: .5rem; padding: .75rem; font-size: .85rem; }
-
-/* Public reading pages (Terms, Privacy, LGU Access Guide) when signed
-   out: body.dss-body is a flex row, so the page claims the full row and
-   carries its own footer underneath instead of beside it. */
+/* Public reading pages (Terms, Privacy) when signed out: body.dss-body
+   is a flex row, so the page claims the full row and carries its own
+   footer underneath instead of beside it. */
 .dss-public-page { flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; }
 .dss-public-page > .container { flex: 1 0 auto; }
-.dss-discord-message { white-space: pre-wrap; background: rgba(15,23,42,.06); border-radius: .4rem; padding: .55rem .7rem;
-  font-size: .8rem; margin: 0; }
 
-/* LGU registration sections (auth/register_lgu.html, lgu/access_status.html) */
+/* LGU registration sections (auth/register_lgu.html) */
 .dss-lgu-section { border: 1px solid rgba(100,116,139,.25); border-radius: .7rem; padding: .9rem 1rem 1rem; }
 .dss-lgu-legend { float: none; width: auto; font-size: 1rem; font-weight: 700; padding: 0 .4rem; margin-bottom: .4rem; }
 .dss-lgu-num { display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem;
   border-radius: 50%; background: var(--dss-blue); color: #fff; font-size: .8rem; margin-right: .3rem; }
-.dss-lgu-role-card { display: block; height: 100%; border: 1px solid rgba(100,116,139,.35); border-radius: .6rem;
-  padding: .65rem .8rem; cursor: pointer; }
-.btn-check:checked + .dss-lgu-role-card { border-color: var(--dss-blue); background: var(--dss-blue-light);
-  box-shadow: 0 0 0 .15rem rgba(37,99,235,.15); }
-.btn-check:focus-visible + .dss-lgu-role-card { outline: 2px solid var(--dss-blue); outline-offset: 2px; }
-
-/* "Pending..." -- three dots that light up in turn. */
-.dss-dots { display: inline-flex; gap: .08em; margin-left: .05em; }
-.dss-dots > span { animation: dss-dot 1.4s infinite both; }
-.dss-dots > span:nth-child(2) { animation-delay: .2s; }
-.dss-dots > span:nth-child(3) { animation-delay: .4s; }
-@keyframes dss-dot { 0%, 80%, 100% { opacity: .15; } 40% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .dss-dots > span { animation: none; opacity: 1; } }
-.dss-nav-pending { opacity: .85; font-style: italic; }
-.dss-pending-card { text-align: center; padding: 2.2rem 1.25rem; }
-.dss-pending-title { font-size: 2rem; font-weight: 800; letter-spacing: .01em; }
-.dss-pending-icon { font-size: 2.6rem; color: var(--dss-blue); }
-
-/* Gov't Data Review queue and batch messages */
-.dss-review-queue .list-group-item { border-radius: .45rem; margin-bottom: .25rem; border: 1px solid rgba(100,116,139,.2); }
-.dss-batch-messages { max-height: 26rem; overflow-y: auto; }
-.dss-batch-message { border-left: 3px solid rgba(100,116,139,.35); padding: .35rem .6rem; margin-bottom: .6rem; }
-.dss-batch-message.dss-msg-changes_requested { border-left-color: #f59e0b; }
-.dss-batch-message.dss-msg-approved { border-left-color: #16a34a; }
-.dss-batch-message.dss-msg-rejected { border-left-color: #dc2626; }
-.dss-batch-message.dss-msg-edited { border-left-color: var(--dss-blue); }
-
-.dss-file-cell { min-width: 13rem; overflow-wrap: anywhere; }
-.dss-edit-table td:nth-child(2) { min-width: 13rem; }
-.dss-edit-table input[type="number"] { width: 6.5rem; min-width: 5.5rem; margin-left: auto; }

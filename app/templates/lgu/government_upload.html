@@ -8,53 +8,6 @@
   <div class="alert alert-warning small mt-2 mb-0">
     <i class="bi bi-shield-lock"></i> This page is only visible to <strong>LGU</strong> accounts.
     Entrepreneur / Business Owner (SME) and Admin accounts cannot open it (HTTP 403).
-    You are signed in as an <strong>{{ current_user.lgu_role_label }}</strong>.
-  </div>
-</div>
-
-{#
-  THE THREE-STEP WORKFLOW (app/services/staging_service.py). An upload
-  goes to the staging area, not the live dataset: an LGU Data Steward
-  reviews it, then a System Admin publishes it.
-#}
-<div class="dss-card mb-4">
-  <h6 class="mb-3"><i class="bi bi-diagram-2"></i> How an upload goes live</h6>
-  {% with step=1 %}{% include "shared/_data_workflow.html" %}{% endwith %}
-</div>
-
-{#
-  PRIVACY NOTICE FOR UPLOADS -- Data Privacy Act of 2012 (RA 10173),
-  Sec. 11: transparency (what, why, who, how long), legitimate purpose
-  and proportionality (no personal fields; totals only). The full notice
-  is section 4 of /terms.
-#}
-{% set kept_upload_days, kept_audit_days = retention_days() %}
-<div class="dss-card mb-4" id="uploadPrivacyNotice">
-  <h6 class="mb-2"><i class="bi bi-shield-check text-success"></i> Privacy notice for uploads</h6>
-  <div class="row g-3 small">
-    <div class="col-md-6">
-      <p class="mb-1"><strong>What is collected.</strong> Barangay zoning figures and business permit lists. From a
-        permit list only the barangay, industry, line of business, status and permit number are read.</p>
-      <p class="mb-1"><strong>What is kept.</strong> Totals only &mdash; one row per barangay and permit counts per
-        industry per barangay, with your account and the upload date. The file is deleted right after processing; no
-        business name, permit number or file row is stored.</p>
-      <p class="mb-0"><strong>Purpose.</strong> Market saturation scores, city-wide recommendations, trend reports and
-        the Diversification Plan &mdash; nothing else. Never sold or shared outside MarketLens.</p>
-    </div>
-    <div class="col-md-6">
-      <p class="mb-1"><strong>Who can see it.</strong> LGU accounts (Encoders and Data Stewards) and system
-        administrators. Business owners see only the resulting scores and counts per barangay, never your file.</p>
-      <p class="mb-1"><strong>How long.</strong> Uploaded data: {{ kept_upload_days }} days after upload. Audit trail
-        (who uploaded what, when, from which device): {{ kept_audit_days }} days. Both are then deleted automatically.
-        A staged upload not published within 60 days expires and is deleted.</p>
-      <p class="mb-0"><strong>Questions or requests.</strong> {% include "shared/_dpo_contact.html" %}.
-        <a href="{{ url_for('auth.privacy') }}#lgu-data">Full Privacy Policy</a></p>
-    </div>
-  </div>
-  <div class="alert alert-warning small mt-3 mb-0">
-    <i class="bi bi-person-x"></i> <strong>Before you upload, remove personal information.</strong>
-    Delete columns with owner or proprietor names, contact numbers, e-mail addresses, home addresses, TIN or other ID
-    numbers and birth dates. MarketLens does not need them, and a file that contains them is refused.
   </div>
 </div>
 
@@ -79,27 +32,15 @@
         <span id="uploadJobElapsed">{{ upload_job.elapsed }}</span> s
       </div>
       <div class="small text-muted mt-1">
-        You can keep using MarketLens while this runs. The file goes to the staging area when it is checked.
+        You can keep using MarketLens while this runs. The result appears here when it is done.
       </div>
     </div>
   </div>
 </div>
 {% endif %}
 
-{% set needs_changes = my_batches|selectattr('status', 'equalto', 'changes_requested')|list %}
-{% if needs_changes %}
-<div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
-  <div><i class="bi bi-chat-left-dots"></i> <strong>The Data Steward asked for changes</strong> on
-    {{ needs_changes|length }} upload{{ 's' if needs_changes|length != 1 }}. Fix the data, then it goes back for review.</div>
-  <a class="btn btn-sm btn-warning" href="{{ url_for('lgu.edit_upload', batch_id=needs_changes[0].id) }}">Open batch #{{ needs_changes[0].id }}</a>
-</div>
-{% endif %}
-
 <div class="dss-card mb-4">
-  <h6 class="mb-1">Upload Dataset</h6>
-  <p class="dss-meta mb-3">The file is checked straight away and saved to the <strong>staging area</strong>. It goes live
-    only after an LGU Data Steward approves it and a System Admin publishes it.</p>
-  {% if current_user.is_lgu_encoder() %}
+  <h6 class="mb-3">Upload Dataset</h6>
   <form method="POST" action="{{ url_for('lgu.government_upload') }}" enctype="multipart/form-data" id="uploadForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row g-3 align-items-end">
@@ -128,10 +69,6 @@
       </div>
     </div>
   </form>
-  {% else %}
-  <p class="small text-muted mb-0"><i class="bi bi-lock"></i> Uploading is done by LGU Encoders. The column guide and
-    templates below are what they work from.</p>
-  {% endif %}
 
   {#
     WHAT TO PUT IN THE FILE.
@@ -230,69 +167,18 @@
         and the pages stay fast.</li>
       <li><strong>A combined file works too.</strong> A permit list that also carries the
         zoning columns (like the sample dataset) fills both tables, whichever target you pick.</li>
-      <li><strong>Staged first, live after approval.</strong> A file that passes these checks is
-        saved to the staging area as a batch. An LGU Data Steward reviews it (and can reject it
-        with a reason, shown under <em>Your uploads</em>); a System Admin then publishes it. Only
-        then do city-wide recommendations, the saturation map and the trend reports use it
-        &mdash; no re-seeding, no restart.</li>
-      <li>The uploaded file itself is not stored &mdash; only the parsed totals are saved, and a
-        staged batch&rsquo;s rows are cleared once it is published or rejected.</li>
+      <li><strong>Everything recalculates on success.</strong> City-wide recommendations, the
+        saturation map and the trend reports are refreshed in the background right after the
+        upload &mdash; no re-seeding, no restart.</li>
+      <li>The uploaded file itself is not stored &mdash; only the parsed data rows are saved.</li>
     </ul>
   </div>
 </div>
 
-{% if my_batches %}
-{#
-  YOUR UPLOADS. Until a Data Steward approves a batch the encoder can
-  still correct it (Edit: change the barangay rows or replace the file)
-  or withdraw it (Archive). The latest message from the Data Steward is
-  shown on the row; the full conversation is on the edit page.
-#}
-<div class="dss-card mb-4" id="myUploads">
-  <h6 class="mb-3">Your uploads</h6>
-  <div class="table-responsive">
-    <table class="table table-sm align-middle dss-wide-table">
-      <thead><tr><th>Batch</th><th>File</th><th>Contents</th><th>Status</th><th>Latest message</th><th>Uploaded</th><th></th></tr></thead>
-      <tbody>
-        {% for b in my_batches %}
-        {% set last = b.last_message %}
-        <tr class="{{ 'table-warning' if b.status == 'changes_requested' else '' }}">
-          <td>#{{ b.id }}</td>
-          <td class="dss-file-cell"><code>{{ b.filename }}</code><div class="dss-meta">{{ b.dataset_label }}</div></td>
-          <td class="small">{{ b.barangays }} barangay{{ 's' if b.barangays != 1 }}{% if b.market_rows %}, {{ '{:,}'.format(b.market_rows) }} industry count{{ 's' if b.market_rows != 1 }}{% endif %}</td>
-          <td>{% include "shared/_batch_status.html" %}</td>
-          <td class="small text-break">
-            {% if last %}<span class="fw-semibold">{{ last.by }}:</span> {{ last.text|truncate(120, True, '…') }}
-            {% else %}{{ b.review_note or '—' }}{% endif %}
-          </td>
-          <td class="dss-meta text-nowrap">{{ b.uploaded_at|pht }}</td>
-          <td class="text-end text-nowrap">
-            {% if b.is_editable %}
-              <a class="btn btn-sm {{ 'btn-warning' if b.status == 'changes_requested' else 'btn-outline-primary' }}"
-                 href="{{ url_for('lgu.edit_upload', batch_id=b.id) }}"><i class="bi bi-pencil-square" aria-hidden="true"></i> Edit</a>
-            {% elif b.message_list %}
-              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('lgu.edit_upload', batch_id=b.id) }}"><i class="bi bi-chat-left-text" aria-hidden="true"></i> View</a>
-            {% endif %}
-            {% if b.is_archivable %}
-              <form method="POST" action="{{ url_for('lgu.archive_upload', batch_id=b.id) }}" class="d-inline dss-archive-form">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Withdraw this upload"><i class="bi bi-archive" aria-hidden="true"></i> Archive</button>
-              </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <p class="dss-meta mb-0">Edit and Archive are available until a batch is published. Edited batches go back to the Data Steward for review.</p>
-</div>
-{% endif %}
-
 <div class="row g-4">
   <div class="col-lg-6">
     <div class="dss-card">
-      <h6 class="mb-3">Live Gov't / Zoning Data</h6>
+      <h6 class="mb-3">Recent Gov't / Zoning Data</h6>
       {% if recent_lgu_data %}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
@@ -316,7 +202,7 @@
   </div>
   <div class="col-lg-6">
     <div class="dss-card">
-      <h6 class="mb-3">Live Market Data</h6>
+      <h6 class="mb-3">Recent Market Data</h6>
       {% if recent_market_data %}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
@@ -352,30 +238,29 @@
     const opts = datasetType.value === 'MARKET_DATA' ? MARKET_SOURCES : LGU_SOURCES;
     sourceSelect.innerHTML = opts.map(s => `<option value="${s}">${s}</option>`).join('');
   }
-  if (datasetType) datasetType.addEventListener('change', refreshSources);
+  datasetType.addEventListener('change', refreshSources);
 
   // Show the column guide for whichever table is selected and highlight
   // its template -- downloading the wrong template is a guaranteed
   // failed upload.
   function refreshGuide() {
-    const chosen = datasetType ? datasetType.value : 'LGU_DATA';
     document.querySelectorAll('.dss-column-guide').forEach((box) => {
-      box.hidden = box.dataset.dataset !== chosen;
+      box.hidden = box.dataset.dataset !== datasetType.value;
     });
     document.querySelectorAll('.dss-template-link').forEach((link) => {
-      const selected = link.dataset.dataset === chosen;
+      const selected = link.dataset.dataset === datasetType.value;
       link.classList.toggle('btn-primary', selected);
       link.classList.toggle('btn-outline-primary', !selected);
     });
   }
-  if (datasetType) datasetType.addEventListener('change', refreshGuide);
+  datasetType.addEventListener('change', refreshGuide);
   refreshGuide();
 
   const uploadForm = document.getElementById('uploadForm');
   if (uploadForm) {
     uploadForm.addEventListener('submit', () => {
       const text = document.querySelector('#dssPageLoader .dss-page-loader-text');
-      if (text) text.textContent = 'Uploading and checking your file for the staging area…';
+      if (text) text.textContent = 'Uploading and checking your file…';
       const button = document.getElementById('uploadButton');
       if (button) button.disabled = true;
     });
@@ -403,14 +288,5 @@
     }
     setTimeout(poll, 700);
   })();
-
-  // Archiving withdraws the batch and discards its staged rows.
-  document.querySelectorAll('.dss-archive-form').forEach((form) => {
-    form.addEventListener('submit', (event) => {
-      if (!window.confirm('Archive this upload? It is withdrawn from review and its staged rows are discarded.')) {
-        event.preventDefault();
-      }
-    });
-  });
 </script>
 {% endblock %}

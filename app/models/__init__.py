@@ -33,8 +33,6 @@ from app.models.audit_log import AuditLog
 from app.models.system_setting import SystemSetting
 from app.models.industry_migration_log import IndustryMigrationLog
 from app.models.subcategory_market_data import SubcategoryMarketData
-from app.models.upload_batch import UploadBatch
-from app.models.lgu_access_request import LguAccessRequest
 
 __all__ = [
     "User",
@@ -48,6 +46,4 @@ __all__ = [
     "SystemSetting",
     "IndustryMigrationLog",
     "SubcategoryMarketData",
-    "UploadBatch",
-    "LguAccessRequest",
 ]

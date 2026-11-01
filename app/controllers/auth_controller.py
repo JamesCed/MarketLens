@@ -122,26 +122,14 @@ def _create_user_from_pending(pending):
         user.contact_number = pending["contact_number"]
     if pending.get("terms_accepted_at"):
         user.terms_accepted_at = datetime.fromisoformat(pending["terms_accepted_at"])
+    if pending["role"] == "LGU":
+        from app.services.lgu_profile import apply_lgu_context
+
+        apply_lgu_context(user, pending.get("lgu"))
     user.password = pending["password_hash"]
     db.session.add(user)
     db.session.commit()
     log_action("register", details=f"New {pending['role']} account: {pending['email']}", user_id=user.user_id)
-
-    # LGU sign-ups get NO LGU access yet: the account waits for the System
-    # Admin to verify the person (app/services/lgu_access_service.py).
-    if pending["role"] == "LGU":
-        from app.services import lgu_access_service
-
-        lgu = pending.get("lgu") or {}
-        if lgu.get("office"):
-            row = lgu_access_service.open_request(user, lgu)
-            user.lgu_reference_code = row.reference_code
-            log_action("lgu_access_requested", details=f"{row.reference_code}: {lgu['position']}, {lgu['office']} "
-                                                       f"({row.requested_role_label})", user_id=user.user_id,
-                       target=user)
-        else:
-            user.lgu_status = lgu_access_service.PENDING
-            db.session.commit()
 
     business = pending.get("business")
     if business and not SmeProfile.query.filter_by(user_id=user.user_id).first():
@@ -166,11 +154,6 @@ def _created_message(pending, user, verified_email):
     if pending.get("business"):
         return (f"{start}your account and your first business plan are ready. Log in to see its forecast."
                 if verified_email else "Account created with your first business plan. Log in to see its forecast.")
-    if pending.get("role") == "LGU":
-        return (f"{start}your LGU account was created and your access request is pending verification. "
-                f"The System Admin reviews it within 24 hours and e-mails you the decision -- sign in to see its "
-                f"status. You can already open the LGU Dashboard, Diversification Plan, Saturation Map and "
-                f"Trend Reports.")
     return f"{start}your account has been created. You can now log in." if verified_email else \
         "Account created. You can now log in."
 
@@ -210,22 +193,6 @@ def _register_form_context(form=None):
     }
 
 
-def _lgu_guide_context():
-    from app.services.lgu_access_service import guide_context
-
-    try:
-        return guide_context()
-    except Exception:
-        from app.ml.seed_data import BARANGAY_NAMES
-        from app.services.lgu_access_service import (DEFAULT_OFFICE, OFFICES, REASON_LENGTH, REVIEW_WINDOW_HOURS,
-                                                     SCOPES)
-
-        return {"verification_office": DEFAULT_OFFICE, "verification_email": current_app.config.get("SUPPORT_EMAIL", ""),
-                "lgu_domains": [], "review_days": 180, "review_hours": REVIEW_WINDOW_HOURS, "offices": OFFICES,
-                "lgu_scopes": SCOPES, "lgu_barangays": sorted(BARANGAY_NAMES), "lgu_roles": User.LGU_ROLES,
-                "reason_length": REASON_LENGTH}
-
-
 def _home_url():
     """The signed-in user's own start page. Redirecting straight there,
     rather than to "/" which then redirects again, saves the browser a
@@ -235,7 +202,7 @@ def _home_url():
     if current_user.is_sme():
         return url_for("sme.home")
     if current_user.is_lgu():
-        return url_for("lgu.dashboard") if current_user.is_lgu_verified else url_for("lgu.access_status")
+        return url_for("lgu.dashboard")
     return url_for("admin.dashboard")
 
 
@@ -302,10 +269,9 @@ def register():
 
 @auth_bp.route("/register/lgu", methods=["GET", "POST"])
 def register_lgu():
-    """LGU staff and officials register here: account details, their
-    Tarlac City LGU context, and the role they need. The account is
-    created "pending_verification" -- no LGU role until the System Admin
-    approves it (app/services/lgu_access_service.py)."""
+    """LGU staff and officials register here: account details and their
+    Tarlac City LGU context (app/services/lgu_profile.py). The LGU
+    account is ready as soon as it is created."""
     if current_user.is_authenticated:
         return redirect(_home_url())
     if request.method == "POST":
@@ -314,12 +280,14 @@ def register_lgu():
 
 
 def _lgu_form_context(form=None):
-    return {"form": form if form is not None else {}, **_lgu_guide_context()}
+    from app.services.lgu_profile import form_context
+
+    return {"form": form if form is not None else {}, **form_context()}
 
 
 def _register_lgu_post():
     from app.services.account_params import parse_account_names
-    from app.services.lgu_access_service import parse_request_form
+    from app.services.lgu_profile import parse_lgu_context
     from app.utils.privacy import encrypt_value
 
     refused = _registration_guard("auth/register_lgu.html", _lgu_form_context)
@@ -330,7 +298,7 @@ def _register_lgu_post():
     password = request.form.get("password", "")
     names, errors = parse_account_names(request.form)
     errors.extend(_credential_errors(email, password, request.form.get("confirm_password", "")))
-    lgu, lgu_errors = parse_request_form(request.form, email)
+    lgu, lgu_errors = parse_lgu_context(request.form)
     errors.extend(lgu_errors)
     if errors:
         for e in errors:
@@ -438,14 +406,6 @@ def privacy():
     """The Privacy Policy (Data Privacy Act of 2012, RA 10173) -- public
     for the same reason as the terms."""
     return render_template("auth/privacy.html")
-
-
-@auth_bp.route("/lgu-access-guide")
-def lgu_access_guide():
-    """How LGU staff and officials get an LGU role, safely -- public, so
-    it can be read (and linked from the Discord community) before an
-    account exists. See app/services/lgu_access_service.py."""
-    return render_template("auth/lgu_access_guide.html", **_lgu_guide_context())
 
 
 @auth_bp.route("/register/verify", methods=["GET", "POST"])

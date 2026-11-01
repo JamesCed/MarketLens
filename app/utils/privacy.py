@@ -161,7 +161,6 @@ ENCRYPTED_USER_COLUMNS = ("contact_number_enc", "gender_enc", "birthdate_enc",
 # Every table with EncryptedText columns: (primary key, encrypted columns).
 ENCRYPTED_TABLES = {
     "user": ("user_id", ENCRYPTED_USER_COLUMNS),
-    "lgu_access_requests": ("id", ("endorser_name", "endorser_email", "discord_username")),
 }
 
 

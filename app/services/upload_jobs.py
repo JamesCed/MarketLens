@@ -15,15 +15,14 @@ the page shows the result straight away, exactly as before. A file that
 takes longer gets a progress card that asks /lgu/upload-status/<id>
 until the job is done.
 
-The job validates the file and saves it to the STAGING AREA
-(staging_service): nothing live changes until a Data Steward approves
-the batch and a System Admin publishes it. Publishing then runs the
-alert sweep and re-computes the city-wide figures on a separate,
-low-priority background thread (schedule_followups), so neither the
-publisher nor the next uploader waits for it.
+The job validates the file and writes it straight to the live tables
+(data_import_service.process_upload). The alert sweep and the re-computed
+city-wide figures then run on a separate, low-priority background thread
+(schedule_followups), so neither the uploader nor the next one waits for
+them.
 
 One import runs at a time per process and holds the import lock only
-while it reads and stages the file; a second one waits a few seconds at
+while it reads and saves the file; a second one waits a few seconds at
 most. Jobs live in memory -- the app runs one web process -- and are
 forgotten an hour after they end.
 """
@@ -61,7 +60,6 @@ class UploadJob:
         self.ended = None
         self.shown = False
         self.log_in_background = False
-        self.batch_id = None
         self.done = threading.Event()
         self.lock = threading.Lock()
 
@@ -88,7 +86,6 @@ class UploadJob:
             "message": self.message,
             "count": self.count,
             "filename": self.filename,
-            "batch_id": self.batch_id,
             "elapsed": round((self.ended or time.time()) - self.created, 1),
         }
 
@@ -130,14 +127,13 @@ def unshown_results_for(user_id):
 def _log_result(job):
     from app.utils.audit import log_action
 
-    staged = f", staged as batch #{job.batch_id}" if job.batch_id else ""
     log_action("dataset_upload",
-               details=f"{job.dataset_type}/{job.source}: {job.filename} ({job.status}{staged})",
+               details=f"{job.dataset_type}/{job.source}: {job.filename} ({job.status})",
                user_id=job.user_id)
 
 
 def run_job(app, job, file_path):
-    """Validate the file and save it to the staging area. Runs on the
+    """Validate the file and write it to the live tables. Runs on the
     job's thread (or inline when UPLOAD_IN_BACKGROUND is off, as in the
     tests). Only this step holds the import lock -- a few seconds -- so
     one upload never waits behind another's follow-up work."""
@@ -149,14 +145,15 @@ def run_job(app, job, file_path):
         return
     try:
         job.state = "running"
+        imported = False
         with app.app_context():
-            from app.services.staging_service import stage_upload
+            from app.services.data_import_service import process_upload
 
             try:
-                count, status, message, batch_id = stage_upload(
-                    job.dataset_type, file_path, job.source, job.user_id, job.filename, progress=job
+                count, status, message = process_upload(
+                    job.dataset_type, file_path, job.source, job.user_id, progress=job, run_followups=False
                 )
-                job.batch_id = batch_id
+                imported = status == "success"
                 job.finish(count, status, message)
             except Exception as exc:
                 log.exception("upload job %s failed", job.id)
@@ -169,6 +166,8 @@ def run_job(app, job, file_path):
             if log_here:
                 _log_result(job)
             job.step_to("Finished")
+        if imported:
+            schedule_followups(app)
     except Exception:
         log.exception("upload job %s crashed", job.id)
         job.finish(0, "failed", "The upload stopped unexpectedly. Please try again.")
@@ -189,8 +188,8 @@ _FOLLOWUP_LOCK = threading.Lock()
 
 
 def schedule_followups(app):
-    """After a batch is published: run the alert sweep and re-compute the
-    city-wide figures on ONE background thread. A publish that arrives
+    """After an upload goes live: run the alert sweep and re-compute the
+    city-wide figures on ONE background thread. An upload that arrives
     while it is running makes it start over with the newest data instead
     of queueing another thread. Inline when UPLOAD_IN_BACKGROUND is off."""
     if not app.config.get("UPLOAD_IN_BACKGROUND", True):
@@ -201,7 +200,7 @@ def schedule_followups(app):
         if _followups["running"]:
             return
         _followups["running"] = True
-    threading.Thread(target=_followup_loop, args=(app,), name="publish-followups", daemon=True).start()
+    threading.Thread(target=_followup_loop, args=(app,), name="upload-followups", daemon=True).start()
 
 
 def _lower_priority():
@@ -225,7 +224,7 @@ def _followup_loop(app):
                     _followups["running"] = False
                     return
     except Exception:
-        log.exception("follow-up work after publishing failed")
+        log.exception("follow-up work after an upload failed")
         with _FOLLOWUP_LOCK:
             _followups["running"] = False
 
@@ -270,10 +269,10 @@ def warm_after_upload(superseded=lambda: False):
     """Re-compute what the next pages will ask for, now, on this thread:
     the LGU dashboard's industry cards and rankings, the Diversification
     Plan and the city-wide trend sweep. Every one of them was cleared by
-    the publish, and the trend sweep alone is many CPU-seconds on a small
+    the upload, and the trend sweep alone is many CPU-seconds on a small
     instance -- the first visitor afterwards would otherwise wait for all
     of it. Stops early when `superseded()` turns true (newer data was
-    published meanwhile). Never raises."""
+    uploaded meanwhile). Never raises."""
     started = time.perf_counter()
     try:
         from app.ml.constants import BUSINESS_TYPES
@@ -295,7 +294,7 @@ def warm_after_upload(superseded=lambda: False):
                 break
             step()
     except Exception:
-        log.warning("warm-up after publishing did not finish", exc_info=True)
+        log.warning("warm-up after an upload did not finish", exc_info=True)
     finally:
         try:
             from app.extensions import db
@@ -303,4 +302,4 @@ def warm_after_upload(superseded=lambda: False):
             db.session.remove()
         except Exception:
             pass
-    log.info("warm-up after publishing took %.1f s", time.perf_counter() - started)
+    log.info("warm-up after an upload took %.1f s", time.perf_counter() - started)

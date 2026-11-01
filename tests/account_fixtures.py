@@ -30,13 +30,10 @@ def account_fields(email, password=STRONG_PASSWORD, **overrides):
     return data
 
 
-# What an LGU registration adds (the LGU access request): jurisdiction,
-# office, job title, the role asked for and why. See
-# app/services/lgu_access_service.py.
-LGU_REQUEST = {
+# What the LGU registration form adds: the Tarlac City LGU context --
+# jurisdiction, office and job title. See app/services/lgu_profile.py.
+LGU_CONTEXT = {
     "lgu_scope": "city",
     "lgu_office": "Business Permits and Licensing Office (BPLO)",
     "lgu_position": "Licensing Officer II",
-    "lgu_requested_role": "encoder",
-    "lgu_reason": "Our office uploads the quarterly business permit list for the city.",
 }

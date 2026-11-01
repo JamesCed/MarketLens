@@ -15,19 +15,8 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   <div class="dss-card mb-4">
-    <h6 class="mb-3">Clustering &amp; MSI Weights</h6>
+    <h6 class="mb-3">MSI Weights &amp; Early Warning</h6>
     <div class="row g-3">
-      <div class="col-md-6">
-        <label class="form-label">K-Means clusters (saturation zones)</label>
-        <input type="number" min="2" max="8" name="kmeans_n_clusters" class="form-control"
-               value="{{ settings['kmeans_n_clusters'].setting_value if 'kmeans_n_clusters' in settings else 4 }}">
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">Early-warning threshold (Saturation Index, 0-100)</label>
-        <input type="number" step="1" min="0" max="100" name="saturation_alert_threshold" class="form-control"
-               value="{{ settings['saturation_alert_threshold'].setting_value if 'saturation_alert_threshold' in settings else 75 }}">
-        <div class="form-text">Saturation tiers (Low, Moderate, High, Saturated) are fixed at {{ cluster_thresholds }}.</div>
-      </div>
       <div class="col-md-4">
         <label class="form-label">w1 — Competitor Density weight</label>
         <input type="number" step="0.01" min="0" max="1" name="msi_weight_competitor_density" class="form-control"
@@ -44,6 +33,12 @@
                value="{{ settings['msi_weight_sociodemographic'].setting_value if 'msi_weight_sociodemographic' in settings else 0.20 }}">
       </div>
       <div class="col-12 text-muted small">w1 + w2 + w3 should add up to 1.0 (paper default: 0.45 / 0.35 / 0.20).</div>
+      <div class="col-md-6">
+        <label class="form-label">Early-warning threshold (Saturation Index, 0-100)</label>
+        <input type="number" step="1" min="0" max="100" name="saturation_alert_threshold" class="form-control"
+               value="{{ settings['saturation_alert_threshold'].setting_value if 'saturation_alert_threshold' in settings else 75 }}">
+        <div class="form-text">Saturation tiers (Low, Moderate, High, Saturated) are fixed at {{ cluster_thresholds }}.</div>
+      </div>
     </div>
   </div>
 
@@ -80,34 +75,6 @@
   </div>
 
   <div class="dss-card mb-4">
-    <h6 class="mb-1">Data retention (Data Privacy Act of 2012)</h6>
-    <p class="text-muted small mb-3">
-      Data is kept only as long as its purpose needs it (RA 10173, Sec. 11). Once a day the app deletes uploaded
-      LGU data and audit trail entries older than these periods. An uploaded row that a saved forecast still uses
-      is kept until that forecast is gone; such rows hold barangay totals only, no personal data.
-    </p>
-    <div class="row g-3">
-      <div class="col-md-6">
-        <label class="form-label" for="uploadRetention">Uploaded LGU data (days)</label>
-        <input type="number" step="1" min="30" max="3650" id="uploadRetention" name="upload_retention_days"
-               class="form-control"
-               value="{{ settings['upload_retention_days'].setting_value if 'upload_retention_days' in settings else 1095 }}">
-        <div class="form-text">Zoning rows and permit counts, counted from the upload date. Default 1095 (3 years).</div>
-      </div>
-      <div class="col-md-6">
-        <label class="form-label" for="auditRetention">Audit trail (days)</label>
-        <input type="number" step="1" min="30" max="3650" id="auditRetention" name="audit_log_retention_days"
-               class="form-control"
-               value="{{ settings['audit_log_retention_days'].setting_value if 'audit_log_retention_days' in settings else 365 }}">
-        <div class="form-text">Who did what, with IP address and browser. Default 365 (1 year).</div>
-      </div>
-    </div>
-    {% if settings.get('retention_last_run') and settings['retention_last_run'].setting_value %}
-      <div class="form-text mt-2">Last run: {{ settings['retention_last_run'].setting_value }}</div>
-    {% endif %}
-  </div>
-
-  <div class="dss-card mb-4">
     <h6 class="mb-3">Google Places API</h6>
     <label class="form-label">Max competitor results per Text Search lookup</label>
     <input type="number" min="0" max="60" name="places_max_results" class="form-control"
@@ -131,41 +98,6 @@
       When on, Gemini turns each forecast&rsquo;s numbers into a short plain-language explanation for the owner.
       Every figure in it is checked against the trained models&rsquo; own results before it is shown. When off, or
       when the AI service cannot be reached, the built-in summary is shown instead &mdash; the page never breaks.
-    </div>
-  </div>
-
-  {# Who may get an LGU role, and how they are checked -- see
-     app/services/lgu_access_service.py and docs/LGU_ACCESS.md. #}
-  <div class="dss-card mb-4" id="lgu-access-settings">
-    <h6 class="mb-1">LGU access verification</h6>
-    <p class="text-muted small">LGU sign-ups get no LGU role until you verify them in
-      <a href="{{ url_for('admin.users', _anchor='lgu-access') }}">Manage Users &rsaquo; LGU access requests</a>. These values appear in the registration form and the guide.</p>
-    <div class="row g-3">
-      <div class="col-md-6">
-        <label class="form-label" for="lguDomains">Official LGU e-mail domains</label>
-        <input type="text" id="lguDomains" name="lgu_email_domains" class="form-control" maxlength="255"
-               placeholder="tarlaccity.gov.ph"
-               value="{{ settings['lgu_email_domains'].setting_value if 'lgu_email_domains' in settings else '' }}">
-        <div class="form-text">Comma-separated. When set, LGU staff must register with an address on one of these
-          domains. Leave blank during user testing with personal e-mail addresses.</div>
-      </div>
-      <div class="col-md-6">
-        <label class="form-label" for="lguEmail">LGU access contact e-mail (shown to applicants)</label>
-        <input type="email" id="lguEmail" name="lgu_verification_email" class="form-control" maxlength="255"
-               placeholder="{{ SUPPORT_EMAIL or 'ict@lgu.gov.ph' }}"
-               value="{{ settings['lgu_verification_email'].setting_value if 'lgu_verification_email' in settings else '' }}">
-        <div class="form-text">Where LGU staff can ask about their request. Blank = the support e-mail.</div>
-      </div>
-      <div class="col-md-6">
-        <label class="form-label" for="lguOffice">Verifying office (System Admin)</label>
-        <input type="text" id="lguOffice" name="lgu_verification_office" class="form-control" maxlength="120"
-               value="{{ settings['lgu_verification_office'].setting_value if 'lgu_verification_office' in settings else 'City ICT / MIS Office' }}">
-      </div>
-      <div class="col-md-6">
-        <label class="form-label" for="lguReview">Re-verify LGU accounts every (days)</label>
-        <input type="number" id="lguReview" name="lgu_access_review_days" class="form-control" min="30" max="730" step="1"
-               value="{{ settings['lgu_access_review_days'].setting_value if 'lgu_access_review_days' in settings else 180 }}">
-      </div>
     </div>
   </div>
 

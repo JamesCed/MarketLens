@@ -23,10 +23,9 @@
   LGU accounts skip step 2 entirely. An LGU official plans for the city
   and has no SmeProfile, so asking them for a capital would be asking
   for a number that has nowhere to go. Choosing "LGU Staff / Official"
-  in step 1 opens the LGU registration form (/register/lgu, account
-  details, Tarlac City LGU context, role), and the account waits as
-  "pending_verification" until the System Admin approves it
-  (app/services/lgu_access_service.py).
+  in step 1 opens the LGU registration form (/register/lgu: account
+  details and Tarlac City LGU context). The LGU account is ready as
+  soon as it is created.
 
   CAPITAL IS REQUIRED for an SME (it is an input to the plan viability
   model -- see app/services/plan_params.py). Like every step-2 field its
@@ -438,8 +437,6 @@
       <a href="{{ url_for('auth.terms') }}">Terms &amp; Conditions</a>
       <span aria-hidden="true">&middot;</span>
       <a href="{{ url_for('auth.privacy') }}">Privacy Policy</a>
-      <span aria-hidden="true">&middot;</span>
-      <a href="{{ url_for('auth.lgu_access_guide') }}">LGU Access Guide</a>
     </p>
   </footer>
 </div>
@@ -559,7 +556,7 @@
   function syncRoleNote() {
     roleNote.textContent = isSme()
       ? "Next, tell us about the business you are planning."
-      : "LGU staff register on the LGU form: your office, jurisdiction and the role you need. Continue to open it.";
+      : "LGU staff register on the LGU form: your account details and Tarlac City LGU context. Continue to open it.";
   }
   form.querySelectorAll('input[name="role"]').forEach(r => r.addEventListener("change", () => {
     syncRoleNote();

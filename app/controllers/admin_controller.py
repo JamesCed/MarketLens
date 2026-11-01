@@ -36,7 +36,6 @@ Three things worth calling out because they shaped this file:
 
 import csv
 import io
-import re
 from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
@@ -296,19 +295,6 @@ def _system_health():
         checks.append(("Administrators", 2 <= n <= 3, note))
     except Exception:
         checks.append(("Administrators", False, "could not be checked"))
-    try:
-        from app.services import lgu_access_service as access
-
-        waiting = access.count_pending()
-        coverage = access.role_coverage()
-        missing = [label for key, label in (("encoder", "an LGU Encoder"), ("steward", "an LGU Data Steward"))
-                   if not coverage[key]]
-        parts = [f"{waiting} request{'s' if waiting != 1 else ''} waiting for verification"]
-        if missing:
-            parts.append("no verified " + " or ".join(missing) + " yet")
-        checks.append(("LGU access", not waiting and not missing, "; ".join(parts)))
-    except Exception:
-        checks.append(("LGU access", False, "could not be checked"))
     return [{"name": n, "ok": ok, "note": note} for n, ok, note in checks]
 
 
@@ -388,19 +374,11 @@ def users():
         status=status,
         status_choices=USER_STATUS_CHOICES,
         suspension_choices=SUSPENSION_CHOICES,
-        **_lgu_panel_context(),
         counts={
             "all": User.query.filter(User.archived_at.is_(None)).count(),
             "suspended": User.query.filter(User.archived_at.is_(None), User.status == "inactive").count(),
         },
     )
-
-
-def _lgu_panel_context():
-    """The "LGU access requests" panel on Manage Users."""
-    from app.services import lgu_access_service as access
-
-    return access.admin_panel_context()
 
 
 @admin_bp.route("/users/create", methods=["POST"])
@@ -417,10 +395,6 @@ def create_user():
     email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
     role = request.form.get("role", "SME")
-    lgu_role = None
-    if role in ("LGU_ENCODER", "LGU_STEWARD"):
-        lgu_role = "steward" if role == "LGU_STEWARD" else "encoder"
-        role = "LGU"
     raw_contact = request.form.get("contact_number", "").strip()
     contact_number = normalise_ph_mobile(raw_contact) if raw_contact else None
 
@@ -444,157 +418,14 @@ def create_user():
         flash("A user with that email already exists.", "danger")
         return redirect(url_for("admin.users"))
 
-    user = User(name=name, email=email, role=role, contact_number=contact_number, lgu_role=lgu_role,
+    user = User(name=name, email=email, role=role, contact_number=contact_number,
                 first_name=first or None, middle_name=middle or None, last_name=last or None, suffix=suffix or None)
-    if role == "LGU":
-        # An administrator creating the account IS the verification: only
-        # do it for someone already verified through an official channel.
-        user.lgu_status = "verified"
-        user.lgu_role = lgu_role or "encoder"
-        user.lgu_office = " ".join(request.form.get("lgu_office", "").split())[:120] or None
-        user.lgu_position = " ".join(request.form.get("lgu_position", "").split())[:100] or None
-        user.lgu_verified_by = current_user.user_id
-        user.lgu_verified_at = datetime.utcnow()
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
     log_action("admin_create_user", details=f"{role}: {email}", target=user)
     flash(f"Account created for {email}.", "success")
     return redirect(url_for("admin.users"))
-
-
-@admin_bp.route("/users/<int:user_id>/lgu-role", methods=["POST"])
-@role_required("Admin")
-def set_lgu_role(user_id):
-    """Make an LGU account an Encoder (uploads to staging) or a Data
-    Steward (reviews and approves staged uploads)."""
-    user = db.session.get(User, user_id)
-    lgu_role = request.form.get("lgu_role")
-    if user is None or user.role != "LGU" or lgu_role not in User.LGU_ROLES:
-        flash("Choose an LGU account and a valid LGU role.", "danger")
-        return redirect(url_for("admin.users"))
-    if not user.is_lgu_verified:
-        flash(f"{user.name} is not a verified LGU account yet. Verify the request in LGU Access first.", "warning")
-        return redirect(url_for("admin.users", _anchor="lgu-access"))
-    before = user.lgu_role_key
-    if before != lgu_role:
-        user.lgu_role = lgu_role
-        db.session.commit()
-        log_action("admin_set_lgu_role", details=f"{user.email}: {User.LGU_ROLES[before]} -> {User.LGU_ROLES[lgu_role]}",
-                   target=user, changes={"lgu_role": [before, lgu_role]})
-    flash(f"{user.name} is now an {User.LGU_ROLES[lgu_role]}.", "success")
-    return redirect(url_for("admin.users"))
-
-
-@admin_bp.route("/lgu-access")
-@role_required("Admin")
-def lgu_access():
-    """LGU access requests are decided on Manage Users now (the panel
-    between the search bar and the accounts table)."""
-    return redirect(url_for("admin.users", _anchor="lgu-access"))
-
-
-@admin_bp.route("/lgu-access/<int:request_id>/approve", methods=["POST"])
-@role_required("Admin")
-def approve_lgu_access(request_id):
-    from app.models import LguAccessRequest
-    from app.services import lgu_access_service as access
-
-    row = db.session.get(LguAccessRequest, request_id)
-    role = request.form.get("granted_role", "")
-    ok, message = access.approve(request_id, current_user, role, request.form.get("note", ""),
-                                 confirmed=bool(request.form.get("verified_offline")))
-    if ok and row is not None:
-        log_action("admin_approve_lgu_access",
-                   details=f"{row.reference_code}: {User.LGU_ROLES.get(role, role)} ({row.office})",
-                   target=row.user, changes={"lgu_role": [None, role], "lgu_status": ["pending", "verified"]})
-    flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.users", _anchor="lgu-access"))
-
-
-@admin_bp.route("/lgu-access/<int:request_id>/reject", methods=["POST"])
-@role_required("Admin")
-def reject_lgu_access(request_id):
-    from app.models import LguAccessRequest
-    from app.services import lgu_access_service as access
-
-    reason = _reason_from_form("decline this request")
-    if reason is None:
-        return redirect(url_for("admin.users", _anchor="lgu-access"))
-    row = db.session.get(LguAccessRequest, request_id)
-    ok, message = access.reject(request_id, current_user, reason)
-    if ok and row is not None:
-        log_action("admin_reject_lgu_access", details=row.reference_code, target=row.user, reason=reason)
-    flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.users", _anchor="lgu-access"))
-
-
-@admin_bp.route("/lgu-access/user/<int:user_id>/revoke", methods=["POST"])
-@role_required("Admin")
-def revoke_lgu_access(user_id):
-    from app.services import lgu_access_service as access
-
-    reason = _reason_from_form("remove this LGU access")
-    if reason is None:
-        return redirect(url_for("admin.users", _anchor="lgu-access"))
-    user = db.session.get(User, user_id)
-    before = user.lgu_role_key if user else None
-    ok, message = access.revoke(user_id, current_user, reason)
-    if ok:
-        log_action("admin_revoke_lgu_access", details=f"{user.email}: {User.LGU_ROLES.get(before, before)}",
-                   target=user, reason=reason, changes={"lgu_status": ["verified", "revoked"]})
-    flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.users", _anchor="lgu-access"))
-
-
-@admin_bp.route("/lgu-access/user/<int:user_id>/reverify", methods=["POST"])
-@role_required("Admin")
-def reverify_lgu_access(user_id):
-    from app.services import lgu_access_service as access
-
-    ok, message = access.reverify(user_id, current_user)
-    if ok:
-        log_action("admin_reverify_lgu_access", details=message[:500], target=db.session.get(User, user_id))
-    flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.users", _anchor="lgu-access"))
-
-
-@admin_bp.route("/publish-data")
-@role_required("Admin")
-def publish_data():
-    """Publishing approved batches is the first panel on Datasets now."""
-    return redirect(url_for("admin.datasets", _anchor="publish-data"))
-
-
-@admin_bp.route("/publish-data/<int:batch_id>/publish", methods=["POST"])
-@role_required("Admin")
-def publish_batch(batch_id):
-    from app.services import staging_service, upload_jobs
-
-    ok, message = staging_service.publish(batch_id, current_user)
-    if ok:
-        log_action("staging_publish", details=message[:500], target_type="UploadBatch", target_id=batch_id)
-        # publish() already cleared the memoised figures; the alert sweep
-        # and the warm-up run on a low-priority thread, not in this request.
-        upload_jobs.schedule_followups(current_app._get_current_object())
-        flash(message, "success")
-    else:
-        flash(message, "danger")
-    return redirect(url_for("admin.datasets", _anchor="publish-data"))
-
-
-@admin_bp.route("/publish-data/<int:batch_id>/reject", methods=["POST"])
-@role_required("Admin")
-def reject_batch(batch_id):
-    from app.services import staging_service
-
-    note = request.form.get("reason", "")
-    ok, message = staging_service.reject_by_admin(batch_id, current_user, note)
-    if ok:
-        log_action("staging_admin_reject", details=f"batch #{batch_id}", target_type="UploadBatch",
-                   target_id=batch_id, reason=note or None)
-    flash(message, "success" if ok else "danger")
-    return redirect(url_for("admin.datasets", _anchor="publish-data"))
 
 
 @admin_bp.route("/users/<int:user_id>/toggle-active", methods=["POST"])
@@ -1036,21 +867,7 @@ def datasets():
         archived_records=_archived_records(),
         places_api_key_configured=bool(current_app.config.get("GOOGLE_PLACES_API_KEY")),
         system_email=_system_account_email(),
-        **_publish_panel_context(),
     )
-
-
-def _publish_panel_context():
-    """The "Publish approved government data" panel at the top of
-    Datasets: step 3 of the Gov't Data Upload workflow."""
-    from app.models.upload_batch import STATUS_APPROVED, STATUS_CHANGES, STATUS_PENDING, STATUS_PUBLISHED, STATUS_REJECTED
-    from app.services import staging_service
-
-    return {
-        "approved": staging_service.batches([STATUS_APPROVED], limit=50),
-        "pending_count": staging_service.count_waiting(STATUS_PENDING) + staging_service.count_waiting(STATUS_CHANGES),
-        "history": staging_service.batches([STATUS_PUBLISHED, STATUS_REJECTED], limit=15),
-    }
 
 
 @admin_bp.route("/datasets/export-barangay-seed-csv")
@@ -1191,38 +1008,12 @@ def _save_plan_assumptions(form):
     return rejected
 
 
-def _save_retention_settings(form):
-    """Save the two retention periods (whole days, 30-3650) and return a
-    message for any value refused. A blank field leaves the stored value
-    alone."""
-    from app.services.retention_service import AUDIT_RETENTION_KEY, RETENTION_RANGE, UPLOAD_RETENTION_KEY
-
-    rejected = []
-    low, high = RETENTION_RANGE
-    for key, label in ((UPLOAD_RETENTION_KEY, "uploaded data retention"),
-                       (AUDIT_RETENTION_KEY, "audit trail retention")):
-        raw = (form.get(key) or "").strip()
-        if not raw:
-            continue
-        try:
-            days = int(raw)
-        except ValueError:
-            days = None
-        if days is None or not (low <= days <= high):
-            rejected.append(f"Settings saved, except the {label}: it must be a whole number of days "
-                            f"from {low} to {high}.")
-        else:
-            SystemSetting.set(key, str(days))
-    return rejected
-
-
 @admin_bp.route("/settings", methods=["GET", "POST"])
 @role_required("Admin")
 def settings():
     if request.method == "POST":
         before = {row.setting_key: row.setting_value for row in SystemSetting.query.all()}
         for key in (
-            "kmeans_n_clusters",
             "msi_weight_competitor_density",
             "msi_weight_demand_trend",
             "msi_weight_sociodemographic",
@@ -1235,11 +1026,9 @@ def settings():
 
         SystemSetting.set("use_llm_recommendations", "true" if request.form.get("use_llm_recommendations") else "false")
 
-        rejected = _save_plan_assumptions(request.form) + _save_retention_settings(request.form)
+        rejected = _save_plan_assumptions(request.form)
 
         from app.controllers.community_controller import SETTING_KEY, is_valid_invite
-
-        rejected += _save_lgu_access_settings(request.form)
 
         invite = (request.form.get("community_invite_url") or "").strip()
         invite_rejected = bool(invite) and not is_valid_invite(invite)
@@ -1250,7 +1039,6 @@ def settings():
         changed = diff_fields(before, after)
         changed.pop("places_calls_today", None)
         changed.pop("places_calls_day", None)
-        changed.pop("retention_last_run", None)
         if changed:
             _refresh_figures()
         log_action("admin_update_settings",
@@ -1268,41 +1056,6 @@ def settings():
     SystemSetting.ensure_defaults()
     all_settings = {row.setting_key: row for row in SystemSetting.query.all()}
     return render_template("admin/settings.html", settings=all_settings, cluster_thresholds=CLUSTER_THRESHOLDS)
-
-
-def _save_lgu_access_settings(form):
-    """System Settings > LGU access verification. Returns warnings for
-    values that were refused (the rest is saved)."""
-    from app.services.lgu_access_service import REVIEW_DAYS_RANGE, parse_domains
-
-    warnings = []
-    if "lgu_email_domains" in form:
-        domains, invalid = parse_domains(form.get("lgu_email_domains"))
-        if invalid:
-            warnings.append("Not saved: " + ", ".join(invalid) + " is not a valid e-mail domain (e.g. tarlaccity.gov.ph).")
-        else:
-            SystemSetting.set("lgu_email_domains", ", ".join(domains)[:255])
-    if "lgu_verification_email" in form:
-        address = (form.get("lgu_verification_email") or "").strip().lower()
-        if address and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", address):
-            warnings.append("Not saved: the LGU access contact e-mail is not a valid address.")
-        else:
-            SystemSetting.set("lgu_verification_email", address[:255])
-    if "lgu_verification_office" in form:
-        office = " ".join((form.get("lgu_verification_office") or "").split())[:120]
-        if office:
-            SystemSetting.set("lgu_verification_office", office)
-    if form.get("lgu_access_review_days"):
-        try:
-            days = int(form.get("lgu_access_review_days"))
-        except ValueError:
-            days = -1
-        low, high = REVIEW_DAYS_RANGE
-        if low <= days <= high:
-            SystemSetting.set("lgu_access_review_days", str(days))
-        else:
-            warnings.append(f"Not saved: the LGU re-verification period must be {low}-{high} days.")
-    return warnings
 
 
 @admin_bp.route("/llm-status", methods=["GET"])

@@ -77,12 +77,8 @@ _USER_COLUMNS = {
     "address_line_enc": ("TEXT NULL", "TEXT NULL"),
     "address_barangay_enc": ("TEXT NULL", "TEXT NULL"),
     "terms_accepted_at": ("DATETIME NULL", "DATETIME NULL"),
-    "lgu_role": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
-    "lgu_status": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
     "lgu_office": ("VARCHAR(120) NULL", "VARCHAR(120) NULL"),
     "lgu_position": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
-    "lgu_verified_by": ("INTEGER NULL", "INT NULL"),
-    "lgu_verified_at": ("DATETIME NULL", "DATETIME NULL"),
     "lgu_scope": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
     "lgu_barangay": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
 }
@@ -97,16 +93,6 @@ _ADDITIVE_COLUMNS = {
         "innovation_idea": ("TEXT NULL", "TEXT NULL"),
         "offering_details": ("TEXT NULL", "TEXT NULL"),
         **_ARCHIVE_COLUMNS,
-    },
-    "lgu_access_requests": {
-        "jurisdiction_scope": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
-        "target_barangay": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
-        "reason": ("VARCHAR(300) NULL", "VARCHAR(300) NULL"),
-    },
-    "upload_batches": {
-        "messages": ("TEXT NULL", "TEXT NULL"),
-        "scope_barangay": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
-        "updated_at": ("DATETIME NULL", "DATETIME NULL"),
     },
     "audit_logs": {
         "actor_name": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
@@ -261,22 +247,101 @@ def _retire_system_theme():
     return result.rowcount or 0
 
 
-def _rename_pending_lgu_status():
-    """V3.5 stored a waiting LGU request as "pending"; it is now
-    "pending_verification" (on the account and on the request)."""
+# V3.8 removed the LGU Encoder / Data Steward staging workflow and the
+# LGU access verification (V3.4-V3.6). What they added to the database:
+RETIRED_TABLES = ("lgu_access_requests", "upload_batches")
+RETIRED_USER_COLUMNS = ("lgu_role", "lgu_status", "lgu_verified_by", "lgu_verified_at")
+RETIRED_SETTINGS = (
+    "lgu_email_domains",
+    "lgu_verification_email",
+    "lgu_verification_office",
+    "lgu_access_review_days",
+    "kmeans_n_clusters",
+    "upload_retention_days",
+    "audit_log_retention_days",
+    "retention_last_run",
+)
+
+
+def _retire_lgu_staging_schema():
+    """Put the database back the way it was before the Encoder / Data
+    Steward workflow (V3.8). Idempotent: each step checks the live schema
+    first, so it does nothing on a database that is already reverted or
+    was never upgraded.
+
+      1. An LGU account the System Admin rejected or whose access was
+         removed is suspended (status "inactive"), so the admin's decision
+         still stands once the verification columns are gone. Every other
+         LGU account -- verified or still pending -- is an ordinary,
+         active LGU account again, as before V3.4.
+      2. System notifications about staged batches and LGU access
+         requests are deleted: the pages they talk about no longer exist.
+      3. The upload_batches and lgu_access_requests tables are dropped.
+      4. user.lgu_role, lgu_status, lgu_verified_by and lgu_verified_at
+         are dropped. The LGU context columns (lgu_office, lgu_position,
+         lgu_scope, lgu_barangay) stay: the LGU registration form still
+         asks for them.
+      5. The retired System Settings rows (LGU access verification,
+         K-Means clusters, data retention) are deleted.
+
+    Returns {step: count} for the steps that changed something; raises
+    after trying every step if any of them failed (the next start retries)."""
     from sqlalchemy import inspect, text
 
-    tables = set(inspect(db.engine).get_table_names())
-    user_table = "`user`" if db.engine.dialect.name == "mysql" else '"user"'
-    changed = 0
+    inspector = inspect(db.engine)
+    tables = set(inspector.get_table_names())
+    if "user" not in tables:
+        return {}
+    dialect = db.engine.dialect.name
+    user_table = _quote("user", dialect)
+    user_columns = {col["name"] for col in inspector.get_columns("user")}
+    done, failed = {}, []
+
     with db.engine.begin() as conn:
-        if "user" in tables and "lgu_status" in {c["name"] for c in inspect(db.engine).get_columns("user")}:
-            changed += conn.execute(text(f"UPDATE {user_table} SET lgu_status = 'pending_verification' "
-                                         f"WHERE lgu_status = 'pending'")).rowcount or 0
-        if "lgu_access_requests" in tables:
-            changed += conn.execute(text("UPDATE lgu_access_requests SET status = 'pending_verification' "
-                                         "WHERE status = 'pending'")).rowcount or 0
-    return changed
+        if "lgu_status" in user_columns:
+            n = conn.execute(text(f"UPDATE {user_table} SET status = 'inactive' WHERE role = 'LGU' "
+                                  f"AND lgu_status IN ('rejected', 'revoked') AND status = 'active'")).rowcount
+            if n:
+                done["lgu_accounts_suspended"] = n
+        if "notifications" in tables and any(table in tables for table in RETIRED_TABLES):
+            n = conn.execute(text("DELETE FROM notifications WHERE type = 'system' AND "
+                                  "(message LIKE '%batch #%' OR message LIKE '%LGU access%')")).rowcount
+            if n:
+                done["notifications_deleted"] = n
+
+    # One statement per table / column, each on its own: MySQL commits DDL
+    # straight away, so a step that fails (another worker got there first)
+    # must not stop the others.
+    for table in RETIRED_TABLES:
+        if table not in tables:
+            continue
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(text(f"DROP TABLE IF EXISTS {_quote(table, dialect)}"))
+            done.setdefault("tables_dropped", []).append(table)
+        except Exception as exc:
+            failed.append(f"{table}: {exc}")
+
+    for column in RETIRED_USER_COLUMNS:
+        if column not in user_columns:
+            continue
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {user_table} DROP COLUMN {column}"))
+            done.setdefault("user_columns_dropped", []).append(column)
+        except Exception as exc:
+            failed.append(f"user.{column}: {exc}")
+
+    if "system_settings" in tables:
+        removed = SystemSetting.query.filter(SystemSetting.setting_key.in_(RETIRED_SETTINGS)).delete(
+            synchronize_session=False)
+        db.session.commit()
+        if removed:
+            done["settings_deleted"] = removed
+
+    if failed:
+        raise RuntimeError("; ".join(failed)[:1000])
+    return done
 
 
 _BARANGAY_COLUMNS = (
@@ -412,9 +477,13 @@ def run_startup_migrations(app):
             db.session.rollback()
 
         try:
-            _rename_pending_lgu_status()
+            retired = _retire_lgu_staging_schema()
+            if retired:
+                app.logger.info("Removed the LGU staging / access verification schema: %s", retired)
         except Exception:
             db.session.rollback()
+            app.logger.warning("Could not fully remove the LGU staging schema; retrying on the next start",
+                               exc_info=True)
 
         try:
             moved = _encrypt_legacy_contact_numbers()

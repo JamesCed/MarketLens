@@ -1901,15 +1901,17 @@ tables under either target. Split samples are in `sample_data/`
 principle-by-principle mapping, the DPO details, the breach response
 steps and the LGU-developer agreement.
 
-- A privacy notice on the upload page (what is collected and kept, the
-  purpose, who can see it, how long), and section 4 of `/terms`.
+- The Privacy Policy (`/privacy`, section 6: LGU uploads) and section 4
+  of `/terms` say what is collected and kept, the purpose, who can see
+  it and how long. (V3.3 also put a privacy notice on the upload page;
+  V3.8 removed it.)
 - Files with personal information (owner names, contact numbers,
   e-mail/home addresses, ID numbers, birth dates) are refused.
   Business names and permit numbers are read only while processing and
   never stored.
-- Retention: uploaded data 1,095 days and audit trail 365 days by
-  default, editable in Admin > System Settings; deleted automatically
-  once a day.
+- Retention: uploaded data 1,095 days and audit trail 365 days, deleted
+  automatically once a day. Since V3.8 both periods are fixed in
+  `app/services/retention_service.py` (no System Settings card).
 - Uploads are checked by content, not only by extension (renamed
   programs/PDFs/web pages, macro workbooks, encrypted or damaged
   workbooks and zip bombs are refused).
@@ -1952,7 +1954,7 @@ steps and the LGU-developer agreement.
 
 ---
 
-## 15. V3.4: faster uploads and the Encoder → Data Steward → Admin workflow
+## 15. V3.4: faster uploads
 
 **Why an upload sat on "Waiting to start · 158 s".** Only one import runs
 at a time, and the previous upload kept the import lock while it ran the
@@ -1962,119 +1964,26 @@ all of it before reading a single row.
 
 | Cause | Fix |
 |---|---|
-| The import lock was held through the alert sweep and the warm-up | The lock covers only reading, checking and staging the file. Sweeps and warm-up run only after an Admin publishes, on one low-priority thread (`upload_jobs.schedule_followups`) |
+| The import lock was held through the alert sweep and the warm-up | The lock covers only reading, checking and writing the file. Sweeps and warm-up run afterwards on one low-priority thread (`upload_jobs.schedule_followups`) |
 | openpyxl built an object for every cell (~1.7 s for the 10,442-row sample on a laptop) | A streaming expat reader (`app/utils/xlsx_reader.py`), about 3x faster, same values as openpyxl (dates use openpyxl's own format rules); anything unusual falls back to openpyxl |
 | Personal-data scan ran a regex per cell | One regex pass per column |
 | A worker could wait forever on the database | MySQL `connect_timeout` 10 s, `read/write_timeout` 110 s (`DB_QUERY_TIMEOUT`), `pool_recycle` 280 s |
 | Progress card polled every 1.5 s | First poll after 0.7 s, then every second |
 
-Measured on the 10,442-permit sample: reading, checking and staging take
-about 1 s locally with 7 database statements (5 SELECT, 2 INSERT); the
-staged rows are stored compressed (~49 KB instead of ~1 MB). The page
-waits up to `UPLOAD_WAIT_SECONDS` (15 s) for the result.
+The page waits up to `UPLOAD_WAIT_SECONDS` (15 s) for the result.
 
-**Separation of duties (`app/services/staging_service.py`).**
-
-1. **LGU Encoder** uploads a file. It is checked exactly as before and
-   saved to the *staging area* as an upload batch (`upload_batches`).
-   Nothing live changes.
-2. **LGU Data Steward** opens *Data Review*, compares the batch with the
-   live figures, and approves it or rejects it with a reason (sent to the
-   encoder). A steward never reviews a batch they uploaded.
-3. **System Admin** opens *Admin › Publish Data* and publishes the
-   approved batch: its rows are written in one transaction and every
-   city-wide figure recalculates. The Admin can also reject it. A batch
-   is claimed with a conditional UPDATE, so it can never be published
-   twice.
-
-Each step notifies the next people in line and writes an audit entry
-(`dataset_upload`, `staging_review_approve`, `staging_review_reject`,
-`staging_publish`, `staging_admin_reject`). Staged rows are cleared when a
-batch is published or rejected; a batch not published within 60 days
-expires, and batch records follow the uploaded-data retention period.
-
-**Roles.** `user.lgu_role` is `encoder` or `steward` (an LGU account
-without one is an encoder). Set it in *Admin › Manage Users* (the select
-under the LGU badge) or when creating the account ("LGU Encoder" /
-"LGU Data Steward"). The column is added automatically at start-up.
-**After deploying, make at least one LGU account a Data Steward**,
-otherwise uploads wait in review. Local demo accounts: `lgu@dss.local`
-(encoder) and `steward@dss.local` / `steward123` (steward).
+V3.4 to V3.6 also added an LGU Encoder → Data Steward → Admin staging
+workflow and LGU access verification. **V3.8 removed both** (section 19).
 
 ---
 
-## 16. V3.5: verified LGU roles
+## 16. V3.5 and 17. V3.6: removed in V3.8
 
-LGU roles are given only after the System Admin approves the person.
-See section 17 for the current flow; `docs/LGU_ACCESS.md` is the
-administrator's guide.
-
----
-
-## 17. V3.6: LGU registration, pending verification, review workspace
-
-**LGU registration (`/register/lgu`).** Three parts:
-
-1. Account details: name, official work e-mail and password.
-2. Tarlac City LGU context:
-   - jurisdiction scope: city-wide, or a specific barangay chosen from the 76
-   - department or office: CPDO, BPLO, Assessor's, Treasurer's, Mayor's Office or Barangay Executive Office
-   - official job title
-3. Role and scope: LGU Encoder or LGU Data Steward, with a short reason.
-
-The form asks for no birthday, address or ID. The sign-up page's "LGU
-Staff / Official" choice opens this form.
-
-**`pending_verification`.**
-- **While pending:** the account opens the LGU Dashboard, the
-  Diversification Plan, the Saturation Map and the Trend Reports. Gov't
-  Data Upload / Review shows as an animated *Pending Request Access...*
-  menu item and cannot be opened.
-- **After sign-in:** the account lands on a *Pending...* page saying the
-  System Admin reviews it within 24 hours.
-- **No expiry:** requests stay pending until an admin decides.
-- **The decision is e-mailed with a link:**
-  - approved Encoder → Gov't Data Upload
-  - approved Data Steward → Gov't Data Review
-  - rejected → the request page, to correct and resend
-- **Discord** is no longer part of the workflow.
-
-**Admin.**
-- *LGU access requests* is a panel on **Manage Users**, between the
-  search bar and the table. It also covers verified staff and recent
-  decisions.
-- *Publish approved government data* is the first panel on **Datasets**.
-- The separate LGU Access and Publish Data menu items are gone. Their
-  counts now show as badges on Manage Users and Datasets.
-
-**LGU Encoder (Gov't Data Upload).** Until a batch is published the
-encoder can:
-- **edit** its barangay rows
-- **replace** the file
-- **archive** it
-
-Edited batches go back for review. The Data Steward's messages show on
-the row and on the edit page.
-
-**LGU Data Steward (Gov't Data Review).** One menu item, replacing the
-old Data Review. It has:
-- the review queue
-- the selected upload next to the live figures
-- a message thread with the encoder
-- **Approve / Ask for changes / Reject** with a message box
-- a list of data the System Admin published recently
-
-**Scope.** Barangay-scoped accounts work within their barangay only:
-- an Encoder can stage only rows for that barangay
-- a Data Steward reviews only uploads for it
-
-**Migration.** At start-up:
-- new columns are added to `user` (`lgu_scope`, `lgu_barangay`),
-  `lgu_access_requests` (`jurisdiction_scope`, `target_barangay`,
-  `reason`) and `upload_batches` (`messages`, `scope_barangay`,
-  `updated_at`);
-- a V3.5 `pending` status is renamed `pending_verification`.
-
+V3.5 (verified LGU access requests) and V3.6 (role selection at LGU
+registration, pending verification, Gov't Data Review, encoder
+edit/archive) were removed in V3.8 to match the manuscript. What V3.6
+added to the LGU registration form as "Tarlac City LGU context"
+(jurisdiction scope, office, job title) stays. See section 19.
 
 ---
 
@@ -2089,7 +1998,7 @@ SME and LGU users hear about it with MarketLens closed.
   gets *"MarketLens early warning: {industry} in {barangay} is N%
   saturated"*, with an **Open your plan** button that opens that plan on
   the Planning page.
-- **Market sweep warning** (after a publish or a Places refresh): a
+- **Market sweep warning** (after an LGU upload or a Places refresh): a
   market moved.
   - SMEs whose plans cover it get a link to Planning.
   - LGU staff get a link to the LGU Dashboard.
@@ -2127,3 +2036,66 @@ than Spam.
 **Needs:** e-mail configured as before. On Render's free tier that
 means `BREVO_API_KEY`, with the sending address verified in Brevo.
 Without a mail setup, alerts still appear in the bell.
+
+
+---
+
+## 19. V3.8: system downgrade to match the manuscript
+
+MarketLens is back to how the final manuscript describes it, before the
+LGU Encoder and Data Steward roles existed. **One LGU role:** an LGU
+officer uploads the permit register or zoning data on *Gov't Data
+Upload*, the file is checked, and a valid file goes **straight into the
+live dataset** (`data_import_service.process_upload`, as in V3.3);
+the alert sweep and the warm-up follow in the background
+(`upload_jobs.schedule_followups`). The V3.4 speed work stays.
+
+**Removed.**
+
+| Where | What |
+|---|---|
+| LGU registration (`/register/lgu`) | *Role selection & system scope* (Encoder / Data Steward and reason). It keeps **Account details** and **Tarlac City LGU context** (jurisdiction scope, target barangay, office, job title). The account is active at once; there is no access request and no pending verification |
+| Gov't Data Upload | *How an upload goes live* and *Privacy notice for uploads* (and the staged-batch list) |
+| LGU menu | *Gov't Data Review*, *Pending Request Access*. The menu is LGU Dashboard, Diversification Plan, Saturation Map, Trend Reports, Gov't Data Upload |
+| Admin › Manage Users | *LGU access requests* panel, the LGU role select, "LGU Encoder" / "LGU Data Steward" when creating an account (an Admin creates a plain *LGU Official* account) |
+| Admin › Datasets | *Publish approved government data* panel |
+| Admin › System Settings | the *K-Means clusters* field (no code read it; training uses `N_CLUSTERS` = 4), the *Data retention* card, the *LGU access verification* card. **MSI weights w1–w3 and the early-warning threshold stay** (Equation 10, Figure 14) |
+| Code | `staging_service`, `lgu_access_service`, the `UploadBatch` and `LguAccessRequest` models, `lgu_role_required`, the access-decision e-mails, `docs/LGU_ACCESS*.md` |
+
+**Data retention keeps running** once a day with fixed periods:
+uploaded LGU data 1,095 days, audit trail 365 days
+(`retention_service.UPLOAD_RETENTION_DAYS`, `AUDIT_RETENTION_DAYS`).
+
+**Database revert (automatic, at start-up).**
+`startup_migrations._retire_lgu_staging_schema()` runs once on the next
+deploy and does nothing afterwards:
+
+1. LGU accounts the System Admin had **rejected** or **removed** are
+   suspended (status `inactive`) so that decision still stands. Every
+   other LGU account, including ones still pending, becomes an ordinary
+   active LGU account.
+2. Bell notifications about staged batches and access requests are
+   deleted (their pages no longer exist).
+3. Tables **`upload_batches`** and **`lgu_access_requests`** are dropped.
+4. Columns **`user.lgu_role`**, **`lgu_status`**, **`lgu_verified_by`**
+   and **`lgu_verified_at`** are dropped. `lgu_office`, `lgu_position`,
+   `lgu_scope` and `lgu_barangay` stay (the LGU context inputs).
+5. System Settings rows `kmeans_n_clusters`, `upload_retention_days`,
+   `audit_log_retention_days`, `retention_last_run`,
+   `lgu_email_domains`, `lgu_verification_email`,
+   `lgu_verification_office` and `lgu_access_review_days` are deleted.
+
+Each step checks the live schema first, so a database that was already
+reverted or never upgraded is left alone. The same statements, as plain
+MySQL for the ERD or for running by hand, are in
+`sql/2026-11_v38_system_downgrade.sql` (you do not have to run it). The Render log shows
+`Removed the LGU staging / access verification schema: {...}` once.
+**Staged batches that were never published are deleted with
+`upload_batches`**; nothing in the live tables (`lgu_data`,
+`market_data`, `subcategory_market_data`) changes.
+
+**Local demo accounts:** `admin@dss.local`, `sme@dss.local`,
+`lgu@dss.local` (as in V3.3; the `steward@dss.local` account is no
+longer created).
+
+Tests: `tests/test_system_downgrade.py`.

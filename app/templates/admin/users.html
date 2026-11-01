@@ -60,9 +60,6 @@
       </div>
     </form>
 
-    {# LGU staff waiting for an LGU role -- between the search bar and the table. #}
-    {% include "admin/_lgu_access_panel.html" %}
-
     <div class="dss-card">
       <div class="dss-meta mb-2">
         {{ pagination.total }} account{{ 's' if pagination.total != 1 }}{{ ' match' if filters else '' }}
@@ -94,21 +91,8 @@
               </td>
               <td>
                 {{ role_badge(u.role) }}
-                {% if u.role == 'LGU' and not u.is_lgu_verified %}
-                  <div class="mt-1"><a class="badge text-bg-warning text-decoration-none" href="#lgu-access">{{ u.lgu_status_label }}</a></div>
-                {% elif u.role == 'LGU' %}
-                  {# The LGU sub-role decides who uploads and who reviews (Gov't Data Upload workflow). #}
-                  <form method="POST" action="{{ url_for('admin.set_lgu_role', user_id=u.user_id) }}" class="mt-1">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <label class="visually-hidden" for="lgu-role-{{ u.user_id }}">LGU role of {{ u.name }}</label>
-                    <select id="lgu-role-{{ u.user_id }}" name="lgu_role" class="form-select form-select-sm dss-lgu-role"
-                            onchange="this.form.submit()">
-                      {% for key, label in lgu_roles.items() %}
-                        <option value="{{ key }}" {{ 'selected' if u.lgu_role_key == key }}>{{ label }}</option>
-                      {% endfor %}
-                    </select>
-                    <noscript><button type="submit" class="btn btn-sm btn-outline-primary mt-1">Save</button></noscript>
-                  </form>
+                {% if u.role == 'LGU' and u.lgu_office %}
+                  <div class="dss-meta">{{ u.lgu_position ~ ', ' if u.lgu_position }}{{ u.lgu_office }} &middot; {{ u.lgu_scope_label }}</div>
                 {% endif %}
               </td>
               <td>
@@ -254,19 +238,9 @@
             <label class="form-label" for="cu-role">Role</label>
             <select id="cu-role" class="form-select" name="role">
               <option value="SME">SME (Entrepreneur / Business Owner)</option>
-              <option value="LGU_ENCODER">LGU Encoder (uploads data to the staging area)</option>
-              <option value="LGU_STEWARD">LGU Data Steward (reviews and approves uploads)</option>
-              <option value="Admin">System Administrator (publishes approved data)</option>
+              <option value="LGU">LGU Official</option>
+              <option value="Admin">Administrator</option>
             </select>
-            <div class="form-text">A Data Steward never reviews their own upload, and only an administrator publishes.
-              Creating an LGU account here counts as approving the person (city-wide scope): do it only after checking
-              with their office. Otherwise let them register as LGU staff and decide in <em>LGU access requests</em>.</div>
-          </div>
-          <div class="row g-2 mb-1">
-            <div class="col-sm-7"><label class="form-label" for="cu-lgu-office">LGU office <span class="text-muted">(LGU accounts)</span></label>
-              <input id="cu-lgu-office" class="form-control" name="lgu_office" maxlength="120" placeholder="e.g. BPLO"></div>
-            <div class="col-sm-5"><label class="form-label" for="cu-lgu-position">Position</label>
-              <input id="cu-lgu-position" class="form-control" name="lgu_position" maxlength="100"></div>
           </div>
         </div>
         <div class="modal-footer">

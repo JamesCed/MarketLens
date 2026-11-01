@@ -28,12 +28,12 @@ RA 10173, Sec. 11 requires personal data to be processed with **transparency**, 
 
 | Principle | What it asks | How MarketLens meets it |
 |---|---|---|
-| **Transparency** | People know what is collected, why, by whom, for how long, and how to exercise their rights | A privacy notice on the Gov't Data Upload page (what, kept, purpose, who, how long, contact). The full Privacy Policy is at `/privacy`, with a section 6 for LGU uploads. The Terms and Conditions are at `/terms`. Both are linked in the footer of every page, and both are agreed to with the checkbox at sign-up. The Data Protection Officer's contact details are shown on both. |
+| **Transparency** | People know what is collected, why, by whom, for how long, and how to exercise their rights | The Privacy Policy is at `/privacy`, with a section 6 for LGU uploads (what is collected and kept, the purpose, who can see it, how long, contact). The Terms and Conditions are at `/terms`. Both are linked in the footer of every page, and both are agreed to with the checkbox at sign-up. The Data Protection Officer's contact details are shown on both. |
 | **Legitimate purpose** | Data is used only for the declared, lawful purpose | Uploaded data is used only for market saturation scores, city-wide recommendations, trend reports and the Diversification Plan. Nothing is sold or shared outside MarketLens. |
 | **Proportionality** (data minimisation) | Only the data the purpose needs | A file with owner names, contact numbers, e-mail or home addresses, TIN or other ID numbers or birth dates is **refused** (`data_import_service._refuse_personal_data`). So is a file with an e-mail address or mobile number in any cell. From a permit list, only the barangay, industry, line of business, status and permit number are read. Only **totals** are stored: one row per barangay, plus counts per industry and kind of business. No business name, permit number or file row is kept. The uploaded file is deleted as soon as it has been processed. Personal details are shown masked to administrators. |
-| **Accuracy** | Data is accurate and kept up to date | Barangay names must match the 76 official names. Unreadable values are reported with their row and column. An upload is all or nothing. An LGU Data Steward checks every upload against the live figures before it can be published. The newest upload per barangay is the one used. |
-| **Retention** (Sec. 11(e)) | Kept no longer than necessary | Uploaded LGU data is kept **1,095 days** by default. Audit trail entries are kept **365 days** by default. An Admin can change both in System Settings (30–3,650 days). Past those periods the data is deleted automatically, once a day (`retention_service`). |
-| **Security** (Sec. 20; NPC Circular 2023-06) | Organisational, physical and technical measures | <ul><li>Pages are served over HTTPS.</li><li>Each role can open only its own pages, enforced on the server.</li><li>Uploads follow a separation of duties: an LGU Encoder uploads to a staging area (and can correct or withdraw it until it is published), an LGU Data Steward (never the uploader) approves it, asks for changes or rejects it, and only a System Administrator publishes to the live dataset (`staging_service`). Every step is in the audit trail.</li><li>LGU roles are given only after the System Admin approves the person: a self-registered LGU account stays "pending verification", with no access to the data upload or review pages, until an administrator decides; the decision is e-mailed (`lgu_access_service`, `docs/LGU_ACCESS.md`). Barangay-scoped accounts work within their barangay only. Verified accounts are re-checked every 180 days and removed when staff move or leave.</li><li>Every form has CSRF protection.</li><li>Invisible human verification (Cloudflare Turnstile) guards sign-in, sign-up, password reset and the AI / Google Places routes.</li><li>Failed sign-ins and heavy requests are rate limited.</li><li>Passwords are stored only as hashes.</li><li>Gender, birthday, contact number and address are encrypted at rest (Fernet), and the key can be rotated.</li><li>The audit trail records who did what, when and from where.</li><li>An upload's contents are checked, not only its file name: renamed programs, PDFs and web pages, macro workbooks and zip bombs are refused.</li><li>Secrets live only in environment variables.</li></ul> |
+| **Accuracy** | Data is accurate and kept up to date | Barangay names must match the 76 official names. Unreadable values are reported with their row and column. An upload is all or nothing. The newest upload per barangay is the one used. |
+| **Retention** (Sec. 11(e)) | Kept no longer than necessary | Uploaded LGU data is kept **1,095 days**. Audit trail entries are kept **365 days**. Both periods are fixed (`retention_service.UPLOAD_RETENTION_DAYS`, `AUDIT_RETENTION_DAYS`). Past those periods the data is deleted automatically, once a day (`retention_service`). |
+| **Security** (Sec. 20; NPC Circular 2023-06) | Organisational, physical and technical measures | <ul><li>Pages are served over HTTPS.</li><li>Each role can open only its own pages, enforced on the server.</li><li>Every form has CSRF protection.</li><li>Invisible human verification (Cloudflare Turnstile) guards sign-in, sign-up, password reset and the AI / Google Places routes.</li><li>Failed sign-ins and heavy requests are rate limited.</li><li>Passwords are stored only as hashes.</li><li>Gender, birthday, contact number and address are encrypted at rest (Fernet), and the key can be rotated.</li><li>The audit trail records who did what, when and from where.</li><li>An upload's contents are checked, not only its file name: renamed programs, PDFs and web pages, macro workbooks and zip bombs are refused.</li><li>Secrets live only in environment variables.</li></ul> |
 | **Rights of data subjects** (Sec. 16) | To be informed, to access, to correct, to object, to erasure or blocking, to damages, to file a complaint | Users can correct most details themselves in Settings. Other requests go to the Data Protection Officer named in the notices. |
 
 ---
@@ -45,8 +45,8 @@ RA 10173, Sec. 11 requires personal data to be processed with **transparency**, 
 | Name and e-mail of every account | Sign-up form | `user` table | The user. Administrators (e-mail masked in lists). | While the account exists. Archived, not deleted. |
 | Gender, birthday, contact number, address | Sign-up and Settings | `user` table, **encrypted** (`*_enc` columns) | The user. Administrators see it masked. | While the account exists. |
 | Business plans | SME users | `sme_profile`, `forecast_result` | The plan's owner | While the account exists. Trash is emptied after 30 days. |
-| Audit trail: action, time, IP address, browser | Every significant action | `audit_logs` | Administrators | `audit_log_retention_days` (default 365) |
-| Uploaded zoning figures and permit counts | LGU uploads | `lgu_data`, `market_data` (source DTI/PSA), `subcategory_market_data` | LGU accounts and administrators. Business owners see only the resulting scores and counts. | `upload_retention_days` (default 1,095) |
+| Audit trail: action, time, IP address, browser | Every significant action | `audit_logs` | Administrators | 365 days |
+| Uploaded zoning figures and permit counts | LGU uploads | `lgu_data`, `market_data` (source DTI/PSA), `subcategory_market_data` | LGU accounts and administrators. Business owners see only the resulting scores and counts. | 1,095 days |
 | The uploaded file | LGU uploads | Temporary file on the server | Nobody | Deleted right after processing |
 
 The permit and zoning data that is stored holds **no personal information**. It is made up of totals per barangay and counts per industry. Business names and permit numbers are read only while the file is processed.
@@ -195,16 +195,13 @@ When an LGU adopts MarketLens, the developers process its data on its behalf. **
 
 | Data | Period | How it ends | Where it is set |
 |---|---|---|---|
-| Uploaded zoning rows and permit counts | 1,095 days after upload (default) | Deleted by the daily retention job. Rows a saved forecast still uses are kept until that forecast is gone; they hold totals only. | Admin > System Settings > Data retention |
-| Audit trail entries | 365 days (default) | Deleted by the daily retention job | Admin > System Settings > Data retention |
+| Uploaded zoning rows and permit counts | 1,095 days after upload | Deleted by the daily retention job. Rows a saved forecast still uses are kept until that forecast is gone; they hold totals only. | Fixed (`UPLOAD_RETENTION_DAYS`) |
+| Audit trail entries | 365 days | Deleted by the daily retention job | Fixed (`AUDIT_RETENTION_DAYS`) |
 | Uploaded files | Minutes | Deleted right after processing | Fixed |
-| Staged upload rows (waiting for review or publishing) | Until published or rejected, at most 60 days | Cleared when the batch is published or rejected; a batch older than 60 days expires and its rows are cleared by the daily job | Fixed (`STAGING_EXPIRY_DAYS`) |
-| LGU access requests (office, job title, jurisdiction, requested role, reason) | Until the System Admin decides, then as long as the audit trail | Daily retention job | Audit trail period |
-| Staging batch records (file name, counts, who reviewed and published) | Same as uploaded data (1,095 days default) | Deleted by the daily retention job | Admin > System Settings > Data retention |
 | Plans in Trash | 30 days | Deleted | Fixed |
 | User accounts and plans | While the account exists | Archived by an administrator. Erasure is done on request through the DPO. | Admin > Users |
 
-Each retention run that deletes something writes a "Deleted data past its retention period" entry in the audit trail, with the counts. The last run is also shown on the settings page.
+Each retention run that deletes something writes a "Deleted data past its retention period" entry in the audit trail, with the counts. Each run is also written to the server log.
 
 ---
 
@@ -245,7 +242,7 @@ If the log says some details "could not be decrypted with any configured key", a
 - [ ] DPO or COP designated, and `DPO_*` variables set on Render
 - [ ] Outsourcing agreement (section 6) signed, and sub-processors approved
 - [ ] Privacy impact assessment done by the LGU
-- [ ] Retention periods confirmed in Admin > System Settings
+- [ ] Retention periods confirmed (1,095 / 365 days, fixed in `app/services/retention_service.py`)
 - [ ] Every exposed or shared secret rotated (section 8), and `.env.example` holding placeholders only
 - [ ] `PII_ENCRYPTION_KEY` set on its own, and a copy kept safely
 - [ ] LGU staff told to remove personal fields from registers before upload

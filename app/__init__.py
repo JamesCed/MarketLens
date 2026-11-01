@@ -117,49 +117,6 @@ def create_app(config_name=None):
     app.jinja_env.filters["mask_email"] = mask_email
     app.jinja_env.filters["mask_phone"] = mask_phone
 
-    from datetime import timedelta as _timedelta
-
-    def _pht(value, fmt="%b %d, %Y %I:%M %p"):
-        """A stored UTC time shown in Philippine time."""
-        return (value + _timedelta(hours=8)).strftime(fmt) + " PHT" if value else "—"
-
-    app.jinja_env.filters["pht"] = _pht
-
-    def _staging_waiting(status):
-        """How many upload batches are waiting at a step (sidebar badge)."""
-        from app.services.staging_service import count_waiting
-
-        try:
-            return count_waiting(status)
-        except Exception:
-            return 0
-
-    app.jinja_env.globals["staging_waiting"] = _staging_waiting
-
-    def _lgu_access_waiting():
-        """LGU access requests waiting for the System Admin (sidebar badge)."""
-        from app.services.lgu_access_service import count_pending
-
-        try:
-            return count_pending()
-        except Exception:
-            return 0
-
-    app.jinja_env.globals["lgu_access_waiting"] = _lgu_access_waiting
-
-    def _review_waiting():
-        """Uploads waiting for the signed-in Data Steward (sidebar badge)."""
-        from flask_login import current_user as _user
-
-        from app.services.staging_service import count_waiting_for
-
-        try:
-            return count_waiting_for(_user if _user.is_authenticated else None)
-        except Exception:
-            return 0
-
-    app.jinja_env.globals["review_waiting"] = _review_waiting
-
     from app.services.account_params import PASSWORD_HINT, PASSWORD_MIN_LENGTH, PASSWORD_RULES
 
     app.jinja_env.globals["PASSWORD_RULES"] = [(key, label) for key, label, _test in PASSWORD_RULES]
