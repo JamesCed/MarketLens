@@ -12,10 +12,10 @@
                                     barangay), department / office, job title
 
   The LGU context is saved on the account (app/services/lgu_profile.py).
-  The account is ready as soon as it is created: LGU Dashboard,
-  Diversification Plan, Saturation Map, Trend Reports and Gov't Data
-  Upload. Nothing else about the person is asked -- no birthday, address
-  or ID.
+  The account opens the LGU Dashboard, Diversification Plan, Saturation
+  Map and Trend Reports as soon as it is created. Gov't Data Upload stays
+  locked until an Administrator approves the account in Manage Users.
+  Nothing else about the person is asked -- no birthday, address or ID.
 #}
 
 {% set f = form or {} %}
@@ -44,7 +44,10 @@
       <ul class="ml-assure">
         <li><i class="bi bi-speedometer2"></i>
           <span><strong>Start right away.</strong> Once your e-mail is confirmed you can open the LGU Dashboard, the
-            Diversification Plan, the Saturation Map, the Trend Reports and Gov't Data Upload.</span></li>
+            Diversification Plan, the Saturation Map and the Trend Reports.</span></li>
+        <li><i class="bi bi-person-check"></i>
+          <span><strong>Gov't Data Upload after approval.</strong> It unlocks once an Administrator confirms your
+            office and job title, because uploaded data changes the scores every business owner sees.</span></li>
         <li><i class="bi bi-shield-lock"></i>
           <span><strong>Only what is needed.</strong> Your name, work e-mail and office details &mdash; no birthday,
             address or ID.</span></li>

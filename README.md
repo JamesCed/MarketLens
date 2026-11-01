@@ -2099,3 +2099,80 @@ MySQL for the ERD or for running by hand, are in
 longer created).
 
 Tests: `tests/test_system_downgrade.py`.
+
+
+---
+
+## 20. V3.9: Gov't Data Upload needs admin approval, and a Custom Template
+
+A new LGU account no longer gets Gov't Data Upload straight away. The
+uploaded permit and zoning figures feed every saturation score, so
+someone who only *claims* to be LGU staff at sign-up must not be able to
+change them.
+
+**LGU side.**
+- A new LGU sign-up opens the LGU Dashboard, Diversification Plan,
+  Saturation Map and Trend Reports at once.
+- **Gov't Data Upload is grayed out with a lock** in the menu, and the
+  dashboard says why. Typing the address shows a "Gov't Data Upload is
+  locked" page (HTTP 403); a POST is refused on the server and written
+  to the audit trail (`lgu_upload_blocked`). The template downloads are
+  locked too. (`upload_approval_required` in `app/utils/decorators.py`.)
+- The user gets a bell notification when the page opens for them.
+
+**Admin side (Manage Users).**
+- Every Administrator gets a bell notification for each new LGU account.
+- A badge on *Manage Users* counts LGU accounts waiting, the page links
+  to them, and *Show* has **LGU waiting for Gov't Data Upload approval**.
+- Under the LGU badge (office, job title, jurisdiction) each LGU account
+  shows **Upload locked · waiting for approval** with an **Approve
+  upload** button, or **Upload approved** with **Lock** (a reason is
+  required). Both are in the audit trail (`admin_approve_lgu_upload`,
+  `admin_lock_lgu_upload`).
+- An LGU account an Administrator creates in *New Account* is approved
+  straight away. The local demo account `lgu@dss.local` is approved too.
+
+**Custom Template (Gov't Data Upload).** MarketLens scores every
+barangay from six figures, the AI model's inputs, which also make up the
+Market Saturation Index (Equation 10): competitor count (MSI Competitor
+density, w1), business success rate (Demand trend, w2), population
+density and average rent (Socio-demographic, w3), foot traffic and
+business density. Several are estimates until an LGU uploads the real
+figure (see `app/ml/seed_data.py`).
+- A third standard template, **Market counts & area figures**
+  (`MARKET_COUNTS`, one row per industry per barangay, uploaded with the
+  Market Data target), carries all of them: `competitor_count`,
+  `population_density`, `average_rent`, `foot_traffic_index`,
+  `historical_success_rate`, `date_recorded`. The importer already read
+  this layout (summary mode); now it has a template and a guide.
+- The **Custom template** card lists every column of the three templates
+  as suggestions: what it feeds in MarketLens, where MarketLens gets the
+  figure today (real or estimated) and an example. The LGU office ticks
+  only the data it can really provide; required columns are always
+  included, so a custom file always imports, and a column left out keeps
+  the figure MarketLens already has. A live line shows how many of the
+  six model inputs the template gives real data for.
+- **Download this custom template (CSV)** builds the file from the ticks
+  on screen (`/lgu/dataset-template/<KEY>?columns=...`); **Save as my
+  template** keeps the choice on the account (`user.upload_template`,
+  `?mine=1`). Code: `app/services/upload_templates.py`,
+  `templates/lgu/_custom_template.html`.
+
+**Database.** Three nullable columns on `user`, added automatically at
+start-up: `upload_approved_at` (NULL = locked), `upload_approved_by` and
+`upload_template` (the Custom Template, JSON).
+See `sql/2026-11_v39_lgu_upload_approval.sql`. **After deploying, every
+existing LGU account is locked until you approve it once in Manage
+Users** (V3.8 already removed the old verification columns, so the app
+cannot tell which accounts were verified). The only exception is a
+database upgraded straight from V3.7, where accounts the System Admin
+had verified keep the upload.
+
+**Also fixed:** `seed.py` was left out of the V3.8 commit. It still
+created the removed `steward@dss.local` account with an LGU sub-role,
+which would crash a fresh `python seed.py`. V3.9 includes it.
+
+**Tutorial.** A locked LGU account's tour skips the three steps on the
+upload page (`needsUpload` in `tour_steps.js`).
+
+Tests: `tests/test_lgu_upload_approval.py`, `tests/test_custom_template.py`.

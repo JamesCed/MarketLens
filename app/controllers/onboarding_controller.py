@@ -173,9 +173,10 @@ def inject_onboarding():
             "userId": current_user.user_id,
             "firstName": (current_user.name or "").split(" ")[0],
             "root": request.script_root or "",
-            # A pending LGU account already has every page the tour shows
-            # (dashboard, plan, map, trends), so it gets the tour too.
+            # An LGU account waiting for Gov't Data Upload approval gets the
+            # tour too, without the steps on the locked upload page.
             "suppressed": False,
+            "uploadLocked": bool(getattr(current_user, "is_waiting_for_upload_approval", False)),
             "urls": {
                 "start": url_for("onboarding.start"),
                 "skip": url_for("onboarding.skip"),

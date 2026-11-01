@@ -130,6 +130,10 @@ def _create_user_from_pending(pending):
     db.session.add(user)
     db.session.commit()
     log_action("register", details=f"New {pending['role']} account: {pending['email']}", user_id=user.user_id)
+    if pending["role"] == "LGU":
+        from app.services.lgu_profile import notify_admins_of_new_lgu
+
+        notify_admins_of_new_lgu(user)
 
     business = pending.get("business")
     if business and not SmeProfile.query.filter_by(user_id=user.user_id).first():
@@ -154,6 +158,9 @@ def _created_message(pending, user, verified_email):
     if pending.get("business"):
         return (f"{start}your account and your first business plan are ready. Log in to see its forecast."
                 if verified_email else "Account created with your first business plan. Log in to see its forecast.")
+    if pending.get("role") == "LGU":
+        return (f"{start}your LGU account has been created. You can now log in. Gov't Data Upload stays locked "
+                f"until an Administrator approves your account; the other LGU pages are open right away.")
     return f"{start}your account has been created. You can now log in." if verified_email else \
         "Account created. You can now log in."
 

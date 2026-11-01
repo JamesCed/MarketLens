@@ -117,6 +117,19 @@ def create_app(config_name=None):
     app.jinja_env.filters["mask_email"] = mask_email
     app.jinja_env.filters["mask_phone"] = mask_phone
 
+    def _lgu_upload_waiting():
+        """LGU accounts waiting for Gov't Data Upload approval (badge on
+        the Administrator's Manage Users menu item)."""
+        from app.models import User
+
+        try:
+            return User.query.filter(User.archived_at.is_(None), User.role == "LGU",
+                                     User.upload_approved_at.is_(None)).count()
+        except Exception:
+            return 0
+
+    app.jinja_env.globals["lgu_upload_waiting"] = _lgu_upload_waiting
+
     from app.services.account_params import PASSWORD_HINT, PASSWORD_MIN_LENGTH, PASSWORD_RULES
 
     app.jinja_env.globals["PASSWORD_RULES"] = [(key, label) for key, label, _test in PASSWORD_RULES]

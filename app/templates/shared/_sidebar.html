@@ -65,9 +65,18 @@
        server, opened from the "Community Forum" link in the footer. #}
 
     {% if current_user.is_lgu() %}
-      <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.government_upload' }}" href="{{ url_for('lgu.government_upload') }}" data-tour="nav-data-upload">
-        <i class="bi bi-database-add"></i> Gov't Data Upload
-      </a>
+      {% if current_user.can_upload_gov_data %}
+        <a class="dss-nav-link {{ 'active' if request.endpoint == 'lgu.government_upload' }}" href="{{ url_for('lgu.government_upload') }}" data-tour="nav-data-upload">
+          <i class="bi bi-database-add"></i> Gov't Data Upload
+        </a>
+      {% else %}
+        {# Locked until an Administrator approves the account (V3.9). #}
+        <span class="dss-nav-link is-locked" role="link" aria-disabled="true" data-tour="nav-data-upload"
+              title="Locked: waiting for the Administrator's approval">
+          <i class="bi bi-lock-fill"></i> Gov't Data Upload
+          <span class="badge rounded-pill dss-nav-lock-badge">Locked</span>
+        </span>
+      {% endif %}
     {% endif %}
 
     {% if current_user.is_admin() %}
@@ -75,8 +84,10 @@
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.dashboard' }}" href="{{ url_for('admin.dashboard') }}" data-tour="nav-admin-dashboard">
         <i class="bi bi-shield-check"></i> Admin Dashboard
       </a>
+      {% set waiting_upload = lgu_upload_waiting() %}
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.users' }}" href="{{ url_for('admin.users') }}" data-tour="nav-users">
         <i class="bi bi-people"></i> Manage Users
+        {% if waiting_upload %}<span class="badge rounded-pill text-bg-warning ms-auto" title="LGU accounts waiting for Gov't Data Upload approval">{{ waiting_upload }}</span>{% endif %}
       </a>
       <a class="dss-nav-link {{ 'active' if request.endpoint == 'admin.audit_log' }}" href="{{ url_for('admin.audit_log') }}" data-tour="nav-audit">
         <i class="bi bi-journal-text"></i> Audit Trail

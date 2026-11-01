@@ -54,6 +54,7 @@ def lgu_user(app):
     with app.app_context():
         user = User(name="LGU Officer", email="officer@tarlac.test", role="LGU")
         user.set_password("password123")
+        user.approve_upload()  # V3.9: Gov't Data Upload needs admin approval
         db.session.add(user)
         db.session.commit()
         return user.user_id

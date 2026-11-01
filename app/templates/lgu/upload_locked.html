@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Gov't Data Upload{% endblock %}
+
+{#
+  lgu/upload_locked.html
+  ------------------------
+  What an LGU account sees on Gov't Data Upload until an Administrator
+  approves it in Admin > Manage Users (V3.9, upload_approval_required in
+  app/utils/decorators.py). The uploaded figures feed every saturation
+  score, so the page stays locked for someone who has only claimed to be
+  LGU staff. The rest of the LGU pages work as usual.
+#}
+
+{% block content %}
+<div class="mb-4">
+  <h4 class="mb-0"><i class="bi bi-database-lock text-secondary"></i> Government Data Repository</h4>
+  <p class="text-muted small mb-0">Upload official datasets (Excel/CSV) for SME market analysis and decision support.</p>
+</div>
+
+<div class="dss-card dss-upload-locked text-center mx-auto" style="max-width: 640px;">
+  <div class="dss-upload-locked-icon" aria-hidden="true"><i class="bi bi-lock-fill"></i></div>
+  <h5 class="mt-3 mb-2">Gov't Data Upload is locked</h5>
+  <p class="text-muted mb-3">
+    Your LGU account is waiting for an Administrator's approval. Uploaded government data changes the saturation
+    scores every business owner sees, so only LGU staff the Administrator has confirmed can upload it.
+  </p>
+  <ul class="list-unstyled small text-start mx-auto mb-3" style="max-width: 460px;">
+    <li class="mb-1"><i class="bi bi-hourglass-split text-warning"></i>
+      The Administrator checks your office and job title, then approves your account in Manage Users.</li>
+    <li class="mb-1"><i class="bi bi-bell text-primary"></i>
+      You get a notification as soon as Gov't Data Upload opens for you.</li>
+    <li><i class="bi bi-check2-circle text-success"></i>
+      Meanwhile the LGU Dashboard, Diversification Plan, Saturation Map and Trend Reports are open as usual.</li>
+  </ul>
+  <a href="{{ url_for('lgu.dashboard') }}" class="btn btn-primary btn-sm"><i class="bi bi-speedometer2"></i> Back to the LGU Dashboard</a>
+  {% if SUPPORT_EMAIL %}
+    <p class="small text-muted mt-3 mb-0">Questions? Contact <a href="mailto:{{ SUPPORT_EMAIL }}">{{ SUPPORT_EMAIL }}</a>.</p>
+  {% endif %}
+</div>
+{% endblock %}

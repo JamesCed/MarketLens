@@ -8,8 +8,13 @@ the account (user.lgu_scope, lgu_barangay, lgu_office, lgu_position) and
 shown next to the LGU badge in Admin > Manage Users.
 
 They describe the person; they grant nothing. An LGU account is active
-as soon as it is created and has every LGU page, Gov't Data Upload
-included -- there is no separate access request or LGU sub-role.
+as soon as it is created and opens the LGU Dashboard, Diversification
+Plan, Saturation Map and Trend Reports. Gov't Data Upload stays locked
+until an Administrator approves the account in Admin > Manage Users
+(V3.9: user.upload_approved_at) -- the uploaded figures feed every
+saturation score, so someone who only claims to be LGU staff must not
+be able to change them. The admins get a bell notification for each new
+LGU account, and the LGU user gets one when the decision is made.
 """
 
 import re
@@ -77,3 +82,42 @@ def apply_lgu_context(user, data):
     user.lgu_position = data.get("position") or None
     user.lgu_scope = "barangay" if data.get("scope") == "barangay" and data.get("barangay") else "city"
     user.lgu_barangay = data.get("barangay") if user.lgu_scope == "barangay" else None
+
+
+def _active_admins():
+    from app.services.forecasting_service import SYSTEM_USER_EMAIL
+
+    return User.query.filter(User.role == "Admin", User.status == "active", User.email != SYSTEM_USER_EMAIL).all()
+
+
+def _notify(users, message):
+    from app.extensions import db
+    from app.models import Notification
+
+    for user in users:
+        db.session.add(Notification(user_id=user.user_id, type="system", message=message[:500]))
+
+
+def notify_admins_of_new_lgu(user):
+    """Tell every Administrator that a new LGU account waits for Gov't
+    Data Upload approval. Never raises: a failed notification must not
+    undo the sign-up."""
+    from app.extensions import db
+
+    try:
+        details = ", ".join(part for part in (user.lgu_position, user.lgu_office) if part)
+        _notify(_active_admins(), f"New LGU account {user.name}" + (f" ({details})" if details else "")
+                + " is waiting for Gov't Data Upload approval. Approve it in Admin > Manage Users.")
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def notify_upload_decision(user, approved):
+    """Tell the LGU user that Gov't Data Upload opened (or was locked
+    again). The caller commits."""
+    if approved:
+        _notify([user], "An Administrator approved your LGU account: Gov't Data Upload is now open in your menu.")
+    else:
+        _notify([user], "An Administrator locked Gov't Data Upload for your LGU account. "
+                        "Contact the Administrator if you need it again.")

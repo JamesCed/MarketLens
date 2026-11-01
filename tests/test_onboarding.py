@@ -402,7 +402,10 @@ def _route_for(app, path):
 
 @pytest.mark.parametrize("const_name, role", [("SME", "SME"), ("LGU", "LGU"), ("ADMIN", "Admin")])
 def test_every_step_page_is_a_real_route_that_role_can_open(app, const_name, role):
-    _user(role=role, state="touring")
+    user = _user(role=role, state="touring")
+    if role == "LGU":
+        user.approve_upload()  # V3.9: an approved LGU account sees every step
+        db.session.commit()
     client = _login(app)
     for page in sorted({page for _id, page in _steps(const_name)}):
         _route_for(app, page)

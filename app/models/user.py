@@ -76,6 +76,17 @@ class User(ArchivableMixin, UserMixin, db.Model):
     lgu_position = db.Column(db.String(100), nullable=True)
     lgu_scope = db.Column(db.String(20), nullable=True)       # "city" (blank) or "barangay"
     lgu_barangay = db.Column(db.String(100), nullable=True)   # when the scope is one barangay
+    # Gov't Data Upload stays locked for an LGU account until an
+    # Administrator approves it in Admin > Manage Users (V3.9): the
+    # uploaded figures feed every saturation score, so someone who only
+    # claims to be LGU staff must not be able to change them. NULL = not
+    # approved (yet, or approval removed).
+    upload_approved_at = db.Column(db.DateTime, nullable=True)
+    upload_approved_by = db.Column(db.Integer, nullable=True)
+    # The Custom Template on Gov't Data Upload: which columns this LGU
+    # office can really provide, per template, as JSON
+    # (app/services/upload_templates.py). NULL = the suggested columns.
+    upload_template = db.Column(db.Text, nullable=True)
 
     first_name = db.Column(db.String(60), nullable=True)
     middle_name = db.Column(db.String(60), nullable=True)
@@ -243,6 +254,27 @@ class User(ArchivableMixin, UserMixin, db.Model):
         return self.role == "LGU"
 
     LGU_SCOPES = {"city": "City-wide", "barangay": "Specific barangay"}
+
+    @property
+    def can_upload_gov_data(self):
+        """An LGU account an Administrator has approved for Gov't Data
+        Upload. Everyone else -- a new LGU sign-up included -- sees the
+        page locked."""
+        return self.role == "LGU" and self.upload_approved_at is not None
+
+    @property
+    def is_waiting_for_upload_approval(self):
+        return self.role == "LGU" and self.upload_approved_at is None
+
+    def approve_upload(self, admin_id=None):
+        from datetime import datetime as _dt
+
+        self.upload_approved_at = _dt.utcnow()
+        self.upload_approved_by = admin_id
+
+    def revoke_upload(self):
+        self.upload_approved_at = None
+        self.upload_approved_by = None
 
     @property
     def lgu_scope_key(self):

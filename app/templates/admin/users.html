@@ -65,6 +65,11 @@
         {{ pagination.total }} account{{ 's' if pagination.total != 1 }}{{ ' match' if filters else '' }}
         &middot; {{ counts.suspended }} suspended of {{ counts.all }} in total.
         An account is <strong>inactive</strong> when it has not been used for 30 days.
+        {% if counts.lgu_waiting %}
+          <a href="{{ url_for('admin.users', status='lgu_waiting') }}" class="ms-1 fw-semibold text-warning-emphasis">
+            <i class="bi bi-lock-fill" aria-hidden="true"></i> {{ counts.lgu_waiting }} LGU account{{ 's' if counts.lgu_waiting != 1 }}
+            waiting for Gov&rsquo;t Data Upload approval</a>
+        {% endif %}
       </div>
       <div class="table-responsive">
         <table class="table align-middle dss-admin-table">
@@ -93,6 +98,31 @@
                 {{ role_badge(u.role) }}
                 {% if u.role == 'LGU' and u.lgu_office %}
                   <div class="dss-meta">{{ u.lgu_position ~ ', ' if u.lgu_position }}{{ u.lgu_office }} &middot; {{ u.lgu_scope_label }}</div>
+                {% endif %}
+                {% if u.role == 'LGU' %}
+                  {# Gov't Data Upload stays locked until approved here (V3.9). #}
+                  <div class="d-flex flex-wrap align-items-center gap-1 mt-1 dss-upload-approval">
+                    {% if u.can_upload_gov_data %}
+                      <span class="dss-upload-chip is-approved"><i class="bi bi-unlock-fill" aria-hidden="true"></i> Upload approved</span>
+                      <button type="button" class="btn btn-link btn-sm p-0 text-danger"
+                              data-bs-toggle="modal" data-bs-target="#reasonModal"
+                              data-action="{{ url_for('admin.lock_lgu_upload', user_id=u.user_id) }}"
+                              data-subject="{{ u.name }} ({{ u.email }})"
+                              data-title="Lock Gov't Data Upload" data-verb="Lock upload" data-tone="warning"
+                              data-note="They keep the LGU Dashboard, Diversification Plan, Saturation Map and Trend Reports, but can no longer upload government data. Data they already uploaded stays.">
+                        Lock
+                      </button>
+                    {% else %}
+                      <span class="dss-upload-chip is-waiting"><i class="bi bi-lock-fill" aria-hidden="true"></i> Upload locked &middot; waiting for approval</span>
+                      <form method="POST" action="{{ url_for('admin.approve_lgu_upload', user_id=u.user_id) }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-success btn-sm py-0 px-2"
+                                title="Open Gov't Data Upload for {{ u.name }} after checking their office and job title">
+                          <i class="bi bi-person-check" aria-hidden="true"></i> Approve upload
+                        </button>
+                      </form>
+                    {% endif %}
+                  </div>
                 {% endif %}
               </td>
               <td>
@@ -241,6 +271,8 @@
               <option value="LGU">LGU Official</option>
               <option value="Admin">Administrator</option>
             </select>
+            <div class="form-text">An LGU account you create here is approved for Gov&rsquo;t Data Upload straight away.
+              LGU staff who register themselves wait for your approval below.</div>
           </div>
         </div>
         <div class="modal-footer">

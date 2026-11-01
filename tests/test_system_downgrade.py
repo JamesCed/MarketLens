@@ -191,7 +191,10 @@ def test_lgu_registration_asks_for_account_details_and_lgu_context_only(app):
         assert gone not in page, gone
 
 
-def test_a_registered_lgu_account_is_active_and_can_upload_at_once(app):
+def test_a_registered_lgu_account_is_active_with_its_lgu_context(app):
+    """No access request and no LGU sub-role (V3.8). Since V3.9 Gov't Data
+    Upload itself waits for an Administrator -- see
+    tests/test_lgu_upload_approval.py."""
     form = {**account_fields("maria@tarlaccity.gov.ph", first_name="Maria", last_name="Santos"), **LGU_CONTEXT}
     response = app.test_client().post("/register/lgu", data=form, follow_redirects=True)
     assert response.status_code == 200
@@ -201,6 +204,8 @@ def test_a_registered_lgu_account_is_active_and_can_upload_at_once(app):
     assert user.lgu_office == LGU_CONTEXT["lgu_office"] and user.lgu_position == LGU_CONTEXT["lgu_position"]
     assert user.lgu_scope_label == "City-wide"
 
+    user.approve_upload()
+    db.session.commit()
     client = _login(app, user)
     page = client.get("/lgu/government-data-upload").get_data(as_text=True)
     assert 'type="file"' in page

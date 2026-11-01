@@ -144,6 +144,12 @@ test("steps for a role, and nothing for an unknown one", () => {
   assert.deepStrictEqual(tour.stepsForRole(undefined, "SME"), []);
 });
 
+test("an LGU account waiting for upload approval skips the upload-page steps", () => {
+  const lgu = { LGU: [{ id: "a", page: "/lgu/dashboard" }, { id: "b", page: "/lgu/government-data-upload", needsUpload: true }] };
+  assert.deepStrictEqual(tour.stepsForRole(lgu, "LGU", true).map((s) => s.id), ["a"]);
+  assert.deepStrictEqual(tour.stepsForRole(lgu, "LGU", false).map((s) => s.id), ["a", "b"]);
+});
+
 // ---------------------------------------------------------------
 // 2. Missing-target fallback
 // ---------------------------------------------------------------

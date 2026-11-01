@@ -2494,3 +2494,22 @@ select.form-select[size="1"] { overflow: hidden; text-overflow: ellipsis; }
 .dss-lgu-legend { float: none; width: auto; font-size: 1rem; font-weight: 700; padding: 0 .4rem; margin-bottom: .4rem; }
 .dss-lgu-num { display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem;
   border-radius: 50%; background: var(--dss-blue); color: #fff; font-size: .8rem; margin-right: .3rem; }
+
+/* V3.9: Gov't Data Upload locked until an Administrator approves the LGU account. */
+.dss-nav-link.is-locked { opacity: .55; cursor: not-allowed; }
+.dss-nav-link.is-locked:hover { background: transparent; }
+body.dss-skin .dss-nav-link.is-locked:hover { background: transparent; color: rgba(226,236,246,.8); }
+.dss-nav-lock-badge { margin-left: auto; font-size: .62rem; font-weight: 600; background: rgba(148,163,184,.25); color: inherit; }
+.dss-upload-locked { padding: 2rem 1.5rem; }
+.dss-upload-locked-icon { width: 64px; height: 64px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; font-size: 1.7rem; background: #fef3c7; color: #b45309; }
+[data-bs-theme="dark"] .dss-upload-locked-icon { background: rgba(245,158,11,.18); color: #fbbf24; }
+.dss-upload-chip { display: inline-flex; align-items: center; gap: .25rem; font-size: .72rem; font-weight: 600;
+  padding: .1rem .5rem; border-radius: 999px; }
+.dss-upload-chip.is-approved { background: #dcfce7; color: #166534; }
+.dss-upload-chip.is-waiting { background: #fef3c7; color: #92400e; }
+[data-bs-theme="dark"] .dss-upload-chip.is-approved { background: rgba(34,197,94,.18); color: #86efac; }
+[data-bs-theme="dark"] .dss-upload-chip.is-waiting { background: rgba(245,158,11,.18); color: #fcd34d; }
+/* V3.9 Custom Template: unticked boxes must not look disabled. */
+.dss-ct-table .form-check-input:not(:disabled) { border-color: #64748b; cursor: pointer; }
+.dss-ct-table td { vertical-align: middle; }

@@ -73,10 +73,12 @@
   {#
     WHAT TO PUT IN THE FILE.
 
-    Two datasets, two templates: zoning figures per barangay, and the
-    business permit register (market data). Each column is marked by how
-    much the data process depends on it -- Required, Important or For
-    records -- and both the guide and the downloadable templates are
+    Two datasets, three templates: zoning figures per barangay, and for
+    market data either the business permit register or already-counted
+    figures per industry (every input the AI model and the saturation
+    index read). Each column is marked by how much the data process
+    depends on it -- Required, Important or For records -- and the guide,
+    the downloadable templates and the Custom Template below are all
     rendered from lgu_controller.UPLOAD_COLUMNS, so the guidance, the
     example files and the importer cannot drift apart.
   #}
@@ -84,7 +86,7 @@
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
       <h6 class="mb-0"><i class="bi bi-list-check"></i> Columns for this dataset</h6>
       <div class="d-flex flex-wrap gap-2">
-        <a class="btn btn-sm btn-outline-primary dss-template-link" data-dataset="LGU_DATA"
+        <a class="btn btn-sm btn-outline-primary dss-template-link" data-dataset="LGU_DATA" id="templateLink"
            href="{{ url_for('lgu.dataset_template', dataset_type='LGU_DATA') }}">
           <i class="bi bi-download"></i> Zoning template (CSV)
         </a>
@@ -92,13 +94,21 @@
            href="{{ url_for('lgu.dataset_template', dataset_type='MARKET_DATA') }}">
           <i class="bi bi-download"></i> Market template (CSV)
         </a>
+        <a class="btn btn-sm btn-outline-primary dss-template-link" data-dataset="MARKET_DATA"
+           href="{{ url_for('lgu.dataset_template', dataset_type='MARKET_COUNTS') }}">
+          <i class="bi bi-download"></i> Market counts &amp; area figures template (CSV)
+        </a>
+        <a class="btn btn-sm btn-outline-secondary" href="#custom-template">
+          <i class="bi bi-ui-checks"></i> Custom template
+        </a>
       </div>
     </div>
 
     {% for dataset_type, columns in upload_columns.items() %}
       {% set guide = dataset_guides[dataset_type] %}
-      <div class="dss-column-guide" data-dataset="{{ dataset_type }}"
-           {% if dataset_type != 'LGU_DATA' %}hidden{% endif %}>
+      {% set target = 'MARKET_DATA' if dataset_type == 'MARKET_COUNTS' else dataset_type %}
+      <div class="dss-column-guide {{ 'mt-3' if dataset_type == 'MARKET_COUNTS' }}" data-dataset="{{ target }}"
+           {% if target != 'LGU_DATA' %}hidden{% endif %}>
         <p class="small mb-2">
           <strong>{{ guide.title }}</strong> &middot; {{ guide.rows }}
         </p>
@@ -174,6 +184,8 @@
     </ul>
   </div>
 </div>
+
+{% include "lgu/_custom_template.html" %}
 
 <div class="row g-4">
   <div class="col-lg-6">

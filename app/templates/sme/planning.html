@@ -338,7 +338,11 @@
                 No official LGU dataset is active. Upload business permit data to
                 generate city-wide recommendations.
               </p>
-              {% if current_user.role in ('LGU', 'Admin') %}
+              {% if current_user.is_lgu() and not current_user.can_upload_gov_data %}
+                <button type="button" class="btn btn-sm btn-secondary" disabled title="Waiting for the Administrator's approval">
+                  <i class="bi bi-lock-fill"></i> Upload Dataset (locked)
+                </button>
+              {% elif current_user.role in ('LGU', 'Admin') %}
                 <a href="{{ url_for('lgu.government_upload') }}" class="btn btn-sm btn-primary">
                   <i class="bi bi-upload"></i> Upload Dataset
                 </a>

@@ -62,6 +62,7 @@ def lgu_user(app):
     with app.app_context():
         user = User(name="LGU Officer", email="officer@flow.test", role="LGU")
         user.set_password("password123")
+        user.approve_upload()  # V3.9: Gov't Data Upload needs admin approval
         db.session.add(user)
         db.session.commit()
         return user.user_id
@@ -403,6 +404,7 @@ def background_app(tmp_path):
         for email in ("officer@flow.test", "other@flow.test"):
             user = User(name="LGU Officer", email=email, role="LGU")
             user.set_password("password123")
+            user.approve_upload()  # V3.9: Gov't Data Upload needs admin approval
             db.session.add(user)
         db.session.commit()
     yield app

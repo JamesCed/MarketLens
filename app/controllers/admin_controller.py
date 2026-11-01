@@ -305,6 +305,7 @@ USER_STATUS_CHOICES = (
     ("active", "Active (seen in the last 30 days)"),
     ("inactive", "Inactive (not seen in 30 days)"),
     ("suspended", "Suspended"),
+    ("lgu_waiting", "LGU waiting for Gov't Data Upload approval"),
 )
 SUSPENSION_CHOICES = ((1, "1 day"), (3, "3 days"), (7, "7 days"), (30, "30 days"), (None, "Until I lift it"))
 
@@ -356,6 +357,8 @@ def users():
     elif status == "inactive":
         query = query.filter(User.status == "active", or_(User.last_seen_at.is_(None),
                                                            User.last_seen_at < now - User.INACTIVE_AFTER))
+    elif status == "lgu_waiting":
+        query = query.filter(User.role == "LGU", User.upload_approved_at.is_(None))
     pagination = query.order_by(User.created_at.desc(), User.user_id.desc()).paginate(
         page=page, per_page=USERS_PER_PAGE, error_out=False)
 
@@ -377,6 +380,7 @@ def users():
         counts={
             "all": User.query.filter(User.archived_at.is_(None)).count(),
             "suspended": User.query.filter(User.archived_at.is_(None), User.status == "inactive").count(),
+            "lgu_waiting": _lgu_upload_waiting_count(),
         },
     )
 
@@ -421,10 +425,86 @@ def create_user():
     user = User(name=name, email=email, role=role, contact_number=contact_number,
                 first_name=first or None, middle_name=middle or None, last_name=last or None, suffix=suffix or None)
     user.set_password(password)
+    if role == "LGU":
+        # An Administrator creating the LGU account has confirmed the
+        # person already, so Gov't Data Upload is open straight away.
+        user.approve_upload(current_user.user_id)
     db.session.add(user)
     db.session.commit()
-    log_action("admin_create_user", details=f"{role}: {email}", target=user)
+    log_action("admin_create_user", details=f"{role}: {email}" + (" (Gov't Data Upload approved)" if role == "LGU" else ""),
+               target=user)
     flash(f"Account created for {email}.", "success")
+    return redirect(url_for("admin.users"))
+
+
+def _lgu_upload_waiting_count():
+    """LGU accounts (not archived) whose Gov't Data Upload is still locked."""
+    return User.query.filter(User.archived_at.is_(None), User.role == "LGU",
+                             User.upload_approved_at.is_(None)).count()
+
+
+def _lgu_upload_target(user_id):
+    """The LGU account an upload decision is about, or None after
+    flashing why it can't be decided."""
+    user = db.session.get(User, user_id)
+    if user is None or user.role != "LGU":
+        flash("Choose an LGU account.", "danger")
+        return None
+    if user.is_archived:
+        flash(f"{user.email} is archived. Restore it first.", "warning")
+        return None
+    return user
+
+
+@admin_bp.route("/users/<int:user_id>/approve-upload", methods=["POST"])
+@role_required("Admin")
+def approve_lgu_upload(user_id):
+    """Open Gov't Data Upload for an LGU account (V3.9). A new LGU sign-up
+    has every other LGU page but cannot upload until this is done, so
+    someone who only claims to be LGU staff cannot change the data every
+    saturation score is built on. Check the office and job title shown
+    under the LGU badge (and, if in doubt, with the office) first."""
+    from app.services.lgu_profile import notify_upload_decision
+
+    user = _lgu_upload_target(user_id)
+    if user is None:
+        return redirect(url_for("admin.users"))
+    if user.can_upload_gov_data:
+        flash(f"{user.name} can already use Gov't Data Upload.", "info")
+        return redirect(url_for("admin.users"))
+    user.approve_upload(current_user.user_id)
+    notify_upload_decision(user, True)
+    db.session.commit()
+    details = ", ".join(part for part in (user.lgu_position, user.lgu_office) if part)
+    log_action("admin_approve_lgu_upload", details=f"{user.email}" + (f" ({details})" if details else ""),
+               target=user, changes={"gov_data_upload": ["locked", "approved"]})
+    flash(f"{user.name} can now use Gov't Data Upload.", "success")
+    return redirect(url_for("admin.users"))
+
+
+@admin_bp.route("/users/<int:user_id>/lock-upload", methods=["POST"])
+@role_required("Admin")
+def lock_lgu_upload(user_id):
+    """Lock Gov't Data Upload again (staff moved or left, or approved by
+    mistake). The account keeps its other LGU pages; data it already
+    uploaded stays (archive rows in Datasets if they are wrong)."""
+    from app.services.lgu_profile import notify_upload_decision
+
+    user = _lgu_upload_target(user_id)
+    if user is None:
+        return redirect(url_for("admin.users"))
+    if not user.can_upload_gov_data:
+        flash(f"Gov't Data Upload is already locked for {user.name}.", "info")
+        return redirect(url_for("admin.users"))
+    reason = _reason_from_form("lock Gov't Data Upload for this account")
+    if reason is None:
+        return redirect(url_for("admin.users"))
+    user.revoke_upload()
+    notify_upload_decision(user, False)
+    db.session.commit()
+    log_action("admin_lock_lgu_upload", details=user.email, target=user, reason=reason,
+               changes={"gov_data_upload": ["approved", "locked"]})
+    flash(f"Gov't Data Upload is locked for {user.name}.", "success")
     return redirect(url_for("admin.users"))
 
 

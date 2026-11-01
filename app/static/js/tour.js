@@ -108,9 +108,14 @@
     return normalizePath(currentPath) === normalizePath((root || "") + stepPage);
   }
 
-  function stepsForRole(allSteps, role) {
+  // `uploadLocked`: an LGU account an Administrator has not approved yet
+  // cannot open Gov't Data Upload (V3.9), so its tour leaves out the
+  // steps that live on that page (needsUpload) instead of sending the
+  // person to a locked page.
+  function stepsForRole(allSteps, role, uploadLocked) {
     const list = allSteps && role ? allSteps[role] : null;
-    return Array.isArray(list) ? list : [];
+    if (!Array.isArray(list)) return [];
+    return uploadLocked ? list.filter((step) => !step.needsUpload) : list;
   }
 
   // Where to start when a page loads mid-tour: the saved step if there
@@ -1175,7 +1180,7 @@
   function boot() {
     const config = window.DSS_ONBOARDING;
     if (!config || !config.urls) return; // signed out
-    const steps = stepsForRole(window.DSS_TOUR_STEPS, config.role);
+    const steps = stepsForRole(window.DSS_TOUR_STEPS, config.role, !!config.uploadLocked);
     const tour = new Tour(config, steps, window.DSS_TOUR_PAGES);
     window.dssTour = tour; // handy from the browser console while testing
 

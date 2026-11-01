@@ -57,6 +57,8 @@ ACTION_META = {
     "save_recommended_location": ("Saved a recommended location as a plan", "Business planning"),
 
     "dataset_upload": ("Uploaded a government dataset", "Data maintenance"),
+    "lgu_upload_blocked": ("Tried to upload government data before admin approval", "Data maintenance"),
+    "save_custom_template": ("Saved a custom upload template", "Data maintenance"),
     "view_diversification_plan": ("Opened the Diversification Plan", "City planning"),
     "export_diversification_plan": ("Exported the Diversification Plan", "City planning"),
 
@@ -68,6 +70,8 @@ ACTION_META = {
     "admin_delete_user": ("Deleted a user account (legacy)", "User administration"),
     "admin_archive_user": ("Archived a user account", "User administration"),
     "admin_restore_user": ("Restored an archived user account", "User administration"),
+    "admin_approve_lgu_upload": ("Approved an LGU account for Gov't Data Upload", "User administration"),
+    "admin_lock_lgu_upload": ("Locked Gov't Data Upload for an LGU account", "User administration"),
     "admin_delete_lgu_data": ("Deleted an LGU data row (legacy)", "Data maintenance"),
     "admin_delete_market_data": ("Deleted a market data row (legacy)", "Data maintenance"),
     "admin_archive_lgu_data": ("Archived an LGU data row", "Data maintenance"),
@@ -112,6 +116,8 @@ _CATEGORY_OF = {
     "admin_create_user": "accounts", "admin_toggle_active": "accounts", "admin_delete_user": "accounts",
     "admin_archive_user": "accounts", "admin_restore_user": "accounts", "admin_suspend_user": "accounts",
     "admin_reactivate_user": "accounts", "suspension_expired": "accounts",
+    "admin_approve_lgu_upload": "accounts", "admin_lock_lgu_upload": "accounts", "lgu_upload_blocked": "security",
+    "save_custom_template": "data",
     "create_plan": "plans", "run_forecast": "plans", "update_plan": "plans", "trash_plan": "plans",
     "restore_plan": "plans", "delete_plan": "plans", "purge_plan": "plans", "select_plan": "plans",
     "save_recommended_location": "plans",
@@ -133,6 +139,7 @@ _HIGH = frozenset({
     "admin_restore_lgu_data", "admin_archive_market_data", "admin_restore_market_data",
     "admin_update_settings", "export_audit_log", "export_barangay_seed_csv", "purge_plan", "delete_plan",
     "export_diversification_plan", "retention_purge",
+    "admin_approve_lgu_upload", "admin_lock_lgu_upload", "lgu_upload_blocked",
 })
 _LOW = frozenset({
     "select_plan", "update_theme", "update_notification_prefs", "clear_notifications",

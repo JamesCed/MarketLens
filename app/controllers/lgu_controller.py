@@ -31,7 +31,7 @@ from flask_login import current_user
 
 from app.models import LguData, MarketData, ForecastResult
 from app.ml.constants import CLUSTER_THRESHOLDS
-from app.utils.decorators import role_required
+from app.utils.decorators import role_required, upload_approval_required
 from app.utils.helpers import allowed_file, unique_upload_path
 from app.utils.audit import log_action
 from app.services.diversification_service import build_diversification_plan
@@ -266,6 +266,40 @@ UPLOAD_COLUMNS = {
          "twice is counted once; it is not stored.",
          "TC-2026-00001"),
     ],
+    # Already-counted figures, one row per industry per barangay: every
+    # input the AI model and the MSI (Equation 10) read, so an LGU that
+    # has them replaces MarketLens's estimates with real data. Uploaded
+    # with the Market Data target (data_import_service summary mode).
+    "MARKET_COUNTS": [
+        ("barangay", "required",
+         "Official Tarlac City barangay name, matched as above.",
+         "San Roque"),
+        ("industry_type", "required",
+         "The industry: a PSIC section name, section letter or PSIC code, as above.",
+         "Food and Beverage"),
+        ("competitor_count", "required",
+         "Businesses of this industry operating in the barangay (permits in force). The figure "
+         "the Competitor density part of the saturation index is built on.",
+         "18"),
+        ("population_density", "important",
+         "People per square kilometre in the barangay (e.g. CBMS or PSA population divided by "
+         "land area).",
+         "4250"),
+        ("average_rent", "important",
+         "Typical monthly rent of a small commercial space in the barangay, in pesos.",
+         "15000"),
+        ("foot_traffic_index", "important",
+         "How busy the area is, 0 to 100 (100 = the busiest area of the city), e.g. from a "
+         "pedestrian count or the market master's estimate.",
+         "55"),
+        ("historical_success_rate", "important",
+         "Share of this industry's businesses that stayed open or renewed, as a fraction "
+         "between 0 and 1 (0.85 = 85%).",
+         "0.85"),
+        ("date_recorded", "important",
+         "The date these figures describe (YYYY-MM-DD). Blank means the upload date.",
+         "2026-09-30"),
+    ],
 }
 
 DATASET_GUIDES = {
@@ -278,17 +312,21 @@ DATASET_GUIDES = {
         "title": "Market Data template",
         "rows": "One row per business (the business permit register).",
         "note": ("Only these counts are saved: in-force permits per industry, per kind of business "
-                 "and per barangay. No business name, permit number or row of the file is stored. "
-                 "Already have counts instead of a permit list? A file with industry_type, "
-                 "barangay and competitor_count (one row per industry per barangay, plus "
-                 "population_density, foot_traffic_index, average_rent and "
-                 "historical_success_rate if you have them) is accepted too."),
+                 "and per barangay. No business name, permit number or row of the file is stored."),
+    },
+    "MARKET_COUNTS": {
+        "title": "Market Data template: counts and area figures",
+        "rows": "One row per industry per barangay.",
+        "note": ("Already have counts instead of a permit list? This template carries every figure the AI "
+                 "model and the saturation index read; upload it with the Market Data target. A column you "
+                 "leave out keeps the figure MarketLens already has for that barangay."),
     },
 }
 
 
 @lgu_bp.route("/lgu/dataset-template/<dataset_type>")
 @role_required("LGU")
+@upload_approval_required
 def dataset_template(dataset_type):
     """A ready-made CSV with the right headers and one example row.
 
@@ -297,40 +335,68 @@ def dataset_template(dataset_type):
     drift apart -- which is the usual way a "download the template"
     link starts handing out a header row the importer no longer
     accepts.
-    """
-    import csv
-    import io
 
+    ?columns=a,b,c builds a Custom Template from those columns and
+    ?mine=1 from the one saved on the account; the required columns are
+    always included (app/services/upload_templates.py).
+    """
     from flask import Response
 
-    columns = UPLOAD_COLUMNS.get(dataset_type)
-    if columns is None:
+    from app.services import upload_templates
+
+    if dataset_type not in UPLOAD_COLUMNS:
         flash("Unknown dataset type.", "danger")
         return redirect(url_for("lgu.government_upload"))
 
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow([name for name, _level, _meaning, _example in columns])
-    writer.writerow([example for _name, _level, _meaning, example in columns])
-
-    filename = {"LGU_DATA": "marketlens_zoning_data_template.csv",
-                "MARKET_DATA": "marketlens_market_data_template.csv"}[dataset_type]
+    filename = upload_templates.TEMPLATE_FILENAMES[dataset_type]
+    if request.args.get("mine"):
+        columns = upload_templates.saved_selections(current_user)[dataset_type]
+        filename = filename.replace("_template", "_custom_template")
+    elif request.args.get("columns") is not None:
+        columns = upload_templates.clean_selection(dataset_type, request.args.get("columns", "").split(","))
+        filename = filename.replace("_template", "_custom_template")
+    else:
+        columns = upload_templates.standard_selection(dataset_type)
     return Response(
-        buffer.getvalue(),
+        upload_templates.template_csv(dataset_type, columns),
         mimetype="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
+@lgu_bp.route("/lgu/custom-template", methods=["POST"])
+@role_required("LGU")
+@upload_approval_required
+def save_custom_template():
+    """Save which columns this LGU office can really provide (the Custom
+    Template). The required columns are always kept."""
+    from app.extensions import db
+    from app.services import upload_templates
+
+    selections, errors = upload_templates.parse_selection_form(request.form)
+    if errors:
+        for error in errors:
+            flash(error, "warning")
+        return redirect(url_for("lgu.government_upload", _anchor="custom-template"))
+    upload_templates.save_selections(current_user, selections)
+    db.session.commit()
+    log_action("save_custom_template", details="; ".join(
+        f"{key}: {', '.join(columns)}" for key, columns in selections.items())[:500])
+    flash("Your custom template is saved. Download it below whenever you upload.", "success")
+    return redirect(url_for("lgu.government_upload", _anchor="custom-template"))
+
+
 @lgu_bp.route("/lgu/government-data-upload", methods=["GET", "POST"])
 @role_required("LGU")
+@upload_approval_required
 def government_upload():
     """Upload page. The POST saves the file and hands it to a background
     job (app/services/upload_jobs.py), then waits up to
     UPLOAD_WAIT_SECONDS for the result: a normal file is reported on the
     next page straight away, a long one gets a progress card instead of
     a page that hangs until the server gives up on it. A valid file goes
-    straight into the live dataset."""
+    straight into the live dataset. Locked (lgu/upload_locked.html) until
+    an Administrator approves the account -- see upload_approval_required."""
     from app.services import upload_jobs
 
     if request.method == "POST":
@@ -389,8 +455,11 @@ def government_upload():
     recent_market_data = (
         MarketData.query.order_by(MarketData.date_recorded.desc(), MarketData.market_id.desc()).limit(20).all()
     )
+    from app.services.upload_templates import builder_context
+
     return render_template(
         "lgu/government_upload.html",
+        **builder_context(current_user),
         recent_lgu_data=recent_lgu_data,
         recent_market_data=recent_market_data,
         lgu_sources=LGU_SOURCES,

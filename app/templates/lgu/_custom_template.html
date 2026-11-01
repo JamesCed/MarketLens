@@ -1,0 +1,142 @@
+{#
+  lgu/_custom_template.html
+  ---------------------------
+  The Custom Template (V3.9): every column MarketLens reads, listed as
+  suggestions with what it feeds (the AI model's inputs and the Market
+  Saturation Index of Equation 10) and where MarketLens gets the figure
+  today. The LGU office ticks only the data it can really provide; the
+  required columns are always in. "Save as my template" keeps the choice
+  on the account; the download builds the CSV from the ticks on screen.
+  See app/services/upload_templates.py.
+#}
+<div class="dss-card mb-4" id="custom-template">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+    <div>
+      <h6 class="mb-1"><i class="bi bi-ui-checks"></i> Custom template</h6>
+      <p class="small text-muted mb-0">
+        Tick the data your office can really provide. This is the list of what MarketLens uses to score every
+        barangay: the <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle">Suggested</span>
+        columns feed the saturation index and the AI model, so each real figure you upload replaces an estimate and
+        makes the results more accurate. Required columns are always included.
+      </p>
+    </div>
+    {% if custom_template_saved %}
+      <span class="badge text-bg-success"><i class="bi bi-check2"></i> Saved on your account</span>
+    {% endif %}
+  </div>
+
+  <form method="POST" action="{{ url_for('lgu.save_custom_template') }}" id="customTemplateForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <ul class="nav nav-tabs small mt-3" role="tablist">
+      {% for t in custom_templates %}
+        <li class="nav-item" role="presentation">
+          <button class="nav-link {{ 'active' if loop.first }}" id="ct-tab-{{ t.key }}" data-bs-toggle="tab"
+                  data-bs-target="#ct-{{ t.key }}" type="button" role="tab" aria-controls="ct-{{ t.key }}"
+                  aria-selected="{{ 'true' if loop.first else 'false' }}">{{ t.title }}</button>
+        </li>
+      {% endfor %}
+    </ul>
+    <div class="tab-content border border-top-0 rounded-bottom p-3">
+      {% for t in custom_templates %}
+        <div class="tab-pane fade {{ 'show active' if loop.first }}" id="ct-{{ t.key }}" role="tabpanel"
+             aria-labelledby="ct-tab-{{ t.key }}" data-ct-template="{{ t.key }}">
+          <p class="small mb-2">
+            {{ dataset_guides[t.key].rows }}
+            Upload the filled-in file with the <strong>{{ "Gov't / Zoning Data" if t.target == 'LGU_DATA' else 'Market Data' }}</strong> target.
+          </p>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle small mb-2 dss-ct-table">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:7%;">Include</th>
+                  <th style="width:22%;">Column</th>
+                  <th>What it feeds in MarketLens</th>
+                  <th style="width:22%;">MarketLens has today</th>
+                  <th style="width:12%;">Example</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in t.rows %}
+                  <tr data-ct-column="{{ r.name }}" data-ct-locked="{{ '1' if r.locked else '0' }}"
+                      {% if r.model_label %}data-ct-model="{{ r.model_label }}"{% endif %}>
+                    <td>
+                      {% if r.locked %}
+                        <input type="checkbox" class="form-check-input" checked disabled
+                               aria-label="{{ r.name }} is required and always included">
+                        <input type="hidden" name="col-{{ t.key }}" value="{{ r.name }}">
+                      {% else %}
+                        <input type="checkbox" class="form-check-input dss-ct-box" name="col-{{ t.key }}" value="{{ r.name }}" id="ct-{{ t.key }}-{{ r.name }}" {{ 'checked' if r.checked }}>
+                      {% endif %}
+                    </td>
+                    <td>
+                      <label {% if not r.locked %}for="ct-{{ t.key }}-{{ r.name }}"{% endif %}><code>{{ r.name }}</code></label>
+                      <div class="d-flex flex-wrap gap-1 mt-1">
+                        {% if r.locked %}
+                          <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle">Required</span>
+                        {% else %}
+                          {% if r.suggested %}<span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle">Suggested</span>{% endif %}
+                          {% if r.level == 'record' %}<span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle">For records</span>{% endif %}
+                        {% endif %}
+                      </div>
+                    </td>
+                    <td class="text-muted">{{ r.feeds }}</td>
+                    <td>{{ r.today or '—' }}</td>
+                    <td><code>{{ r.example }}</code></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div class="small" data-ct-coverage>
+              <i class="bi bi-cpu text-primary" aria-hidden="true"></i>
+              AI model inputs this template gives real data for:
+              <strong data-ct-count>{{ t.covered|length }}</strong> of {{ model_input_total }}
+              <span class="text-muted" data-ct-list>({{ t.covered|join(', ') if t.covered else 'none' }})</span>
+            </div>
+            <a class="btn btn-sm btn-outline-primary dss-ct-download"
+               href="{{ url_for('lgu.dataset_template', dataset_type=t.key, columns=t.selected|join(',')) }}"
+               data-base="{{ url_for('lgu.dataset_template', dataset_type=t.key) }}">
+              <i class="bi bi-download"></i> Download this custom template (CSV)
+            </a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
+      <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save"></i> Save as my template</button>
+      <span class="small text-muted">Saved on your account, so the same columns are ticked next time. A column you
+        leave out keeps the figure MarketLens already has.</span>
+    </div>
+  </form>
+</div>
+
+<script>
+  // Keep the coverage line and the download link in step with the ticks,
+  // so the CSV always matches what is on screen (saved or not).
+  (function () {
+    document.querySelectorAll('[data-ct-template]').forEach((pane) => {
+      const download = pane.querySelector('.dss-ct-download');
+      const count = pane.querySelector('[data-ct-count]');
+      const list = pane.querySelector('[data-ct-list]');
+      function included(row) {
+        if (row.dataset.ctLocked === '1') return true;
+        const box = row.querySelector('.dss-ct-box');
+        return !!(box && box.checked);
+      }
+      function refresh() {
+        const rows = Array.from(pane.querySelectorAll('tr[data-ct-column]'));
+        const columns = rows.filter(included).map((row) => row.dataset.ctColumn);
+        const models = [];
+        rows.filter(included).forEach((row) => {
+          if (row.dataset.ctModel && !models.includes(row.dataset.ctModel)) models.push(row.dataset.ctModel);
+        });
+        if (count) count.textContent = models.length;
+        if (list) list.textContent = '(' + (models.length ? models.join(', ') : 'none') + ')';
+        if (download) download.href = download.dataset.base + '?columns=' + encodeURIComponent(columns.join(','));
+      }
+      pane.querySelectorAll('.dss-ct-box').forEach((box) => box.addEventListener('change', refresh));
+      refresh();
+    });
+  })();
+</script>

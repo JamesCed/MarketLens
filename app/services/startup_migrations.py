@@ -81,6 +81,9 @@ _USER_COLUMNS = {
     "lgu_position": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
     "lgu_scope": ("VARCHAR(20) NULL", "VARCHAR(20) NULL"),
     "lgu_barangay": ("VARCHAR(100) NULL", "VARCHAR(100) NULL"),
+    "upload_approved_at": ("DATETIME NULL", "DATETIME NULL"),
+    "upload_approved_by": ("INTEGER NULL", "INT NULL"),
+    "upload_template": ("TEXT NULL", "TEXT NULL"),
 }
 
 _ADDITIVE_COLUMNS = {
@@ -273,7 +276,9 @@ def _retire_lgu_staging_schema():
          removed is suspended (status "inactive"), so the admin's decision
          still stands once the verification columns are gone. Every other
          LGU account -- verified or still pending -- is an ordinary,
-         active LGU account again, as before V3.4.
+         active LGU account again, as before V3.4. (V3.9: one the admin
+         had verified keeps Gov't Data Upload -- upload_approved_at is
+         set; a pending one waits for approval in Manage Users.)
       2. System notifications about staged batches and LGU access
          requests are deleted: the pages they talk about no longer exist.
       3. The upload_batches and lgu_access_requests tables are dropped.
@@ -298,6 +303,17 @@ def _retire_lgu_staging_schema():
     done, failed = {}, []
 
     with db.engine.begin() as conn:
+        if "lgu_status" in user_columns and "upload_approved_at" in user_columns:
+            # V3.9 locks Gov't Data Upload until an Administrator approves
+            # the account. An LGU account the System Admin had already
+            # verified (blank = made by an administrator, or older than the
+            # check) keeps it; a pending, rejected or removed one waits.
+            n = conn.execute(text(f"UPDATE {user_table} SET upload_approved_at = "
+                                  f"COALESCE(lgu_verified_at, CURRENT_TIMESTAMP), upload_approved_by = lgu_verified_by "
+                                  f"WHERE role = 'LGU' AND (lgu_status IS NULL OR lgu_status = 'verified') "
+                                  f"AND upload_approved_at IS NULL")).rowcount
+            if n:
+                done["lgu_upload_approvals_kept"] = n
         if "lgu_status" in user_columns:
             n = conn.execute(text(f"UPDATE {user_table} SET status = 'inactive' WHERE role = 'LGU' "
                                   f"AND lgu_status IN ('rejected', 'revoked') AND status = 'active'")).rowcount

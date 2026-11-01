@@ -489,6 +489,7 @@
     {
       id: "lgu-upload",
       page: "/lgu/government-data-upload",
+      needsUpload: true,
       target: 'form[enctype="multipart/form-data"]',
       placement: "bottom",
       title: "Upload a dataset",
@@ -500,6 +501,7 @@
     {
       id: "lgu-dataset-type",
       page: "/lgu/government-data-upload",
+      needsUpload: true,
       target: "#datasetType",
       placement: "bottom",
       title: "Which kind of data?",
@@ -514,6 +516,7 @@
     {
       id: "lgu-template",
       page: "/lgu/government-data-upload",
+      needsUpload: true,
       target: "#templateLink",
       title: "Use the template",
       what:
